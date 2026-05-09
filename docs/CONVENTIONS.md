@@ -9,6 +9,7 @@ This document captures project conventions that should stay consistent across im
 - Use dbmate for database migrations.
 - Keep Git hooks repo-local in `.githooks/` and install them with `bun run hooks:install`.
 - Commit messages must be Conventional Commits.
+- Commit messages must use lowercase letters only.
 
 ## Formatting
 

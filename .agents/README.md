@@ -20,3 +20,4 @@ Follow the conventions in `docs/CONVENTIONS.md` unless the user explicitly chang
 - Run `bun run typecheck` before committing once TypeScript source files exist.
 - Validate migrations with the available local smoke tests.
 - Use Conventional Commit messages.
+- Use lowercase-only commit messages.

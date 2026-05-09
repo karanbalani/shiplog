@@ -86,7 +86,7 @@ Format everything:
 bun run format
 ```
 
-The pre-commit hook runs `bun run format:check`. The commit-msg hook requires Conventional Commit subjects, for example:
+The pre-commit hook runs `bun run format:check`. The commit-msg hook requires Conventional Commit subjects and lowercase-only commit messages, for example:
 
 ```text
 feat(db): add accounts schema
