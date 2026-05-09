@@ -19,6 +19,6 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["bin/**/*.ts", "lib/**/*.ts", "tests/**/*.ts"],
+  "include": ["bin/**/*.ts", "lib/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules"]
 }
