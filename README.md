@@ -16,6 +16,8 @@ Completed so far:
 - Dependency install with Bun
 - Initial Postgres schema migrations in `db/migrations/`, one table per migration file
 - Rollup view migrations for monthly, yearly, organization, language, and user activity
+- Shared TypeScript schema, config, and vendor contracts in `lib/types/`
+- Postgres pool, query, transaction, and close helpers in `lib/db.ts`
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 

@@ -44,6 +44,32 @@ This document captures project conventions that should stay consistent across im
 - Use `organization_id` and `repository_id` for foreign keys.
 - Use `pull_request` in table and column names instead of `pr`, except metric columns already established as `prs_*` and `pr_reviews_*` in rollups.
 
+## Domain Language
+
+- A `user` is the human profile owner.
+- An `account` is one provider account owned by a user.
+- A `provider` is an external forge, for example `github`.
+- `external_*` columns store values owned by the provider.
+- An `organization` is a provider-side organization or group namespace.
+- A `repository` is a provider-side source repository.
+- A `snapshot` is observed state on a date.
+- An `event` is point-in-time activity such as a commit, pull request, review, or issue.
+- A `rollup` or `fact` is derived aggregate data such as `daily_repository_activity`.
+- A `row` type is a database-read shape and should use snake_case column names.
+- A `config` type describes `profile-config.json` or another user-authored config file.
+
+## TypeScript Types
+
+- Shared types live under `lib/types/`.
+- Re-export public shared types from `lib/types/index.ts`.
+- Domain enums live in `lib/types/domain/`.
+- Config types live in `lib/types/config/`.
+- Database row and view types live under `lib/types/db/`, with one file per type.
+- Vendor runner contracts live in `lib/types/vendor/`.
+- Use `*Row` for database-returned shapes.
+- Define write-input types near the code that writes data, then promote them to shared types only when multiple modules need them.
+- Avoid `Record` as a domain suffix because TypeScript already has `Record<K, V>`.
+
 ## Provider Neutrality
 
 - Keep the schema provider-neutral.
