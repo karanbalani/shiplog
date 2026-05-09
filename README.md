@@ -21,6 +21,7 @@ Completed so far:
 - UTC date helpers in `lib/utils/dates.ts`
 - JSON Schema-backed profile config loader in `lib/config.ts`
 - Fetch JSON helper with retry and timeout support in `lib/http.ts`
+- GitHub provider API helpers in `lib/providers/github/`
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -170,7 +171,7 @@ The v1 architecture is five Bun-executed TypeScript binaries:
 - `bin/backfill_github.ts`
 - `bin/render.ts`
 
-Shared code will live under `lib/`, GitHub-specific helpers under `bin/_github/`, and database migrations under `db/migrations/`.
+Shared code will live under `lib/`, GitHub-specific helpers under `lib/providers/github/`, and database migrations under `db/migrations/`.
 
 Project conventions live in `docs/CONVENTIONS.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 

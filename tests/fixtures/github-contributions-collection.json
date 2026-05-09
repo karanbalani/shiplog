@@ -1,0 +1,35 @@
+{
+  "user": {
+    "contributionsCollection": {
+      "totalCommitContributions": 3,
+      "totalIssueContributions": 0,
+      "totalPullRequestContributions": 1,
+      "totalPullRequestReviewContributions": 0,
+      "restrictedContributionsCount": 0,
+      "commitContributionsByRepository": [
+        {
+          "repository": {
+            "id": "R_TEST_1",
+            "nameWithOwner": "octocat/hello",
+            "owner": { "login": "octocat" },
+            "isPrivate": false,
+            "isFork": false,
+            "isArchived": false,
+            "primaryLanguage": { "name": "Go" },
+            "stargazerCount": 10,
+            "forkCount": 2,
+            "createdAt": "2020-01-01T00:00:00Z",
+            "pushedAt": "2026-05-07T12:00:00Z",
+            "defaultBranchRef": { "name": "main" },
+            "url": "https://github.com/octocat/hello",
+            "description": "Test repo"
+          },
+          "contributions": { "totalCount": 3 }
+        }
+      ],
+      "pullRequestContributionsByRepository": [],
+      "pullRequestReviewContributionsByRepository": [],
+      "issueContributionsByRepository": []
+    }
+  }
+}

@@ -91,7 +91,8 @@ This document captures project conventions that should stay consistent across im
 - Keep `provider` as the provider key, for example `github`.
 - Use `external_*` for IDs, logins, URLs, and timestamps that come from a provider.
 - Do not use GitHub-specific names such as `node_id` in core schema columns.
-- Vendor-specific collectors own translation into generic schema columns.
+- Provider-specific helpers live under `lib/providers/<provider>/`.
+- Provider-specific collectors own translation into generic schema columns.
 - Document vendor-specific field mapping in `docs/GITHUB_MAPPING.md`.
 
 ## Timestamp Semantics
