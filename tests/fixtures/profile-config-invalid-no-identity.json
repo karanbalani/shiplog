@@ -1,0 +1,13 @@
+{
+  "displayName": "Nobody",
+  "identities": [],
+  "publishTargets": [
+    {
+      "provider": "github",
+      "repositoryFullName": "nobody/nobody",
+      "branch": "main",
+      "path": "README.md",
+      "tokenEnv": "GITHUB_README_TOKEN"
+    }
+  ]
+}

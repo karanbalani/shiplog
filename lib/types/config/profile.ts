@@ -3,9 +3,16 @@ import type { Provider } from '../domain/enums.ts'
 export interface IdentityConfig {
   provider: Provider
   login: string
-  readmeHost?: boolean
-  trackedOrganizations?: string[]
-  ignoreRepositories?: string[]
+  ignoreOrganizations: string[]
+  ignoreRepositories: string[]
+}
+
+export interface PublishTargetConfig {
+  provider: Provider
+  repositoryFullName: string
+  branch: string
+  path: string
+  tokenEnv: string
 }
 
 export interface RenderKnobs {
@@ -17,11 +24,6 @@ export interface RenderKnobs {
 export interface ProfileConfig {
   displayName?: string
   identities: IdentityConfig[]
-  featuredProject?: {
-    label: string
-    github?: string
-    website?: string
-    description?: string
-  } | null
+  publishTargets: PublishTargetConfig[]
   render: RenderKnobs
 }

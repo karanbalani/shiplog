@@ -24,6 +24,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
     "pg": "^8.13.1"
   },
   "devDependencies": {

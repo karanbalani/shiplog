@@ -1,0 +1,10 @@
+{
+  "displayName": "Nobody",
+  "identities": [
+    {
+      "provider": "github",
+      "login": "nobody"
+    }
+  ],
+  "publishTargets": []
+}

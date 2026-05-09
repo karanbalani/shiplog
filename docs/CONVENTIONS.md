@@ -70,6 +70,20 @@ This document captures project conventions that should stay consistent across im
 - Define write-input types near the code that writes data, then promote them to shared types only when multiple modules need them.
 - Avoid `Record` as a domain suffix because TypeScript already has `Record<K, V>`.
 
+## Config
+
+- User-authored JSON config is validated with JSON Schema.
+- JSON schemas live under `schemas/`.
+- Keep `schemas/profile-config.schema.json` as the source of truth for `profile-config.json` validation.
+- Keep `lib/types/config/` aligned with the schema return shape.
+- Keep `lib/config.ts` focused on loading, schema validation, default application, and typed return values.
+
+## Utilities
+
+- Generic helpers live under `lib/utils/`.
+- Keep `lib/utils/` limited to helpers with no project-domain ownership, such as date or string utilities.
+- Move domain-specific behavior into the relevant domain module instead of growing a generic utility module.
+
 ## Provider Neutrality
 
 - Keep the schema provider-neutral.

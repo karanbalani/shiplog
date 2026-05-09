@@ -18,6 +18,8 @@ Completed so far:
 - Rollup view migrations for monthly, yearly, organization, language, and user activity
 - Shared TypeScript schema, config, and vendor contracts in `lib/types/`
 - Postgres pool, query, transaction, and close helpers in `lib/db.ts`
+- UTC date helpers in `lib/utils/dates.ts`
+- JSON Schema-backed profile config loader in `lib/config.ts`
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 

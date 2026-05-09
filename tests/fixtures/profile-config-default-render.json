@@ -1,0 +1,18 @@
+{
+  "displayName": "Karan Balani",
+  "identities": [
+    {
+      "provider": "github",
+      "login": "balanikaran"
+    }
+  ],
+  "publishTargets": [
+    {
+      "provider": "github",
+      "repositoryFullName": "balanikaran/balanikaran",
+      "branch": "main",
+      "path": "README.md",
+      "tokenEnv": "GITHUB_README_TOKEN"
+    }
+  ]
+}
