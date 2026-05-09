@@ -83,6 +83,7 @@ This document captures project conventions that should stay consistent across im
 - Generic helpers live under `lib/utils/`.
 - Keep `lib/utils/` limited to helpers with no project-domain ownership, such as date or string utilities.
 - Move domain-specific behavior into the relevant domain module instead of growing a generic utility module.
+- Infrastructure modules such as `lib/db.ts` and `lib/http.ts` should live at the `lib/` root.
 
 ## Provider Neutrality
 
