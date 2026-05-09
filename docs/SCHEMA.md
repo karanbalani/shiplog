@@ -1,6 +1,6 @@
 # shiplog Schema
 
-This document explains the v1 Postgres schema. Tables are created by dbmate migrations in `db/migrations/`, with one table per migration file.
+This document explains the v1 Postgres schema. Tables and views are created by dbmate migrations in `db/migrations/`, with one schema object per migration file.
 
 ## Timestamp Semantics
 
@@ -353,3 +353,15 @@ Primary key:
 - Raw event tables are `commits`, `pull_requests`, `pull_request_reviews`, and `issues`.
 - `daily_repository_activity` is a rollup of raw event tables.
 - `daily_user_summary` stores provider-reported contribution totals that may not map one-to-one to raw event rows.
+
+## Views
+
+Views are read-only projections over the base tables. They are created by dedicated dbmate migrations after the tables they depend on.
+
+| View                            | Purpose                                                                                      |
+| ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `v_monthly_repository_activity` | Aggregates `daily_repository_activity` by account, `month_start`, and repository.            |
+| `v_yearly_repository_activity`  | Aggregates `daily_repository_activity` by account, year, and repository.                     |
+| `v_organization_activity`       | Aggregates account activity by year and organization through `repositories.organization_id`. |
+| `v_language_activity`           | Aggregates account activity by year and repository primary language.                         |
+| `v_user_yearly_activity`        | Aggregates account activity up to the human `users` level by year.                           |

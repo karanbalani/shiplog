@@ -15,6 +15,7 @@ Completed so far:
 - Example environment file in `.env.example`
 - Dependency install with Bun
 - Initial Postgres schema migrations in `db/migrations/`, one table per migration file
+- Rollup view migrations for monthly, yearly, organization, language, and user activity
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -131,10 +132,10 @@ psql "$DATABASE_URL" -c '\dt'
 Create a new migration:
 
 ```bash
-bun run migration:new create_some_table
+bun run migration:new create_table_some_table
 ```
 
-This wraps `dbmate new create_some_table` and creates a timestamped SQL file under `db/migrations/`. Keep schema migrations small: one table per migration, with table-specific indexes in the same file.
+This wraps `dbmate new create_table_some_table` and creates a timestamped SQL file under `db/migrations/`. Migration names should follow `<up_action>_<object_type>_<object_name>`, for example `create_table_users`, `create_view_monthly_repository_activity`, or `alter_table_accounts_add_timezone`. Keep schema migrations small: one table or view per migration, with table-specific indexes in the same file.
 
 Run the one-time backfill after configuring `profile-config.json` and migrating the database:
 
@@ -166,6 +167,6 @@ The v1 architecture is five Bun-executed TypeScript binaries:
 
 Shared code will live under `lib/`, GitHub-specific helpers under `bin/_github/`, and database migrations under `db/migrations/`.
 
-Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`.
+Project conventions live in `docs/CONVENTIONS.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
 Until the first TypeScript source file is added, `bun run typecheck` may report that `tsconfig.json` has no input files. That goes away once the planned `bin/`, `lib/`, or `tests/` TypeScript files are created.
