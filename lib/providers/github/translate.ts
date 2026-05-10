@@ -1,4 +1,4 @@
-import type { CommitRow, RepositoryRow } from '../../types/index.ts'
+import type { NewCommitRow, NewRepositoryRow } from '../../upserts.ts'
 import type { GitHubCommitNode, GitHubRepositoryNode } from './types.ts'
 
 export function repositoryFromGraphQLNode(
@@ -31,7 +31,7 @@ export function commitFromGraphQLNode(
   node: GitHubCommitNode,
   accountId: number,
   repositoryId: number,
-  source: CommitRow['source']
+  source: NewCommitRow['source']
 ): NewCommitRow {
   return {
     account_id: accountId,
@@ -68,13 +68,6 @@ export function languagesFromGraphQLEdges(edges: GitHubLanguageEdge[]): Language
     percentage: Number((edge.size / total).toFixed(4))
   }))
 }
-
-export type NewRepositoryRow = Omit<
-  RepositoryRow,
-  'id' | 'stable_key' | 'created_at' | 'updated_at'
->
-
-export type NewCommitRow = Omit<CommitRow, 'id' | 'created_at' | 'updated_at' | 'captured_at'>
 
 function repositoryName(nameWithOwner: string): string | null {
   return nameWithOwner.split('/')[1] ?? null

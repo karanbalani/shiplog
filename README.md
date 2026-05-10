@@ -22,6 +22,7 @@ Completed so far:
 - JSON Schema-backed profile config loader in `lib/config.ts`
 - Fetch JSON helper with retry and timeout support in `lib/http.ts`
 - GitHub provider API helpers in `lib/providers/github/`
+- Schema-aware database upsert helpers and daily repository rollups in `lib/upserts.ts`
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
