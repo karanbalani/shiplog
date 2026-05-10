@@ -2,8 +2,6 @@
 
 > Daily forge activity from my own shiplog database.
 
-Joined my first tracked account **{{ ACCOUNT_AGE_YEARS }}** years ago.
-
 ## Activity
 
 | Metric | All time | Last {{ LAST_YEAR_WINDOW_DAYS }} days |

@@ -28,6 +28,7 @@ Completed so far:
 - Init dispatcher in `bin/init.ts` that creates `users`/`accounts` and runs first-time backfill
 - Daily collect dispatcher in `bin/collect.ts`
 - README renderer in `bin/render.ts`
+- GitHub Actions workflows for one-time init and daily collection
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -106,7 +107,7 @@ For GitHub Actions, store the config as a repository variable named `SHIPLOG_CON
 base64 < profile_config.json | tr -d '\n'
 ```
 
-Then decode it inside the workflow before running `bun run init` or `bun run collect`:
+Then decode it inside the workflow before running `bun run init`, `bun run collect`, or `bun run render`:
 
 ```yaml
 - name: Write profile config
@@ -116,6 +117,14 @@ Then decode it inside the workflow before running `bun run init` or `bun run col
 ```
 
 `SHIPLOG_CONFIG_BASE64` is configuration, not a secret. Keep `DATABASE_URL` and provider tokens in GitHub Secrets.
+
+Required GitHub repository settings:
+
+- Repository variable: `SHIPLOG_CONFIG_BASE64`
+- Repository secret: `DATABASE_URL`
+- Repository secret: `GITHUB_API_TOKEN`
+
+After setting those values, run the `init` workflow once from GitHub Actions. The `collect` workflow then runs daily, on pushes to `main`, or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`.
 
 ## Development Commands
 

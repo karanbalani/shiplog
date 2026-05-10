@@ -32,7 +32,6 @@ test('render replaces template placeholders with database activity', async () =>
   })
 
   expect(output).toContain('# Hi, Example User')
-  expect(output).toContain('Joined **6** years ago.')
   expect(output).toContain('| Commits | 5 | 5 |')
   expect(output).toContain('| Lines added | 100 | 100 |')
   expect(output).toContain('| Octo Org | 5 | 2 | 4 | 1 |')
@@ -40,7 +39,7 @@ test('render replaces template placeholders with database activity', async () =>
   expect(output).toContain(
     '- [octo-org/hello](https://github.com/octo-org/hello) - 5 commits, 2 prs, 4 reviews'
   )
-  expect(output).toContain('- [github/octocat](https://github.com/octocat)')
+  expect(output).toContain('- [github/octocat](https://github.com/octocat) `age: 6 years`')
   expect(output).not.toContain('{{')
 })
 
@@ -154,7 +153,6 @@ function profileConfig(): ProfileConfig {
 function testTemplate(): string {
   return [
     '# Hi, {{ DISPLAY_NAME }}',
-    'Joined **{{ ACCOUNT_AGE_YEARS }}** years ago.',
     '{{ LAST_YEAR_WINDOW_DAYS }}',
     '{{ STATS_ROWS }}',
     '{{ LANGUAGE_ROWS }}',

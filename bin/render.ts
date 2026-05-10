@@ -14,14 +14,11 @@ export interface RenderOptions {
   now?: Date
 }
 
-interface AccountCreatedAtRow {
-  external_created_at: Date | string | null
-}
-
 interface AccountLinkRow {
   provider: string
   external_login: string
   external_url: string | null
+  external_created_at: Date | string | null
 }
 
 interface ActivityTotalsRow {
@@ -71,8 +68,7 @@ export async function render(options: RenderOptions = {}): Promise<string> {
   const now = options.now ?? new Date()
 
   const context: Record<string, string> = {
-    ACCOUNT_AGE_YEARS: String(await accountAgeYears(profileConfig, now)),
-    ACCOUNT_LINKS: await accountLinks(profileConfig),
+    ACCOUNT_LINKS: await accountLinks(profileConfig, now),
     DISPLAY_NAME: displayName(profileConfig),
     LANGUAGE_ROWS: await languageRows(profileConfig, now),
     LAST_YEAR_WINDOW_DAYS: String(profileConfig.render.lastYearWindowDays),
@@ -96,24 +92,10 @@ export async function run(options: RenderOptions = {}): Promise<void> {
   logger.info(`[render] wrote ${outputPath}`)
 }
 
-async function accountAgeYears(profileConfig: ProfileConfig, now: Date): Promise<number> {
-  const filter = accountFilter(profileConfig, 'accounts', 1)
-  const result = await db.query<AccountCreatedAtRow>(
-    `SELECT MIN(external_created_at) AS external_created_at
-     FROM accounts
-     WHERE ${filter.sql}`,
-    filter.params
-  )
-  const createdAt = result.rows[0]?.external_created_at
-  if (!createdAt) return 0
-
-  return completedYearsSince(createdAt, now)
-}
-
-async function accountLinks(profileConfig: ProfileConfig): Promise<string> {
+async function accountLinks(profileConfig: ProfileConfig, now: Date): Promise<string> {
   const filter = accountFilter(profileConfig, 'accounts', 1)
   const result = await db.query<AccountLinkRow>(
-    `SELECT provider, external_login, external_url
+    `SELECT provider, external_login, external_url, external_created_at
      FROM accounts
      WHERE ${filter.sql}
      ORDER BY provider, external_login`,
@@ -125,7 +107,8 @@ async function accountLinks(profileConfig: ProfileConfig): Promise<string> {
   return result.rows
     .map((row) => {
       const label = `${row.provider}/${row.external_login}`
-      return row.external_url ? `- [${label}](${row.external_url})` : `- ${label}`
+      const linkedLabel = row.external_url ? `[${label}](${row.external_url})` : label
+      return `- ${linkedLabel} ${accountAgeBadge(row.external_created_at, now)}`
     })
     .join('\n')
 }
@@ -317,6 +300,11 @@ function completedYearsSince(value: Date | string, now: Date): number {
 
   if (now < anniversaryThisYear) years -= 1
   return Math.max(0, years)
+}
+
+function accountAgeBadge(value: Date | string | null, now: Date): string {
+  if (!value) return '`age: unknown`'
+  return `\`age: ${completedYearsSince(value, now)} years\``
 }
 
 function dateDaysAgo(now: Date, days: number): string {

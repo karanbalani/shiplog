@@ -1,0 +1,47 @@
+name: render
+
+on:
+  workflow_run:
+    workflows:
+      - collect
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Write profile config
+        run: |
+          if [ -z "${SHIPLOG_CONFIG_BASE64:-}" ]; then
+            echo "missing repository variable: SHIPLOG_CONFIG_BASE64" >&2
+            exit 1
+          fi
+          printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > profile_config.json
+        env:
+          SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
+
+      - name: Render README
+        run: bun run render
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Commit rendered README
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'chore: update rendered readme'
+          file_pattern: README.md
