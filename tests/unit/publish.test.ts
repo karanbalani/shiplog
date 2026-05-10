@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { Buffer } from 'node:buffer'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import * as publish from '../../bin/publish.ts'
 import type { Fetcher } from '../../lib/http.ts'
 import * as logger from '../../lib/logger.ts'
@@ -135,6 +138,39 @@ test('publish uses configured publish targets and token env vars', async () => {
   expect(
     logs.some((line) => line.includes('[publish] github/octocat/octocat@main:README.md'))
   ).toBe(true)
+})
+
+test('publish reads rendered.md by default', async () => {
+  const previousCwd = process.cwd()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-publish-default-'))
+  fs.writeFileSync(path.join(dir, 'rendered.md'), '# rendered from file\n')
+  process.env.GH_RW_REPO_TOKEN = 'target-write-token'
+
+  const calls: Array<{ url: string; init?: RequestInit }> = []
+  const fetch: Fetcher = async (url, init) => {
+    calls.push({ url, init })
+    if (init?.method === 'PUT') {
+      return jsonResponse({
+        content: { sha: 'file-sha' },
+        commit: { sha: 'commit-sha' }
+      })
+    }
+
+    return new Response('{"message":"not found"}', { status: 404 })
+  }
+
+  try {
+    process.chdir(dir)
+    await publish.publish({
+      profileConfig: profileConfig(),
+      fetch
+    })
+  } finally {
+    process.chdir(previousCwd)
+  }
+
+  const body = JSON.parse(String(calls[1]!.init?.body)) as { content: string }
+  expect(body.content).toBe(Buffer.from('# rendered from file\n', 'utf8').toString('base64'))
 })
 
 test('publish fails when target token env var is missing', async () => {

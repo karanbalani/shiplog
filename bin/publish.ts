@@ -6,6 +6,8 @@ import * as logger from '../lib/logger.ts'
 import { publishGitHubFile, type GitHubPublishFileResult } from '../lib/providers/github/publish.ts'
 import type { ProfileConfig, PublishTargetConfig } from '../lib/types/index.ts'
 
+const DEFAULT_INPUT_PATH = 'rendered.md'
+
 export interface PublishOptions {
   configPath?: string
   profileConfig?: ProfileConfig
@@ -21,7 +23,7 @@ export async function publish(options: PublishOptions = {}): Promise<GitHubPubli
     config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
   const content =
     options.content ??
-    fs.readFileSync(options.inputPath ?? path.resolve(process.cwd(), 'README.md'), 'utf8')
+    fs.readFileSync(options.inputPath ?? path.resolve(process.cwd(), DEFAULT_INPUT_PATH), 'utf8')
   const message = options.message ?? 'chore: update rendered readme'
   const results: GitHubPublishFileResult[] = []
 

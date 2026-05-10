@@ -1,0 +1,72 @@
+name: setup shiplog
+description: Install Bun dependencies and optionally prepare config/database state.
+
+inputs:
+  install_dbmate:
+    description: Install dbmate for migration-capable jobs.
+    required: false
+    default: 'false'
+  write_profile_config:
+    description: Decode SHIPLOG_CONFIG_BASE64 into profile_config.json.
+    required: false
+    default: 'false'
+  shiplog_config_base64:
+    description: Base64-encoded profile_config.json content.
+    required: false
+    default: ''
+  wait_for_database:
+    description: Run the database readiness check.
+    required: false
+    default: 'false'
+  run_migrations:
+    description: Run dbmate migrations.
+    required: false
+    default: 'false'
+  database_connection_string:
+    description: Postgres connection string for database steps.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
+
+    - name: Install dbmate
+      if: ${{ inputs.install_dbmate == 'true' }}
+      shell: bash
+      run: |
+        curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+        chmod +x /usr/local/bin/dbmate
+
+    - name: Install dependencies
+      shell: bash
+      run: bun install --frozen-lockfile
+
+    - name: Write profile config
+      if: ${{ inputs.write_profile_config == 'true' }}
+      shell: bash
+      env:
+        SHIPLOG_CONFIG_BASE64: ${{ inputs.shiplog_config_base64 }}
+      run: |
+        if [ -z "${SHIPLOG_CONFIG_BASE64:-}" ]; then
+          echo "missing repository variable: SHIPLOG_CONFIG_BASE64" >&2
+          exit 1
+        fi
+        printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > profile_config.json
+
+    - name: Wait for database
+      if: ${{ inputs.wait_for_database == 'true' }}
+      shell: bash
+      env:
+        DATABASE_CONNECTION_STRING: ${{ inputs.database_connection_string }}
+      run: bun run db:wait
+
+    - name: Run migrations
+      if: ${{ inputs.run_migrations == 'true' }}
+      shell: bash
+      env:
+        DATABASE_CONNECTION_STRING: ${{ inputs.database_connection_string }}
+      run: bun run migrate

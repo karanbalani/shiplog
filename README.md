@@ -2,7 +2,7 @@
 
 Daily snapshots of your forge activity into your own Postgres, rendered back into a GitHub profile README.
 
-shiplog v1 is a forkable profile-README template. It collects GitHub activity into Neon Postgres, catches up from the last successful checkpoint, then renders a unified `README.md` from the database.
+shiplog v1 is a forkable profile-README template. It collects GitHub activity into Neon Postgres, catches up from the last successful checkpoint, then renders a unified profile README from the database.
 
 ## Current Status
 
@@ -174,7 +174,7 @@ If an organization requires a separate read token, create another secret such as
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders, and publishes the initial README to `publishTargets`. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates `README.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders `rendered.md`, and publishes the initial README to `publishTargets`. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates `rendered.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
@@ -305,7 +305,7 @@ The v1 architecture is six Bun-executed TypeScript binaries:
 - `bin/render.ts`
 - `bin/publish.ts`
 
-Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/github/`, and database migrations under `db/migrations/`.
+Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/github/`, database migrations under `db/migrations/`, and reusable workflow actions under `.github/actions/`.
 
 Project conventions live in `docs/CONVENTIONS.md`. Frequently asked setup and operations questions live in `docs/FAQ.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
@@ -317,8 +317,8 @@ The init dispatcher reads `profile_config.json`, ensures the human `users` row e
 
 The collect dispatcher reads `profile_config.json`, resolves initialized `accounts`, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE`, or catches up every missing date through UTC yesterday. After a successful automatic run, it advances the account checkpoint.
 
-The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `README.md`.
+The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `rendered.md`. It does not overwrite this repository's own `README.md`.
 
-The publisher reads the rendered `README.md` and writes it to each configured `publishTargets[]` entry. GitHub targets use the Contents API with the target's `tokenEnv`, `repositoryFullName`, `branch`, and `path`.
+The publisher reads `rendered.md` and writes it to each configured `publishTargets[]` entry. GitHub targets use the Contents API with the target's `tokenEnv`, `repositoryFullName`, `branch`, and `path`.
 
 CLI logs use `lib/logger.ts`, write to stderr, include ISO timestamps, support log levels, and colorize levels unless `NO_COLOR` is set.

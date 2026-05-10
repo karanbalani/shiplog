@@ -1,0 +1,32 @@
+name: render and publish readme
+description: Render shiplog markdown, print it in logs, and publish it to configured targets.
+
+inputs:
+  database_connection_string:
+    description: Postgres connection string used by the renderer.
+    required: true
+  gh_rw_repo_token:
+    description: GitHub write token exposed to publish targets that use GH_RW_REPO_TOKEN.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Render README
+      shell: bash
+      env:
+        DATABASE_CONNECTION_STRING: ${{ inputs.database_connection_string }}
+      run: bun run render
+
+    - name: Print rendered README
+      shell: bash
+      run: |
+        echo "::group::rendered.md"
+        cat rendered.md
+        echo "::endgroup::"
+
+    - name: Publish rendered README
+      shell: bash
+      env:
+        GH_RW_REPO_TOKEN: ${{ inputs.gh_rw_repo_token }}
+      run: bun run publish

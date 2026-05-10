@@ -18,40 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/setup_shiplog
         with:
-          bun-version: latest
+          write_profile_config: 'true'
+          shiplog_config_base64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
+          wait_for_database: 'true'
+          database_connection_string: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Write profile config
-        run: |
-          if [ -z "${SHIPLOG_CONFIG_BASE64:-}" ]; then
-            echo "missing repository variable: SHIPLOG_CONFIG_BASE64" >&2
-            exit 1
-          fi
-          printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > profile_config.json
-        env:
-          SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
-
-      - name: Wait for database
-        run: bun run db:wait
-        env:
-          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-
-      - name: Render README
-        run: bun run render
-        env:
-          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-
-      - name: Print rendered README
-        run: |
-          echo "::group::Rendered README.md"
-          cat README.md
-          echo "::endgroup::"
-
-      - name: Publish rendered README
-        run: bun run publish
-        env:
-          GH_RW_REPO_TOKEN: ${{ secrets.GH_RW_REPO_TOKEN }}
+      - uses: ./.github/actions/render_publish_readme
+        with:
+          database_connection_string: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          gh_rw_repo_token: ${{ secrets.GH_RW_REPO_TOKEN }}

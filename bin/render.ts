@@ -5,6 +5,8 @@ import * as db from '../lib/db.ts'
 import * as logger from '../lib/logger.ts'
 import type { ProfileConfig } from '../lib/types/index.ts'
 
+const DEFAULT_OUTPUT_PATH = 'rendered.md'
+
 export interface RenderOptions {
   configPath?: string
   profileConfig?: ProfileConfig
@@ -87,7 +89,7 @@ export async function render(options: RenderOptions = {}): Promise<string> {
 
 export async function run(options: RenderOptions = {}): Promise<void> {
   const output = await render(options)
-  const outputPath = options.outputPath ?? path.resolve(process.cwd(), 'README.md')
+  const outputPath = options.outputPath ?? path.resolve(process.cwd(), DEFAULT_OUTPUT_PATH)
   fs.writeFileSync(outputPath, output)
   logger.info(`[render] wrote ${outputPath}`)
 }

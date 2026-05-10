@@ -231,7 +231,7 @@ Yes:
 bun run render
 ```
 
-This reads the existing database state and writes `README.md`.
+This reads the existing database state and writes `rendered.md`. It does not overwrite this repository's own `README.md`.
 
 ## Can I publish an already rendered README?
 
@@ -241,7 +241,7 @@ Yes:
 bun run publish
 ```
 
-This reads local `README.md` and writes it to each `publishTargets[]` entry in `profile_config.json`.
+This reads local `rendered.md` and writes it to each `publishTargets[]` entry in `profile_config.json`.
 
 ## Can I run shiplog locally?
 
