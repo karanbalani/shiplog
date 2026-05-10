@@ -6,14 +6,7 @@ import * as logger from '../lib/logger.ts'
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
 import * as queries from '../lib/providers/github/queries.ts'
 import type { GitHubUserCore } from '../lib/providers/github/types.ts'
-import type {
-  AccountRow,
-  IdentityConfig,
-  ProfileConfig,
-  UserRow,
-  VendorIdentity,
-  VendorModule
-} from '../lib/types/index.ts'
+import type { IdentityConfig, ProfileConfig, UserRow } from '../lib/types/index.ts'
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
 
@@ -37,7 +30,6 @@ export async function run(options: InitRunOptions = {}): Promise<void> {
     config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
   const user = await ensureUser(profileConfig.displayName ?? null)
   const firstSeenOn = dates.yesterdayUTC(options.now)
-  let didBackfill = false
 
   for (const identityConfig of profileConfig.identities) {
     const token = tokenForIdentity(identityConfig)
@@ -51,26 +43,16 @@ export async function run(options: InitRunOptions = {}): Promise<void> {
       external_created_at: accountProfile.externalCreatedAt,
       first_seen_on: firstSeenOn
     })
-
-    if (account.backfill_completed_at) {
-      logger.info(`[init] ${identityConfig.provider}/${account.external_login}: already backfilled`)
-      continue
-    }
-
-    logger.info(`[init] ${identityConfig.provider}/${account.external_login}: backfilling`)
-    const vendor = await importVendorBackfill(identityConfig.provider)
-    await vendor.run({
-      identity: vendorIdentity(account),
-      token,
-      fetch: options.fetch
-    })
-    await upserts.markBackfillComplete(account.id, firstSeenOn)
-    didBackfill = true
+    logger.info(`[init] ${identityConfig.provider}/${account.external_login}: account ready`)
   }
 
-  if (didBackfill) {
-    logger.info('[init] backfill complete')
-  }
+  logger.info('[init] collecting missing activity')
+  const collect = await import('./collect.ts')
+  await collect.run({
+    profileConfig,
+    fetch: options.fetch,
+    now: options.now
+  })
 }
 
 export async function ensureUser(displayName: string | null): Promise<UserRow> {
@@ -108,13 +90,8 @@ async function fetchGitHubAccountProfile(
   }
 }
 
-async function importVendorBackfill(provider: string): Promise<VendorModule> {
-  if (provider !== 'github') throw new Error(`unsupported provider in v1: ${provider}`)
-  return (await import('./backfill_github.ts')) as VendorModule
-}
-
 function tokenForIdentity(identityConfig: IdentityConfig): string {
-  const envName = readOnlyTokenEnvName(identityConfig.provider)
+  const envName = identityConfig.tokenEnv || readOnlyTokenEnvName(identityConfig.provider)
   const token = process.env[envName]
   if (!token) throw new Error(`Missing ${envName}`)
   return token
@@ -123,14 +100,6 @@ function tokenForIdentity(identityConfig: IdentityConfig): string {
 function readOnlyTokenEnvName(provider: string): string {
   if (provider === 'github') return 'GH_RO_CLASSIC_TOKEN'
   return `${provider.toUpperCase()}_RO_CLASSIC_TOKEN`
-}
-
-function vendorIdentity(account: AccountRow): VendorIdentity {
-  return {
-    accountId: account.id,
-    externalLogin: account.external_login,
-    externalId: account.external_id
-  }
 }
 
 if (import.meta.main) {

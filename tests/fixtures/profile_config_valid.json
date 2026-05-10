@@ -4,6 +4,13 @@
     {
       "provider": "github",
       "login": "octocat",
+      "tokenEnv": "GH_RO_CLASSIC_TOKEN",
+      "organizationTokens": [
+        {
+          "organization": "restricted-org",
+          "tokenEnv": "GH_RO_RESTRICTED_ORG_TOKEN"
+        }
+      ],
       "ignoreOrganizations": ["some-noisy-org"],
       "ignoreRepositories": ["octocat/octocat"]
     }

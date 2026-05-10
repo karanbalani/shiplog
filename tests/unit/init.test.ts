@@ -28,7 +28,7 @@ afterEach(async () => {
   }
 })
 
-test('run creates account from config identity and marks backfill complete', async () => {
+test('run creates account from config identity and collects initial history', async () => {
   await init.run({
     profileConfig: profileConfig(),
     fetch: mockGitHubFetch(),
@@ -39,11 +39,8 @@ test('run creates account from config identity and marks backfill complete', asy
   const accounts = await db.query<{
     external_login: string
     external_id: string
-    backfill_completed_at: Date | null
     last_successful_collect_on: Date | string | null
-  }>(
-    'SELECT external_login, external_id, backfill_completed_at, last_successful_collect_on FROM accounts'
-  )
+  }>('SELECT external_login, external_id, last_successful_collect_on FROM accounts')
   const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
 
   expect(users.rows[0]!.count).toBe(1)
@@ -51,12 +48,11 @@ test('run creates account from config identity and marks backfill complete', asy
     external_login: 'octocat',
     external_id: 'U_TEST_1'
   })
-  expect(accounts.rows[0]!.backfill_completed_at).not.toBeNull()
   expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
   expect(commits.rows[0]!.count).toBe(1)
 })
 
-test('run skips backfill when account marker is already set', async () => {
+test('run skips initial history when collect checkpoint is current', async () => {
   await init.run({
     profileConfig: profileConfig(),
     fetch: mockGitHubFetch(),
@@ -80,6 +76,8 @@ function profileConfig(): ProfileConfig {
       {
         provider: 'github',
         login: 'octocat',
+        tokenEnv: 'GH_RO_CLASSIC_TOKEN',
+        organizationTokens: [],
         ignoreOrganizations: [],
         ignoreRepositories: []
       }

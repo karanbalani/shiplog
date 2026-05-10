@@ -18,18 +18,20 @@ import type {
   GitHubSearchResult,
   GitHubUserCore
 } from '../lib/providers/github/types.ts'
-import type { BackfillArgs, VendorIdentity } from '../lib/types/index.ts'
+import type { BackfillArgs, VendorIdentity, VendorOrganizationToken } from '../lib/types/index.ts'
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
 
 export async function run(args: BackfillArgs): Promise<void> {
-  const { identity, token, fetch } = args
+  const { identity, token, organizationTokens = [], fetch } = args
   if (!identity) throw new Error('backfill_github: missing identity')
   if (!token) throw new Error('backfill_github: missing token')
 
   const startedAt = Date.now()
   const graphQL = graphQLClient({ token, fetch })
   const rest = restClient({ token, fetch })
+  const defaultClients: GitHubClients = { graphQL, rest }
+  const organizationClients = organizationClientMap(organizationTokens, fetch)
   const user = await fetchGitHubUser(graphQL, identity.externalLogin)
   const years = dates.yearRange(
     new Date(user.createdAt).getUTCFullYear(),
@@ -39,13 +41,13 @@ export async function run(args: BackfillArgs): Promise<void> {
   const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>()
 
   logger.info(
-    `[backfill] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)})`
+    `[collect:history] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)})`
   )
 
   for (const [index, year] of years.entries()) {
     const { from, to } = dates.yearWindow(year)
     logger.info(
-      `[backfill] github/${identity.externalLogin}: discovery ${index + 1}/${years.length} (${year})`
+      `[collect:history] github/${identity.externalLogin}: discovery ${index + 1}/${years.length} (${year})`
     )
     const collection = await fetchContributionsCollection(graphQL, identity.externalLogin, from, to)
 
@@ -62,11 +64,14 @@ export async function run(args: BackfillArgs): Promise<void> {
     })
   }
 
-  await collectAccessiblePrivateRepositories(rest, repositoriesByExternalId)
+  await collectAccessibleRepositories(rest, repositoriesByExternalId)
+  for (const [organization, clients] of organizationClients) {
+    await collectOrganizationRepositories(clients.rest, organization, repositoriesByExternalId)
+  }
 
   const repositoryCount = repositoriesByExternalId.size
   logger.info(
-    `[backfill] github/${identity.externalLogin}: discovered ${repositoryCount} repositories; estimated minimum GitHub Search pacing ${formatDuration(
+    `[collect:history] github/${identity.externalLogin}: discovered ${repositoryCount} repositories; estimated minimum GitHub Search pacing ${formatDuration(
       estimatedSearchPacingMs(repositoryCount)
     )}`
   )
@@ -75,6 +80,7 @@ export async function run(args: BackfillArgs): Promise<void> {
   let completedRepositories = 0
 
   for (const repositoryNode of repositoriesByExternalId.values()) {
+    const clients = clientsForRepository(repositoryNode, defaultClients, organizationClients)
     const organizationId = await upsertOrganizationFromRepositoryOwner(repositoryNode, observedOn)
     const repositoryInput = translate.repositoryFromGraphQLNode(
       repositoryNode,
@@ -87,13 +93,13 @@ export async function run(args: BackfillArgs): Promise<void> {
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
 
     logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName}`
+      `[collect:history] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName}`
     )
 
     for (const year of years) {
       const { from, to } = dates.yearWindow(year)
       await ingestCommits(
-        graphQL,
+        clients.graphQL,
         repository.id,
         repositoryInput.owner_login,
         name,
@@ -103,11 +109,11 @@ export async function run(args: BackfillArgs): Promise<void> {
       )
     }
 
-    await ingestPullRequests(rest, repository.id, fullName, identity)
-    await ingestIssues(rest, repository.id, fullName, identity)
-    await ingestPullRequestReviews(rest, repository.id, fullName, identity)
+    await ingestPullRequests(clients.rest, repository.id, fullName, identity)
+    await ingestIssues(clients.rest, repository.id, fullName, identity)
+    await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity)
     await upsertRepositoryLanguageSnapshot(
-      graphQL,
+      clients.graphQL,
       repository.id,
       repositoryInput.owner_login,
       name,
@@ -116,7 +122,7 @@ export async function run(args: BackfillArgs): Promise<void> {
 
     completedRepositories += 1
     logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] complete (${progressPercent(
+      `[collect:history] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] complete (${progressPercent(
         completedRepositories,
         repositoryCount
       )}%, elapsed ${formatDuration(Date.now() - repositoriesStartedAt)}, eta ${formatDuration(
@@ -125,11 +131,39 @@ export async function run(args: BackfillArgs): Promise<void> {
     )
   }
 
-  logger.info(`[backfill] github/${identity.externalLogin}: rolling up activity dates`)
+  logger.info(`[collect:history] github/${identity.externalLogin}: rolling up activity dates`)
   await rollupDistinctActivityDates(identity.accountId)
   logger.info(
-    `[backfill] github/${identity.externalLogin}: complete in ${formatDuration(Date.now() - startedAt)}`
+    `[collect:history] github/${identity.externalLogin}: complete in ${formatDuration(Date.now() - startedAt)}`
   )
+}
+
+interface GitHubClients {
+  graphQL: GraphQLClient
+  rest: RestClient
+}
+
+function organizationClientMap(
+  organizationTokens: VendorOrganizationToken[],
+  fetch: BackfillArgs['fetch']
+): Map<string, GitHubClients> {
+  return new Map(
+    organizationTokens.map((orgToken) => [
+      orgToken.organization.toLowerCase(),
+      {
+        graphQL: graphQLClient({ token: orgToken.token, fetch }),
+        rest: restClient({ token: orgToken.token, fetch })
+      }
+    ])
+  )
+}
+
+function clientsForRepository(
+  repositoryNode: GitHubRepositoryNode,
+  defaultClients: GitHubClients,
+  organizationClients: Map<string, GitHubClients>
+): GitHubClients {
+  return organizationClients.get(repositoryNode.owner.login.toLowerCase()) ?? defaultClients
 }
 
 async function upsertOrganizationFromRepositoryOwner(
@@ -185,14 +219,40 @@ function collectActiveRepositories(
   }
 }
 
-async function collectAccessiblePrivateRepositories(
+async function collectAccessibleRepositories(
   rest: RestClient,
   repositoriesByExternalId: Map<string, GitHubRepositoryNode>
 ): Promise<void> {
   for (let page = 1; ; page += 1) {
     const repositories = await rest<GitHubRestRepository[]>('/user/repos', {
-      visibility: 'private',
+      visibility: 'all',
       affiliation: 'owner,collaborator,organization_member',
+      sort: 'full_name',
+      direction: 'asc',
+      per_page: 100,
+      page
+    })
+
+    for (const repository of repositories) {
+      if (repositoriesByExternalId.has(repository.node_id)) continue
+      repositoriesByExternalId.set(
+        repository.node_id,
+        translate.repositoryFromRestRepository(repository)
+      )
+    }
+
+    if (repositories.length < 100) return
+  }
+}
+
+async function collectOrganizationRepositories(
+  rest: RestClient,
+  organization: string,
+  repositoriesByExternalId: Map<string, GitHubRepositoryNode>
+): Promise<void> {
+  for (let page = 1; ; page += 1) {
+    const repositories = await rest<GitHubRestRepository[]>(`/orgs/${organization}/repos`, {
+      type: 'all',
       sort: 'full_name',
       direction: 'asc',
       per_page: 100,

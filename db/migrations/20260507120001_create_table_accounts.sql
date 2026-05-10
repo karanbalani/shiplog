@@ -10,7 +10,6 @@ CREATE TABLE accounts (
   external_url TEXT,
   external_created_at TIMESTAMPTZ NOT NULL,
   first_seen_on DATE NOT NULL,
-  backfill_completed_at TIMESTAMPTZ,
   last_successful_collect_on DATE,
   captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

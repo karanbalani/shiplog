@@ -28,6 +28,30 @@
             "type": "string",
             "minLength": 1
           },
+          "tokenEnv": {
+            "type": "string",
+            "minLength": 1,
+            "default": "GH_RO_CLASSIC_TOKEN"
+          },
+          "organizationTokens": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["organization", "tokenEnv"],
+              "properties": {
+                "organization": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tokenEnv": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
           "ignoreOrganizations": {
             "type": "array",
             "default": [],

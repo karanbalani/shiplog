@@ -37,9 +37,8 @@ One row per external forge account connected to a user, such as a GitHub account
 | `external_login`             | `TEXT`        | Account login on the provider, for example a GitHub username.                                                   |
 | `external_id`                | `TEXT`        | Stable provider-side account id. GitHub maps its GraphQL node id here.                                          |
 | `external_url`               | `TEXT`        | Optional profile URL on the provider.                                                                           |
-| `external_created_at`        | `TIMESTAMPTZ` | Provider-side account creation timestamp. Used for historical backfill bounds and account age rendering.        |
+| `external_created_at`        | `TIMESTAMPTZ` | Provider-side account creation timestamp. Used for historical collection bounds and account age rendering.      |
 | `first_seen_on`              | `DATE`        | Date shiplog first observed this identity.                                                                      |
-| `backfill_completed_at`      | `TIMESTAMPTZ` | Null until the one-time historical backfill succeeds. Used to make `bun run init` idempotent.                   |
 | `last_successful_collect_on` | `DATE`        | Latest target date successfully collected for this account. Used by `bun run collect` to catch up missed days.  |
 | `captured_at`                | `TIMESTAMPTZ` | Timestamp when this identity row was captured or refreshed. Defaults to `now()`.                                |
 | `created_at`                 | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.                                         |
@@ -54,8 +53,9 @@ Constraints and indexes:
 
 Collection checkpoint:
 
-- `last_successful_collect_on` is advanced after each successful daily collect target.
-- Automatic collect runs process every date from `last_successful_collect_on + 1` through UTC yesterday.
+- When `last_successful_collect_on` is null, automatic collect runs the complete historical collection path.
+- After the first complete collection, automatic collect runs process every date from `last_successful_collect_on + 1` through UTC yesterday.
+- `last_successful_collect_on` is advanced after successful automatic collection.
 - Manual `COLLECT_DATE` runs collect exactly one requested date without advancing the checkpoint, and safely dedupes on rerun.
 
 ## profile_snapshots
@@ -321,20 +321,20 @@ Constraints:
 
 Daily provider-level contribution totals from the provider API. This captures totals that may include private or restricted contributions not visible as individual events.
 
-| Column                                    | Type          | Notes                                                                           |
-| ----------------------------------------- | ------------- | ------------------------------------------------------------------------------- |
-| `id`                                      | `BIGSERIAL`   | Primary key.                                                                    |
-| `account_id`                              | `BIGINT`      | Required reference to `accounts.id`.                                            |
-| `activity_on`                             | `DATE`        | Activity date. Backfill uses year-start sentinel dates for yearly summary rows. |
-| `total_commit_contributions`              | `INT`         | Provider-reported commit contribution count.                                    |
-| `total_pull_request_contributions`        | `INT`         | Provider-reported pull request contribution count.                              |
-| `total_pull_request_review_contributions` | `INT`         | Provider-reported pull request review contribution count.                       |
-| `total_issue_contributions`               | `INT`         | Provider-reported issue contribution count.                                     |
-| `restricted_contributions_count`          | `INT`         | Provider-reported private or restricted contribution count.                     |
-| `source`                                  | `TEXT`        | Must be `live`, `self_backfill`, or `external_import`.                          |
-| `captured_at`                             | `TIMESTAMPTZ` | Timestamp when shiplog captured or refreshed the row. Defaults to `now()`.      |
-| `created_at`                              | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.         |
-| `updated_at`                              | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`.     |
+| Column                                    | Type          | Notes                                                                                     |
+| ----------------------------------------- | ------------- | ----------------------------------------------------------------------------------------- |
+| `id`                                      | `BIGSERIAL`   | Primary key.                                                                              |
+| `account_id`                              | `BIGINT`      | Required reference to `accounts.id`.                                                      |
+| `activity_on`                             | `DATE`        | Activity date. Historical collect uses year-start sentinel dates for yearly summary rows. |
+| `total_commit_contributions`              | `INT`         | Provider-reported commit contribution count.                                              |
+| `total_pull_request_contributions`        | `INT`         | Provider-reported pull request contribution count.                                        |
+| `total_pull_request_review_contributions` | `INT`         | Provider-reported pull request review contribution count.                                 |
+| `total_issue_contributions`               | `INT`         | Provider-reported issue contribution count.                                               |
+| `restricted_contributions_count`          | `INT`         | Provider-reported private or restricted contribution count.                               |
+| `source`                                  | `TEXT`        | Must be `live`, `self_backfill`, or `external_import`.                                    |
+| `captured_at`                             | `TIMESTAMPTZ` | Timestamp when shiplog captured or refreshed the row. Defaults to `now()`.                |
+| `created_at`                              | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.                   |
+| `updated_at`                              | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`.               |
 
 Constraints:
 

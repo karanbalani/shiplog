@@ -275,19 +275,19 @@ test('rollupDailyRepositoryActivity computes counts from event tables', async ()
   expect(row.issues_closed).toBe(1)
 })
 
-test('markBackfillComplete sets the marker once', async () => {
+test('markCollectSuccess advances the checkpoint', async () => {
   const { account } = await seedAccountAndRepository()
 
-  expect(account.backfill_completed_at).toBeNull()
+  expect(account.last_successful_collect_on).toBeNull()
 
-  await upserts.markBackfillComplete(account.id)
+  await upserts.markCollectSuccess(account.id, '2026-05-07')
   const first = await db.query<AccountRow>('SELECT * FROM accounts WHERE id = $1', [account.id])
 
-  await upserts.markBackfillComplete(account.id)
+  await upserts.markCollectSuccess(account.id, '2026-05-06')
   const second = await db.query<AccountRow>('SELECT * FROM accounts WHERE id = $1', [account.id])
 
-  expect(first.rows[0]!.backfill_completed_at).not.toBeNull()
-  expect(second.rows[0]!.backfill_completed_at).toEqual(first.rows[0]!.backfill_completed_at)
+  expect(dateOnly(first.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
+  expect(dateOnly(second.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
 })
 
 async function seedAccountAndRepository(): Promise<{
@@ -345,4 +345,8 @@ function loadMigration(filename: string): string {
     .readFileSync(path.join(MIGRATIONS, filename), 'utf8')
     .split(/-- migrate:down/)[0]!
     .replace(/^-- migrate:up\s*/m, '')
+}
+
+function dateOnly(value: Date | string): string {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : value.slice(0, 10)
 }

@@ -7,6 +7,7 @@ import type {
   AccountRow,
   IdentityConfig,
   ProfileConfig,
+  VendorOrganizationToken,
   VendorIdentity,
   VendorModule
 } from '../lib/types/index.ts'
@@ -30,7 +31,25 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
 
   for (const identityConfig of profileConfig.identities) {
     const token = tokenForIdentity(identityConfig)
+    const organizationTokens = organizationTokensForIdentity(identityConfig)
     const account = await findAccount(identityConfig)
+    const identity = vendorIdentity(account)
+
+    if (!requestedDate && !account.last_successful_collect_on) {
+      logger.info(
+        `[collect] ${identityConfig.provider}/${account.external_login}: no checkpoint found; collecting complete history through ${yesterday}`
+      )
+      const historicalVendor = await importVendorHistoricalCollector(identityConfig.provider)
+      await historicalVendor.run({
+        identity,
+        token,
+        organizationTokens,
+        fetch: options.fetch
+      })
+      await upserts.markCollectSuccess(account.id, yesterday)
+      continue
+    }
+
     const vendor = await importVendorCollector(identityConfig.provider)
     const collectDates = collectDatesForAccount(account, yesterday, requestedDate)
 
@@ -50,8 +69,9 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
         `[collect] ${identityConfig.provider}/${account.external_login}: ${index + 1}/${collectDates.length} ${collectDate}`
       )
       await vendor.run({
-        identity: vendorIdentity(account),
+        identity,
         token,
+        organizationTokens,
         date: collectDate,
         fetch: options.fetch
       })
@@ -104,11 +124,28 @@ async function importVendorCollector(provider: string): Promise<VendorModule> {
   return (await import('./collect_github.ts')) as VendorModule
 }
 
+async function importVendorHistoricalCollector(provider: string): Promise<VendorModule> {
+  if (provider !== 'github') throw new Error(`unsupported provider in v1: ${provider}`)
+  return (await import('./backfill_github.ts')) as VendorModule
+}
+
 function tokenForIdentity(identityConfig: IdentityConfig): string {
-  const envName = readOnlyTokenEnvName(identityConfig.provider)
+  const envName = identityConfig.tokenEnv || readOnlyTokenEnvName(identityConfig.provider)
   const token = process.env[envName]
   if (!token) throw new Error(`Missing ${envName}`)
   return token
+}
+
+function organizationTokensForIdentity(identityConfig: IdentityConfig): VendorOrganizationToken[] {
+  return identityConfig.organizationTokens.map((orgToken) => {
+    const token = process.env[orgToken.tokenEnv]
+    if (!token) throw new Error(`Missing ${orgToken.tokenEnv}`)
+    return {
+      organization: orgToken.organization,
+      tokenEnv: orgToken.tokenEnv,
+      token
+    }
+  })
 }
 
 function readOnlyTokenEnvName(provider: string): string {

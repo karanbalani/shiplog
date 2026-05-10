@@ -2,7 +2,7 @@
 
 Daily snapshots of your forge activity into your own Postgres, rendered back into a GitHub profile README.
 
-shiplog v1 is a forkable profile-README template. It collects GitHub activity into Neon Postgres, runs a one-time historical backfill, then renders a unified `README.md` from the database.
+shiplog v1 is a forkable profile-README template. It collects GitHub activity into Neon Postgres, catches up from the last successful checkpoint, then renders a unified `README.md` from the database.
 
 ## Current Status
 
@@ -24,9 +24,9 @@ Completed so far:
 - GitHub provider API helpers in `lib/providers/github/`
 - Schema-aware database upsert helpers and daily repository rollups in `lib/upserts.ts`
 - GitHub daily collector in `bin/collect_github.ts`
-- GitHub historical backfill walker in `bin/backfill_github.ts`
-- Init dispatcher in `bin/init.ts` that creates `users`/`accounts` and runs first-time backfill
-- Daily collect dispatcher in `bin/collect.ts`
+- Internal GitHub historical collection strategy in `bin/backfill_github.ts`
+- Init dispatcher in `bin/init.ts` that creates `users`/`accounts` and delegates ingestion to collect
+- Collect dispatcher in `bin/collect.ts` that runs full history when no checkpoint exists, then daily catch-up afterward
 - README renderer in `bin/render.ts`
 - GitHub Actions workflows for one-time init and daily collection
 
@@ -113,6 +113,8 @@ Then fill in:
 DATABASE_CONNECTION_STRING=postgres://shiplog:password@host:5432/shiplog?sslmode=verify-full
 GH_RO_CLASSIC_TOKEN=ghp_xxx
 GH_RW_REPO_TOKEN=github_pat_xxx
+# Optional, only when an org requires a separate read token:
+# GH_RO_RESTRICTED_ORG_TOKEN=github_pat_xxx
 ```
 
 Optional logging controls:
@@ -132,6 +134,8 @@ Then edit `profile_config.json`:
 
 - Set `displayName`.
 - Set `identities[0].login` to your GitHub username.
+- Set `identities[0].tokenEnv` to the read token env var, usually `GH_RO_CLASSIC_TOKEN`.
+- Optionally add `identities[0].organizationTokens[]` for organizations that need a separately authorized read token.
 - Set `publishTargets[0].repositoryFullName` to the repository that should receive the rendered README, usually `your-github-login/your-github-login` for a GitHub profile README.
 - Set `publishTargets[0].tokenEnv` to `GH_RW_REPO_TOKEN`.
 
@@ -166,7 +170,9 @@ Token responsibilities:
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org` so private repository activity is available.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The first backfill can be slow because shiplog deliberately throttles GitHub REST Search calls and waits through rate-limit reset windows instead of failing fast. During backfill, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; backfill writes are upserted and the completion marker is only set after the backfill finishes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
+If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_TOKEN`, add it to `identities[0].organizationTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
+
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders, and commits the initial README. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
@@ -254,13 +260,13 @@ bun run migration:new create_table_some_table
 
 This wraps `dbmate new create_table_some_table` and creates a timestamped SQL file under `db/migrations/`. Migration names should follow `<up_action>_<object_type>_<object_name>`, for example `create_table_users`, `create_view_monthly_repository_activity`, or `alter_table_accounts_add_timezone`. Keep schema migrations small: one table or view per migration, with table-specific indexes in the same file.
 
-Run the one-time backfill after configuring `profile_config.json` and migrating the database:
+Initialize accounts and run the first collection after configuring `profile_config.json` and migrating the database:
 
 ```bash
 bun run init
 ```
 
-`init` is resumable. If it fails midway because of a provider or database error, rerun it after fixing the issue. Existing rows are deduplicated by database constraints and upserts, and `accounts.backfill_completed_at` is set only after the provider backfill succeeds. Backfill logs include approximate ETA updates while repositories are processed.
+`init` is resumable. If it fails midway because of a provider or database error, rerun it after fixing the issue. Existing rows are deduplicated by database constraints and upserts. `accounts.last_successful_collect_on` stays null until the first complete historical collect succeeds, so rerunning `init` or `collect` will retry the historical path. Historical collect logs include approximate ETA updates while repositories are processed.
 
 Collect activity and regenerate the README:
 
@@ -268,7 +274,7 @@ Collect activity and regenerate the README:
 bun run collect
 ```
 
-By default, `collect` catches up every missing date from `accounts.last_successful_collect_on + 1` through UTC yesterday and advances the checkpoint after each successful date. To collect exactly one date without moving the checkpoint, use `COLLECT_DATE`:
+By default, `collect` runs complete history when `accounts.last_successful_collect_on` is null. After that, it catches up every missing date from `accounts.last_successful_collect_on + 1` through UTC yesterday and advances the checkpoint after each successful date. To collect exactly one date without moving the checkpoint, use `COLLECT_DATE`:
 
 ```bash
 COLLECT_DATE=2026-05-07 bun run collect
@@ -294,13 +300,13 @@ Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/git
 
 Project conventions live in `docs/CONVENTIONS.md`. Frequently asked setup and operations questions live in `docs/FAQ.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
-The GitHub daily collector currently ingests active repositories from GitHub contribution data, merges in authenticated private repositories the token can read, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups.
+The GitHub daily collector currently ingests active repositories from GitHub contribution data, merges in authenticated private repositories the configured read tokens can read, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups.
 
-The GitHub backfill walker uses the account creation year to walk contribution history by year, discovers active repositories, merges in authenticated private repositories the token can read, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
+The internal GitHub historical strategy uses the account creation year to walk contribution history by year, enumerates authenticated repositories the configured read tokens can read, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
 
-The init dispatcher reads `profile_config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, runs backfill for accounts where `backfill_completed_at` is null, then marks the account as backfilled.
+The init dispatcher reads `profile_config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, then invokes collect. A null `last_successful_collect_on` makes collect run the historical path.
 
-The daily collect dispatcher reads `profile_config.json`, resolves initialized `accounts`, chooses the explicit `COLLECT_DATE` or every missing date from `accounts.last_successful_collect_on + 1` through UTC yesterday, and invokes the matching provider collector for each configured identity. After each successful date, it advances the account checkpoint.
+The collect dispatcher reads `profile_config.json`, resolves initialized `accounts`, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE`, or catches up every missing date through UTC yesterday. After a successful automatic run, it advances the account checkpoint.
 
 The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `README.md`.
 

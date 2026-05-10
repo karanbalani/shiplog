@@ -6,9 +6,16 @@ export interface VendorIdentity {
   externalId: string
 }
 
+export interface VendorOrganizationToken {
+  organization: string
+  token: string
+  tokenEnv: string
+}
+
 export interface CollectArgs {
   identity: VendorIdentity
   token: string
+  organizationTokens?: VendorOrganizationToken[]
   date: string
   fetch?: Fetcher
 }
@@ -16,6 +23,7 @@ export interface CollectArgs {
 export interface BackfillArgs {
   identity: VendorIdentity
   token: string
+  organizationTokens?: VendorOrganizationToken[]
   fetch?: Fetcher
 }
 
