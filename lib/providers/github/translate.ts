@@ -1,14 +1,15 @@
-import type { NewCommitRow, NewRepositoryRow } from '../../upserts.ts'
-import type { GitHubCommitNode, GitHubRepositoryNode } from './types.ts'
+import type { NewCommitRow, NewOrganizationRow, NewRepositoryRow } from '../../upserts.ts'
+import type { GitHubCommitNode, GitHubRepositoryNode, GitHubRepositoryOwner } from './types.ts'
 
 export function repositoryFromGraphQLNode(
   node: GitHubRepositoryNode,
-  observedOn: string
+  observedOn: string,
+  organizationId: number | null = null
 ): NewRepositoryRow {
   return {
     provider: 'github',
     external_id: node.id,
-    organization_id: null,
+    organization_id: organizationId,
     owner_login: node.owner.login,
     name: repositoryName(node.nameWithOwner),
     full_name: node.nameWithOwner,
@@ -24,6 +25,26 @@ export function repositoryFromGraphQLNode(
     first_seen_on: observedOn,
     last_seen_on: observedOn,
     redacted: false
+  }
+}
+
+export function organizationFromRepositoryOwner(
+  owner: GitHubRepositoryOwner,
+  observedOn: string
+): NewOrganizationRow | null {
+  if (owner.__typename !== 'Organization') return null
+  if (!owner.id) throw new Error(`github organization owner ${owner.login} is missing id`)
+
+  return {
+    provider: 'github',
+    external_id: owner.id,
+    external_login: owner.login,
+    display_name: owner.name ?? null,
+    description: owner.description ?? null,
+    avatar_url: owner.avatarUrl ?? null,
+    website_url: owner.websiteUrl ?? null,
+    first_seen_on: observedOn,
+    last_seen_on: observedOn
   }
 }
 

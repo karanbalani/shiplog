@@ -18,7 +18,18 @@ query Contributions($login: String!, $from: DateTime!, $to: DateTime!) {
       restrictedContributionsCount
       commitContributionsByRepository(maxRepositories: 100) {
         repository {
-          id nameWithOwner owner { login }
+          id nameWithOwner
+          owner {
+            __typename
+            id
+            login
+            ... on Organization {
+              name
+              description
+              avatarUrl
+              websiteUrl
+            }
+          }
           isPrivate isFork isArchived
           primaryLanguage { name }
           stargazerCount forkCount
@@ -29,15 +40,15 @@ query Contributions($login: String!, $from: DateTime!, $to: DateTime!) {
         contributions(first: 1) { totalCount }
       }
       pullRequestContributionsByRepository(maxRepositories: 100) {
-        repository { id nameWithOwner owner { login } isPrivate isFork isArchived primaryLanguage { name } defaultBranchRef { name } url description createdAt pushedAt }
+        repository { id nameWithOwner owner { __typename id login ... on Organization { name description avatarUrl websiteUrl } } isPrivate isFork isArchived primaryLanguage { name } defaultBranchRef { name } url description createdAt pushedAt }
         contributions(first: 1) { totalCount }
       }
       pullRequestReviewContributionsByRepository(maxRepositories: 100) {
-        repository { id nameWithOwner owner { login } isPrivate isFork isArchived primaryLanguage { name } defaultBranchRef { name } url description createdAt pushedAt }
+        repository { id nameWithOwner owner { __typename id login ... on Organization { name description avatarUrl websiteUrl } } isPrivate isFork isArchived primaryLanguage { name } defaultBranchRef { name } url description createdAt pushedAt }
         contributions(first: 1) { totalCount }
       }
       issueContributionsByRepository(maxRepositories: 100) {
-        repository { id nameWithOwner owner { login } isPrivate isFork isArchived primaryLanguage { name } defaultBranchRef { name } url description createdAt pushedAt }
+        repository { id nameWithOwner owner { __typename id login ... on Organization { name description avatarUrl websiteUrl } } isPrivate isFork isArchived primaryLanguage { name } defaultBranchRef { name } url description createdAt pushedAt }
         contributions(first: 1) { totalCount }
       }
     }

@@ -22,14 +22,40 @@ test('repositoryFromGraphQLNode maps GraphQL repository to schema-shaped row', (
 
   expect(row.provider).toBe('github')
   expect(row.external_id).toBe('R_TEST_1')
-  expect(row.full_name).toBe('octocat/hello')
+  expect(row.full_name).toBe('octo-org/hello')
   expect(row.name).toBe('hello')
-  expect(row.web_url).toBe('https://github.com/octocat/hello')
+  expect(row.web_url).toBe('https://github.com/octo-org/hello')
+  expect(row.owner_login).toBe('octo-org')
   expect(row.visibility).toBe('public')
   expect(row.primary_language).toBe('Go')
   expect(row.default_branch).toBe('main')
   expect(row.first_seen_on).toBe('2026-05-07')
   expect(row.last_seen_on).toBe('2026-05-07')
+})
+
+test('organizationFromRepositoryOwner maps GitHub organization owner', () => {
+  const fixture = JSON.parse(
+    fs.readFileSync(path.join(FIXTURES, 'github-contributions-collection.json'), 'utf8')
+  ) as {
+    user: {
+      contributionsCollection: {
+        commitContributionsByRepository: Array<{ repository: GitHubRepositoryNode }>
+      }
+    }
+  }
+  const owner =
+    fixture.user.contributionsCollection.commitContributionsByRepository[0]!.repository.owner
+
+  const row = translate.organizationFromRepositoryOwner(owner, '2026-05-07')
+
+  expect(row).toMatchObject({
+    provider: 'github',
+    external_id: 'O_TEST_1',
+    external_login: 'octo-org',
+    display_name: 'Octo Org',
+    first_seen_on: '2026-05-07',
+    last_seen_on: '2026-05-07'
+  })
 })
 
 test('commitFromGraphQLNode maps commit fields and dates', () => {

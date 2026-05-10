@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { newDb } from 'pg-mem'
 import type { Pool } from 'pg'
-import * as collectGitHub from '../../bin/collect_github.ts'
+import * as backfillGitHub from '../../bin/backfill_github.ts'
 import * as db from '../../lib/db.ts'
 import * as upserts from '../../lib/upserts.ts'
 
@@ -18,7 +18,7 @@ afterEach(async () => {
   await db.close()
 })
 
-test('run collects GitHub activity into generic schema tables', async () => {
+test('run backfills GitHub history into generic schema tables', async () => {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
     user_id: user.id,
@@ -26,18 +26,17 @@ test('run collects GitHub activity into generic schema tables', async () => {
     external_login: 'octocat',
     external_id: 'U_TEST_1',
     external_url: 'https://github.com/octocat',
-    external_created_at: '2011-01-25T00:00:00Z',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
     first_seen_on: '2026-05-07'
   })
 
-  await collectGitHub.run({
+  await backfillGitHub.run({
     identity: {
       accountId: account.id,
       externalLogin: account.external_login,
       externalId: account.external_id
     },
     token: 'test-token',
-    date: '2026-05-07',
     fetch: mockGitHubFetch()
   })
 
@@ -50,6 +49,12 @@ test('run collects GitHub activity into generic schema tables', async () => {
   const linkedRepositories = await db.query<{ count: number }>(
     'SELECT COUNT(*)::int AS count FROM repositories WHERE organization_id IS NOT NULL'
   )
+  const repositorySnapshots = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_snapshots'
+  )
+  const repositoryLanguages = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_languages'
+  )
   const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
   const pullRequests = await db.query<{ count: number }>(
     'SELECT COUNT(*)::int AS count FROM pull_requests'
@@ -58,55 +63,59 @@ test('run collects GitHub activity into generic schema tables', async () => {
     'SELECT COUNT(*)::int AS count FROM pull_request_reviews'
   )
   const issues = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM issues')
-  const summaries = await db.query<{
-    total_commit_contributions: number
-    total_pull_request_contributions: number
-  }>('SELECT total_commit_contributions, total_pull_request_contributions FROM daily_user_summary')
+  const summaries = await db.query<{ source: string; total_commit_contributions: number }>(
+    'SELECT source, total_commit_contributions FROM daily_user_summary'
+  )
   const activity = await db.query<{
     commits: number
-    prs_opened: number
     prs_merged: number
     pr_reviews_total: number
-    issues_opened: number
     issues_closed: number
+    source: string
   }>('SELECT * FROM daily_repository_activity')
 
   expect(repositories.rows[0]!.count).toBe(1)
   expect(organizations.rows[0]!.count).toBe(1)
   expect(linkedRepositories.rows[0]!.count).toBe(1)
+  expect(repositorySnapshots.rows[0]!.count).toBe(1)
+  expect(repositoryLanguages.rows[0]!.count).toBe(2)
   expect(commits.rows[0]!.count).toBe(1)
   expect(pullRequests.rows[0]!.count).toBe(1)
   expect(reviews.rows[0]!.count).toBe(1)
   expect(issues.rows[0]!.count).toBe(1)
-  expect(summaries.rows[0]!.total_commit_contributions).toBe(3)
-  expect(summaries.rows[0]!.total_pull_request_contributions).toBe(1)
-  expect(activity.rows[0]!).toMatchObject({
+  expect(summaries.rows[0]).toMatchObject({
+    source: 'self_backfill',
+    total_commit_contributions: 3
+  })
+  expect(activity.rows[0]).toMatchObject({
     commits: 1,
-    prs_opened: 1,
     prs_merged: 1,
     pr_reviews_total: 1,
-    issues_opened: 1,
-    issues_closed: 1
+    issues_closed: 1,
+    source: 'self_backfill'
   })
 })
 
-test('collectActiveRepositories deduplicates repositories across contribution groups', () => {
-  const fixture = githubContributionsFixture()
-  const repository = fixture.user.contributionsCollection.commitContributionsByRepository[0]!
-
-  fixture.user.contributionsCollection.pullRequestContributionsByRepository.push(repository)
-  fixture.user.contributionsCollection.issueContributionsByRepository.push(repository)
-
-  const repositories = collectGitHub.collectActiveRepositories(fixture.user.contributionsCollection)
-
-  expect(repositories).toHaveLength(1)
-  expect(repositories[0]!.id).toBe('R_TEST_1')
-})
-
 function mockGitHubFetch(): typeof fetch {
+  const currentYear = new Date().getUTCFullYear()
+
   return (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
       const body = JSON.parse(String(init?.body)) as { query: string }
+
+      if (body.query.includes('query ViewerAndUser')) {
+        return jsonResponse({
+          data: {
+            user: {
+              id: 'U_TEST_1',
+              login: 'octocat',
+              name: 'Octocat',
+              url: 'https://github.com/octocat',
+              createdAt: `${currentYear}-01-01T00:00:00Z`
+            }
+          }
+        })
+      }
 
       if (body.query.includes('query Contributions')) {
         return jsonResponse({ data: githubContributionsFixture() })
@@ -138,31 +147,63 @@ function mockGitHubFetch(): typeof fetch {
           }
         })
       }
+
+      if (body.query.includes('query RepositoryLanguages')) {
+        return jsonResponse({
+          data: {
+            repository: {
+              stargazerCount: 10,
+              forkCount: 2,
+              isArchived: false,
+              isPrivate: false,
+              languages: {
+                edges: [
+                  { size: 800, node: { name: 'Go' } },
+                  { size: 200, node: { name: 'Shell' } }
+                ]
+              }
+            }
+          }
+        })
+      }
     }
 
     const parsed = new URL(url)
     const q = parsed.searchParams.get('q') ?? ''
 
     if (parsed.pathname === '/search/issues' && q.includes('type:pr author:')) {
-      if (q.includes('created:')) {
-        return jsonResponse({
-          total_count: 1,
-          items: [
-            {
-              node_id: 'PR_TEST_1',
-              number: 42,
-              title: 'Improve collector',
-              html_url: 'https://github.com/octo-org/hello/pull/42',
-              state: 'closed',
-              created_at: '2026-05-07T08:00:00Z',
-              closed_at: '2026-05-07T10:00:00Z',
-              pull_request: { merged_at: '2026-05-07T10:00:00Z' }
-            }
-          ]
-        })
-      }
+      return jsonResponse({
+        total_count: 1,
+        items: [
+          {
+            node_id: 'PR_TEST_1',
+            number: 42,
+            title: 'Improve collector',
+            html_url: 'https://github.com/octo-org/hello/pull/42',
+            state: 'closed',
+            created_at: '2026-05-07T08:00:00Z',
+            closed_at: '2026-05-07T10:00:00Z',
+            pull_request: { merged_at: '2026-05-07T10:00:00Z' }
+          }
+        ]
+      })
+    }
 
-      return jsonResponse({ total_count: 0, items: [] })
+    if (parsed.pathname === '/search/issues' && q.includes('type:issue author:')) {
+      return jsonResponse({
+        total_count: 1,
+        items: [
+          {
+            node_id: 'ISSUE_TEST_1',
+            number: 7,
+            title: 'Question',
+            html_url: 'https://github.com/octo-org/hello/issues/7',
+            state: 'closed',
+            created_at: '2026-05-07T07:00:00Z',
+            closed_at: '2026-05-07T13:00:00Z'
+          }
+        ]
+      })
     }
 
     if (parsed.pathname === '/search/issues' && q.includes('reviewed-by:')) {
@@ -192,27 +233,6 @@ function mockGitHubFetch(): typeof fetch {
           submitted_at: '2026-05-07T09:00:00Z'
         }
       ])
-    }
-
-    if (parsed.pathname === '/search/issues' && q.includes('type:issue author:')) {
-      if (q.includes('created:')) {
-        return jsonResponse({
-          total_count: 1,
-          items: [
-            {
-              node_id: 'ISSUE_TEST_1',
-              number: 7,
-              title: 'Question',
-              html_url: 'https://github.com/octo-org/hello/issues/7',
-              state: 'closed',
-              created_at: '2026-05-07T07:00:00Z',
-              closed_at: '2026-05-07T13:00:00Z'
-            }
-          ]
-        })
-      }
-
-      return jsonResponse({ total_count: 0, items: [] })
     }
 
     return new Response(`unexpected request: ${url}`, { status: 500 })

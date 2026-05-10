@@ -24,6 +24,7 @@ Completed so far:
 - GitHub provider API helpers in `lib/providers/github/`
 - Schema-aware database upsert helpers and daily repository rollups in `lib/upserts.ts`
 - GitHub daily collector in `bin/collect_github.ts`
+- GitHub historical backfill walker in `bin/backfill_github.ts`
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -192,4 +193,6 @@ Shared code will live under `lib/`, GitHub-specific helpers under `lib/providers
 
 Project conventions live in `docs/CONVENTIONS.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
-The GitHub daily collector currently ingests active repositories from GitHub contribution data, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups.
+The GitHub daily collector currently ingests active repositories from GitHub contribution data, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups.
+
+The GitHub backfill walker uses the account creation year to walk contribution history by year, discovers active repositories, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.

@@ -16,15 +16,15 @@ This document records that translation.
 
 ## organizations
 
-| shiplog column   | GitHub source                                         | Notes                                                 |
-| ---------------- | ----------------------------------------------------- | ----------------------------------------------------- |
-| `provider`       | literal `github`                                      | Identifies the source provider.                       |
-| `external_id`    | GraphQL organization `id`                             | GitHub's global GraphQL node id for the organization. |
-| `external_login` | GraphQL organization `login`                          | GitHub organization login.                            |
-| `display_name`   | GraphQL organization `name`                           | Optional display name.                                |
-| `description`    | GraphQL organization `description`                    | Optional organization description.                    |
-| `avatar_url`     | GraphQL organization `avatarUrl` or REST `avatar_url` | Optional avatar URL.                                  |
-| `website_url`    | GraphQL organization `websiteUrl` or REST `blog`      | Optional website URL, depending on API source.        |
+| shiplog column   | GitHub source                          | Notes                                                      |
+| ---------------- | -------------------------------------- | ---------------------------------------------------------- |
+| `provider`       | literal `github`                       | Identifies the source provider.                            |
+| `external_id`    | GraphQL repository owner `id`          | GitHub's global GraphQL node id for an organization owner. |
+| `external_login` | GraphQL repository owner `login`       | GitHub organization login.                                 |
+| `display_name`   | GraphQL repository owner `name`        | Optional display name.                                     |
+| `description`    | GraphQL repository owner `description` | Optional organization description.                         |
+| `avatar_url`     | GraphQL repository owner `avatarUrl`   | Optional avatar URL.                                       |
+| `website_url`    | GraphQL repository owner `websiteUrl`  | Optional website URL.                                      |
 
 ## repositories
 
@@ -126,8 +126,12 @@ This document records that translation.
 
 ## Daily Collector Coverage
 
-`bin/collect_github.ts` maps one activity date at a time. It discovers active repositories from `contributionsCollection`, upserts generic repository rows, captures repository snapshots when star/fork fields are present, ingests commit/PR/review/issue events, writes `daily_user_summary`, then derives `daily_repository_activity` from the event tables.
+`bin/collect_github.ts` maps one activity date at a time. It discovers active repositories from `contributionsCollection`, upserts organization rows for repositories owned by GitHub organizations, upserts generic repository rows, captures repository snapshots when star/fork fields are present, ingests commit/PR/review/issue events, writes `daily_user_summary`, then derives `daily_repository_activity` from the event tables.
+
+## Backfill Coverage
+
+`bin/backfill_github.ts` starts from GraphQL `user.createdAt`, walks each year through `contributionsCollection`, and stores year-start `daily_user_summary` rows with `source = 'self_backfill'`. It then upserts organization rows for repositories owned by GitHub organizations, enriches every discovered repository, backfills commits by year, imports authored pull requests and issues, imports submitted reviews, captures repository language snapshots, and derives `daily_repository_activity` for every distinct event date.
 
 ## Pending Mappings
 
-`profile_snapshots`, `organizations`, and `organization_memberships` are documented as schema concepts, but the daily GitHub collector does not populate them yet.
+`profile_snapshots` are documented as a schema concept, but the daily GitHub collector does not populate them yet.

@@ -39,7 +39,12 @@ export async function run(args: CollectArgs): Promise<void> {
   const activeRepositories = collectActiveRepositories(collection)
 
   for (const repositoryNode of activeRepositories) {
-    const repositoryInput = translate.repositoryFromGraphQLNode(repositoryNode, date)
+    const organizationId = await upsertOrganizationFromRepositoryOwner(repositoryNode, date)
+    const repositoryInput = translate.repositoryFromGraphQLNode(
+      repositoryNode,
+      date,
+      organizationId
+    )
     const repository = await upserts.upsertRepository(repositoryInput)
     const fullName = requiredString(repositoryInput.full_name, 'repository full name')
     const name = requiredString(repositoryInput.name, 'repository name')
@@ -71,6 +76,20 @@ export async function run(args: CollectArgs): Promise<void> {
   })
 
   await upserts.rollupDailyRepositoryActivity(identity.accountId, date)
+}
+
+async function upsertOrganizationFromRepositoryOwner(
+  repositoryNode: GitHubRepositoryNode,
+  observedOn: string
+): Promise<number | null> {
+  const organizationInput = translate.organizationFromRepositoryOwner(
+    repositoryNode.owner,
+    observedOn
+  )
+  if (!organizationInput) return null
+
+  const organization = await upserts.upsertOrganization(organizationInput)
+  return organization.id
 }
 
 export function collectActiveRepositories(

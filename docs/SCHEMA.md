@@ -69,7 +69,7 @@ Primary key:
 
 ## organizations
 
-Provider organizations seen through memberships or repositories.
+Provider organizations seen through repositories or provider metadata.
 
 | Column           | Type          | Notes                                                                       |
 | ---------------- | ------------- | --------------------------------------------------------------------------- |
@@ -90,23 +90,6 @@ Constraints:
 
 - `UNIQUE (provider, external_id)` deduplicates organizations by stable provider id.
 - `UNIQUE (provider, external_login)` deduplicates organizations by login.
-
-## organization_memberships
-
-Observed membership between a provider identity and an organization.
-
-| Column            | Type          | Notes                                                                       |
-| ----------------- | ------------- | --------------------------------------------------------------------------- |
-| `account_id`      | `BIGINT`      | Required reference to `accounts.id`.                                        |
-| `organization_id` | `BIGINT`      | Required reference to `organizations.id`.                                   |
-| `observed_on`     | `DATE`        | Date this membership was observed.                                          |
-| `role`            | `TEXT`        | Optional provider-specific role, if available.                              |
-| `created_at`      | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.     |
-| `updated_at`      | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`. |
-
-Primary key:
-
-- `(account_id, organization_id, observed_on)` allows membership state to be tracked over time.
 
 ## repositories
 

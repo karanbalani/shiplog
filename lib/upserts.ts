@@ -6,7 +6,6 @@ import type {
   DailyRepositoryActivityRow,
   DailyUserSummaryRow,
   IssueRow,
-  OrganizationMembershipRow,
   OrganizationRow,
   ProfileSnapshotRow,
   PullRequestReviewRow,
@@ -28,11 +27,6 @@ export type NewAccountRow = Omit<
 export type NewProfileSnapshotRow = Omit<ProfileSnapshotRow, 'created_at' | 'updated_at'>
 
 export type NewOrganizationRow = Omit<OrganizationRow, 'id' | 'created_at' | 'updated_at'>
-
-export type NewOrganizationMembershipRow = Omit<
-  OrganizationMembershipRow,
-  'created_at' | 'updated_at'
->
 
 export type NewRepositoryRow = Omit<
   RepositoryRow,
@@ -179,23 +173,6 @@ export async function upsertOrganization(row: NewOrganizationRow): Promise<Organ
       row.first_seen_on,
       row.last_seen_on
     ]
-  )
-
-  return result.rows[0]!
-}
-
-export async function upsertOrganizationMembership(
-  row: NewOrganizationMembershipRow
-): Promise<OrganizationMembershipRow> {
-  const result = await db.query<OrganizationMembershipRow>(
-    `INSERT INTO organization_memberships
-       (account_id, organization_id, observed_on, role)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (account_id, organization_id, observed_on) DO UPDATE
-       SET role = EXCLUDED.role,
-           updated_at = now()
-     RETURNING *`,
-    [row.account_id, row.organization_id, row.observed_on, row.role]
   )
 
   return result.rows[0]!

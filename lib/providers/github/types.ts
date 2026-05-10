@@ -1,7 +1,17 @@
+export interface GitHubRepositoryOwner {
+  __typename?: string
+  id?: string
+  login: string
+  name?: string | null
+  description?: string | null
+  avatarUrl?: string | null
+  websiteUrl?: string | null
+}
+
 export interface GitHubRepositoryNode {
   id: string
   nameWithOwner: string
-  owner: { login: string }
+  owner: GitHubRepositoryOwner
   isPrivate: boolean
   isFork: boolean
   isArchived: boolean
