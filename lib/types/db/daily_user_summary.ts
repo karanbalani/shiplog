@@ -2,6 +2,7 @@ import type { EventSource } from '../domain/enums.ts'
 import type { AuditTimestampColumns } from './common.ts'
 
 export interface DailyUserSummaryRow extends AuditTimestampColumns {
+  id: number
   account_id: number
   activity_on: Date | string
   total_commit_contributions: number | null

@@ -29,7 +29,7 @@ export type NewAccountRow = Omit<
   | 'updated_at'
 >
 
-export type NewProfileSnapshotRow = Omit<ProfileSnapshotRow, 'created_at' | 'updated_at'>
+export type NewProfileSnapshotRow = Omit<ProfileSnapshotRow, 'id' | 'created_at' | 'updated_at'>
 
 export type NewOrganizationRow = Omit<OrganizationRow, 'id' | 'created_at' | 'updated_at'>
 
@@ -43,7 +43,10 @@ export type NewRepositorySnapshotRow = Omit<
   'id' | 'created_at' | 'updated_at'
 >
 
-export type NewRepositoryLanguageRow = Omit<RepositoryLanguageRow, 'created_at' | 'updated_at'>
+export type NewRepositoryLanguageRow = Omit<
+  RepositoryLanguageRow,
+  'id' | 'created_at' | 'updated_at'
+>
 
 export type NewCommitRow = Omit<CommitRow, 'id' | 'captured_at' | 'created_at' | 'updated_at'>
 
@@ -61,12 +64,12 @@ export type NewIssueRow = Omit<IssueRow, 'id' | 'captured_at' | 'created_at' | '
 
 export type NewDailyUserSummaryRow = Omit<
   DailyUserSummaryRow,
-  'captured_at' | 'created_at' | 'updated_at'
+  'id' | 'captured_at' | 'created_at' | 'updated_at'
 >
 
 export type NewDailyRepositoryActivityRow = Omit<
   DailyRepositoryActivityRow,
-  'captured_at' | 'created_at' | 'updated_at'
+  'id' | 'captured_at' | 'created_at' | 'updated_at'
 >
 
 export async function upsertUser(row: NewUserRow): Promise<UserRow> {

@@ -1,5 +1,6 @@
 -- migrate:up
 CREATE TABLE daily_user_summary (
+  id BIGSERIAL PRIMARY KEY,
   account_id BIGINT NOT NULL REFERENCES accounts (id),
   activity_on DATE NOT NULL,
   total_commit_contributions INT,
@@ -13,7 +14,7 @@ CREATE TABLE daily_user_summary (
   captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (account_id, activity_on)
+  UNIQUE (account_id, activity_on)
 );
 
 -- migrate:down

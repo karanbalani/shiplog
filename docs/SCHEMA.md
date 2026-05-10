@@ -12,6 +12,8 @@ shiplog uses three timestamp/date families:
 
 `created_at` and `updated_at` default to `now()` on insert. Application upserts should set `updated_at = now()` on update paths.
 
+Every table has an `id BIGSERIAL PRIMARY KEY` row identity. Natural grains and deduplication rules are enforced separately with `UNIQUE (...)` constraints.
+
 ## users
 
 One row per human profile owner. v1 normally has exactly one user row, but the schema keeps users separate from provider identities so future versions can support multiple forges.
@@ -62,6 +64,7 @@ Daily account-level profile metrics for a provider identity.
 
 | Column               | Type          | Notes                                                                       |
 | -------------------- | ------------- | --------------------------------------------------------------------------- |
+| `id`                 | `BIGSERIAL`   | Primary key.                                                                |
 | `account_id`         | `BIGINT`      | Required reference to `accounts.id`.                                        |
 | `captured_on`        | `DATE`        | Snapshot date.                                                              |
 | `followers_count`    | `INT`         | Follower count on that date, when available.                                |
@@ -70,9 +73,9 @@ Daily account-level profile metrics for a provider identity.
 | `created_at`         | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.     |
 | `updated_at`         | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`. |
 
-Primary key:
+Constraints:
 
-- `(account_id, captured_on)` stores one profile snapshot per account per date.
+- `UNIQUE (account_id, captured_on)` stores one profile snapshot per account per date.
 
 ## organizations
 
@@ -160,6 +163,7 @@ Language breakdown snapshots for repositories.
 
 | Column          | Type           | Notes                                                                       |
 | --------------- | -------------- | --------------------------------------------------------------------------- |
+| `id`            | `BIGSERIAL`    | Primary key.                                                                |
 | `repository_id` | `BIGINT`       | Required reference to `repositories.id`.                                    |
 | `captured_on`   | `DATE`         | Snapshot date.                                                              |
 | `language`      | `TEXT`         | Language name as reported by the provider.                                  |
@@ -168,9 +172,9 @@ Language breakdown snapshots for repositories.
 | `created_at`    | `TIMESTAMPTZ`  | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.     |
 | `updated_at`    | `TIMESTAMPTZ`  | Audit timestamp for when shiplog last updated the row. Defaults to `now()`. |
 
-Primary key:
+Constraints:
 
-- `(repository_id, captured_on, language)` stores one language entry per repository per snapshot date.
+- `UNIQUE (repository_id, captured_on, language)` stores one language entry per repository per snapshot date.
 
 ## commits
 
@@ -287,6 +291,7 @@ Daily fact table rolled up from commits, pull requests, reviews, and issues by a
 
 | Column                         | Type          | Notes                                                                       |
 | ------------------------------ | ------------- | --------------------------------------------------------------------------- |
+| `id`                           | `BIGSERIAL`   | Primary key.                                                                |
 | `account_id`                   | `BIGINT`      | Required reference to `accounts.id`.                                        |
 | `activity_on`                  | `DATE`        | Activity date in UTC.                                                       |
 | `repository_id`                | `BIGINT`      | Required reference to `repositories.id`.                                    |
@@ -308,9 +313,9 @@ Daily fact table rolled up from commits, pull requests, reviews, and issues by a
 | `created_at`                   | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.     |
 | `updated_at`                   | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`. |
 
-Primary key:
+Constraints:
 
-- `(account_id, activity_on, repository_id)` stores one daily fact row per account, date, and repository.
+- `UNIQUE (account_id, activity_on, repository_id)` stores one daily fact row per account, date, and repository.
 
 ## daily_user_summary
 
@@ -318,6 +323,7 @@ Daily provider-level contribution totals from the provider API. This captures to
 
 | Column                                    | Type          | Notes                                                                           |
 | ----------------------------------------- | ------------- | ------------------------------------------------------------------------------- |
+| `id`                                      | `BIGSERIAL`   | Primary key.                                                                    |
 | `account_id`                              | `BIGINT`      | Required reference to `accounts.id`.                                            |
 | `activity_on`                             | `DATE`        | Activity date. Backfill uses year-start sentinel dates for yearly summary rows. |
 | `total_commit_contributions`              | `INT`         | Provider-reported commit contribution count.                                    |
@@ -330,9 +336,9 @@ Daily provider-level contribution totals from the provider API. This captures to
 | `created_at`                              | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.         |
 | `updated_at`                              | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`.     |
 
-Primary key:
+Constraints:
 
-- `(account_id, activity_on)` stores one summary row per account per activity date.
+- `UNIQUE (account_id, activity_on)` stores one summary row per account per activity date.
 
 ## Relationship Summary
 
