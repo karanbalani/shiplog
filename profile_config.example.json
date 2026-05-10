@@ -1,0 +1,26 @@
+{
+  "$schema": "./schemas/profile_config.schema.json",
+  "displayName": "Your Name",
+  "identities": [
+    {
+      "provider": "github",
+      "login": "your-github-login",
+      "ignoreOrganizations": [],
+      "ignoreRepositories": ["your-github-login/your-github-login"]
+    }
+  ],
+  "publishTargets": [
+    {
+      "provider": "github",
+      "repositoryFullName": "your-github-login/your-github-login",
+      "branch": "main",
+      "path": "README.md",
+      "tokenEnv": "GH_RW_REPO_TOKEN"
+    }
+  ],
+  "render": {
+    "topLanguagesCount": 7,
+    "topPublicProjectsCount": 6,
+    "lastYearWindowDays": 365
+  }
+}

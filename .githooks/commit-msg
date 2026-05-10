@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+set -eu
+
+BUN_BIN="${BUN_BIN:-$(command -v bun || true)}"
+if [ -z "$BUN_BIN" ] && [ -x "$HOME/.bun/bin/bun" ]; then
+  BUN_BIN="$HOME/.bun/bin/bun"
+fi
+
+if [ -z "$BUN_BIN" ]; then
+  echo "bun not found. Install Bun or set BUN_BIN." >&2
+  exit 1
+fi
+
+PATH="$(dirname "$BUN_BIN"):$PATH"
+"$BUN_BIN" run commitmsg:check "$1"

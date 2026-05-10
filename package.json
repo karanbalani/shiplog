@@ -1,0 +1,39 @@
+{
+  "name": "shiplog",
+  "version": "1.0.0",
+  "description": "Daily snapshots of your forge activity into your own Postgres.",
+  "private": true,
+  "module": "bin/collect.ts",
+  "type": "module",
+  "scripts": {
+    "init": "bun bin/init.ts",
+    "collect": "bun bin/collect.ts",
+    "render": "bun bin/render.ts",
+    "db:wait": "bun scripts/wait_for_db.ts",
+    "migrate": "bun scripts/dbmate.ts up",
+    "migration:new": "bun scripts/dbmate.ts new",
+    "migration:down": "bun scripts/dbmate.ts rollback",
+    "format": "prettier --write . --ignore-unknown && bun run format:sql",
+    "format:check": "prettier --check . --ignore-unknown && bun run format:sql:check",
+    "format:sql": "bun scripts/format_sql.ts --write",
+    "format:sql:check": "bun scripts/format_sql.ts --check",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "prepare": "bun run hooks:install",
+    "commitmsg:check": "bun scripts/check_commit_msg.ts",
+    "precommit": "bun run format:check",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.13",
+    "@types/pg": "^8.11.10",
+    "pg-mem": "^3.0.4",
+    "prettier": "^3.8.3",
+    "sql-formatter": "^15.7.3",
+    "typescript": "^5.6.3"
+  }
+}

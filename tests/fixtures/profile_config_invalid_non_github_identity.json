@@ -1,0 +1,18 @@
+{
+  "displayName": "Misconfig",
+  "identities": [
+    {
+      "provider": "gitlab",
+      "login": "x"
+    }
+  ],
+  "publishTargets": [
+    {
+      "provider": "github",
+      "repositoryFullName": "x/x",
+      "branch": "main",
+      "path": "README.md",
+      "tokenEnv": "GH_RW_REPO_TOKEN"
+    }
+  ]
+}

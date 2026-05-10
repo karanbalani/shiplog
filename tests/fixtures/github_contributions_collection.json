@@ -1,0 +1,43 @@
+{
+  "user": {
+    "contributionsCollection": {
+      "totalCommitContributions": 3,
+      "totalIssueContributions": 0,
+      "totalPullRequestContributions": 1,
+      "totalPullRequestReviewContributions": 0,
+      "restrictedContributionsCount": 0,
+      "commitContributionsByRepository": [
+        {
+          "repository": {
+            "id": "R_TEST_1",
+            "nameWithOwner": "octo-org/hello",
+            "owner": {
+              "__typename": "Organization",
+              "id": "O_TEST_1",
+              "login": "octo-org",
+              "name": "Octo Org",
+              "description": "Example GitHub organization",
+              "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4",
+              "websiteUrl": "https://example.com"
+            },
+            "isPrivate": false,
+            "isFork": false,
+            "isArchived": false,
+            "primaryLanguage": { "name": "Go" },
+            "stargazerCount": 10,
+            "forkCount": 2,
+            "createdAt": "2020-01-01T00:00:00Z",
+            "pushedAt": "2026-05-07T12:00:00Z",
+            "defaultBranchRef": { "name": "main" },
+            "url": "https://github.com/octo-org/hello",
+            "description": "Test repo"
+          },
+          "contributions": { "totalCount": 3 }
+        }
+      ],
+      "pullRequestContributionsByRepository": [],
+      "pullRequestReviewContributionsByRepository": [],
+      "issueContributionsByRepository": []
+    }
+  }
+}

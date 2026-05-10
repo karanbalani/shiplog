@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shiplog.dev/schemas/profile_config.schema.json",
+  "title": "shiplog profile config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["identities", "publishTargets"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "login"],
+        "properties": {
+          "provider": {
+            "const": "github"
+          },
+          "login": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ignoreOrganizations": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "ignoreRepositories": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "publishTargets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "repositoryFullName", "branch", "path", "tokenEnv"],
+        "properties": {
+          "provider": {
+            "const": "github"
+          },
+          "repositoryFullName": {
+            "type": "string",
+            "pattern": "^[^/\\s]+/[^/\\s]+$"
+          },
+          "branch": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tokenEnv": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "render": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {
+        "topLanguagesCount": 7,
+        "topPublicProjectsCount": 6,
+        "lastYearWindowDays": 365
+      },
+      "properties": {
+        "topLanguagesCount": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 7
+        },
+        "topPublicProjectsCount": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 6
+        },
+        "lastYearWindowDays": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 365
+        }
+      }
+    }
+  }
+}
