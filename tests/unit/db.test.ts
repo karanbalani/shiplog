@@ -3,7 +3,7 @@ import { newDb } from 'pg-mem'
 import type { Pool } from 'pg'
 import * as db from '../../lib/db.ts'
 
-const originalDatabaseUrl = process.env.DATABASE_URL
+const originalDatabaseConnectionString = process.env.DATABASE_CONNECTION_STRING
 
 beforeEach(() => {
   db.__setPoolForTests(createTestPool())
@@ -12,10 +12,10 @@ beforeEach(() => {
 afterEach(async () => {
   await db.close()
 
-  if (originalDatabaseUrl === undefined) {
-    delete process.env.DATABASE_URL
+  if (originalDatabaseConnectionString === undefined) {
+    delete process.env.DATABASE_CONNECTION_STRING
   } else {
-    process.env.DATABASE_URL = originalDatabaseUrl
+    process.env.DATABASE_CONNECTION_STRING = originalDatabaseConnectionString
   }
 })
 
@@ -69,9 +69,9 @@ test('withTransaction rolls back when callback fails', async () => {
 
 test('close resets the pool', async () => {
   await db.close()
-  delete process.env.DATABASE_URL
+  delete process.env.DATABASE_CONNECTION_STRING
 
-  expect(() => db.getPool()).toThrow(/DATABASE_URL is not set/)
+  expect(() => db.getPool()).toThrow(/DATABASE_CONNECTION_STRING is not set/)
 })
 
 function createTestPool(): Pool {

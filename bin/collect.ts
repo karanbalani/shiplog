@@ -72,7 +72,7 @@ function tokenForIdentity(identityConfig: IdentityConfig): string {
 }
 
 function readOnlyTokenEnvName(provider: string): string {
-  if (provider === 'github') return 'GITHUB_RO_CLASSIC_TOKEN'
+  if (provider === 'github') return 'GH_RO_CLASSIC_TOKEN'
   return `${provider.toUpperCase()}_RO_CLASSIC_TOKEN`
 }
 

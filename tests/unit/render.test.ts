@@ -139,7 +139,7 @@ function profileConfig(): ProfileConfig {
         repositoryFullName: 'octocat/octocat',
         branch: 'main',
         path: 'README.md',
-        tokenEnv: 'GITHUB_RW_REPO_TOKEN'
+        tokenEnv: 'GH_RW_REPO_TOKEN'
       }
     ],
     render: {

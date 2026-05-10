@@ -5,9 +5,11 @@ let pool: Pool | null = null
 export function getPool(): Pool {
   if (pool) return pool
 
-  const connectionString = process.env.DATABASE_URL
+  const connectionString = process.env.DATABASE_CONNECTION_STRING
   if (!connectionString) {
-    throw new Error('DATABASE_URL is not set. define DATABASE_URL in .env or your shell.')
+    throw new Error(
+      'DATABASE_CONNECTION_STRING is not set. define DATABASE_CONNECTION_STRING in .env or your shell.'
+    )
   }
 
   pool = new Pool({

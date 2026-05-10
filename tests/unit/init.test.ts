@@ -9,12 +9,12 @@ import * as logger from '../../lib/logger.ts'
 import type { ProfileConfig } from '../../lib/types/index.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
-const originalGitHubToken = process.env.GITHUB_RO_CLASSIC_TOKEN
+const originalGitHubToken = process.env.GH_RO_CLASSIC_TOKEN
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
   logger.configureLogger({ level: 'silent', write: () => undefined })
-  process.env.GITHUB_RO_CLASSIC_TOKEN = 'test-token'
+  process.env.GH_RO_CLASSIC_TOKEN = 'test-token'
 })
 
 afterEach(async () => {
@@ -22,9 +22,9 @@ afterEach(async () => {
   logger.resetLogger()
 
   if (originalGitHubToken === undefined) {
-    delete process.env.GITHUB_RO_CLASSIC_TOKEN
+    delete process.env.GH_RO_CLASSIC_TOKEN
   } else {
-    process.env.GITHUB_RO_CLASSIC_TOKEN = originalGitHubToken
+    process.env.GH_RO_CLASSIC_TOKEN = originalGitHubToken
   }
 })
 
@@ -86,7 +86,7 @@ function profileConfig(): ProfileConfig {
         repositoryFullName: 'octocat/octocat',
         branch: 'main',
         path: 'README.md',
-        tokenEnv: 'GITHUB_RW_REPO_TOKEN'
+        tokenEnv: 'GH_RW_REPO_TOKEN'
       }
     ],
     render: {

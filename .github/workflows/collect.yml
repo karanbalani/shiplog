@@ -42,15 +42,15 @@ jobs:
       - name: Wait for database
         run: bun run db:wait
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
       - name: Run migrations
         run: bun run migrate
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
       - name: Collect daily activity
         run: bun run collect
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          GITHUB_RO_CLASSIC_TOKEN: ${{ secrets.GITHUB_RO_CLASSIC_TOKEN }}
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}

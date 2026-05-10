@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_RW_REPO_TOKEN }}
+          token: ${{ secrets.GH_RW_REPO_TOKEN }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -40,12 +40,12 @@ jobs:
       - name: Wait for database
         run: bun run db:wait
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
       - name: Render README
         run: bun run render
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
       - name: Commit rendered README
         uses: stefanzweifel/git-auto-commit-action@v5

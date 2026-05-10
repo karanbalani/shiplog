@@ -75,9 +75,9 @@ cp .env.example .env
 Then fill in:
 
 ```bash
-DATABASE_URL=postgres://user:password@host:5432/shiplog?sslmode=require
-GITHUB_RO_CLASSIC_TOKEN=ghp_xxx
-GITHUB_RW_REPO_TOKEN=github_pat_xxx
+DATABASE_CONNECTION_STRING=postgres://user:password@host:5432/shiplog?sslmode=require
+GH_RO_CLASSIC_TOKEN=ghp_xxx
+GH_RW_REPO_TOKEN=github_pat_xxx
 ```
 
 Optional logging controls:
@@ -98,7 +98,7 @@ Then edit `profile_config.json`:
 - Set `displayName`.
 - Set `identities[0].login` to your GitHub username.
 - Set `publishTargets[0].repositoryFullName` to the repository that should receive the rendered README, usually `your-github-login/your-github-login` for a GitHub profile README.
-- Set `publishTargets[0].tokenEnv` to `GITHUB_RW_REPO_TOKEN`.
+- Set `publishTargets[0].tokenEnv` to `GH_RW_REPO_TOKEN`.
 
 The upstream org/template repo commits `profile_config.example.json`, not a real `profile_config.json`. `profile_config.json` is gitignored so local config does not accidentally get committed.
 
@@ -117,19 +117,19 @@ Then decode it inside the workflow before running `bun run init`, `bun run colle
     SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
 ```
 
-`SHIPLOG_CONFIG_BASE64` is configuration, not a secret. Keep `DATABASE_URL` and provider tokens in GitHub Secrets.
+`SHIPLOG_CONFIG_BASE64` is configuration, not a secret. Keep `DATABASE_CONNECTION_STRING` and provider tokens in GitHub Secrets.
 
 Required GitHub repository settings:
 
 - Repository variable: `SHIPLOG_CONFIG_BASE64`
-- Repository secret: `DATABASE_URL`
-- Repository secret: `GITHUB_RO_CLASSIC_TOKEN`
-- Repository secret: `GITHUB_RW_REPO_TOKEN`
+- Repository secret: `DATABASE_CONNECTION_STRING`
+- Repository secret: `GH_RO_CLASSIC_TOKEN`
+- Repository secret: `GH_RW_REPO_TOKEN`
 
 Token responsibilities:
 
-- `GITHUB_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion.
-- `GITHUB_RW_REPO_TOKEN` authenticates README publishing commits.
+- `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion.
+- `GH_RW_REPO_TOKEN` authenticates README publishing commits.
 
 After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The `collect` workflow then runs daily, on pushes to `main`, or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`.
 
@@ -180,13 +180,13 @@ Run database migrations after the migration files exist:
 bun run migrate
 ```
 
-dbmate reads `DATABASE_URL` from the environment. For local smoke checks against a Neon dev branch:
+shiplog reads `DATABASE_CONNECTION_STRING` from the environment. For local smoke checks against a Neon dev branch:
 
 ```bash
-export DATABASE_URL='postgres://user:password@host:5432/shiplog?sslmode=require'
-dbmate up
-dbmate rollback
-dbmate up
+export DATABASE_CONNECTION_STRING='postgres://user:password@host:5432/shiplog?sslmode=require'
+bun run migrate
+bun run migration:down
+bun run migrate
 ```
 
 Warm and verify the database connection before migrations or rendering:
@@ -208,7 +208,7 @@ This wraps `dbmate rollback`. `dbmate down` is also available as an alias for ro
 Inspect tables after migrating:
 
 ```bash
-psql "$DATABASE_URL" -c '\dt'
+psql "$DATABASE_CONNECTION_STRING" -c '\dt'
 ```
 
 Create a new migration:
