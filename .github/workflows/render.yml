@@ -47,6 +47,12 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
+      - name: Print rendered README
+        run: |
+          echo "::group::Rendered README.md"
+          cat README.md
+          echo "::endgroup::"
+
       - name: Commit rendered README
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
