@@ -10,7 +10,6 @@ export interface AccountRow extends AuditTimestampColumns {
   external_url: string | null
   external_created_at: Date | string
   first_seen_on: Date | string
-  backfill_completed_at: Date | string | null
   last_successful_collect_on: Date | string | null
   captured_at: Date | string
 }

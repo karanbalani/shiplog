@@ -12,9 +12,9 @@ test('logger writes timestamped levelled lines', () => {
     write: (line) => lines.push(line)
   })
 
-  logger.info('[init] backfill complete')
+  logger.info('[init] collect complete')
 
-  expect(lines).toEqual(['2026-05-10T12:34:56.789Z INFO  [init] backfill complete'])
+  expect(lines).toEqual(['2026-05-10T12:34:56.789Z INFO  [init] collect complete'])
 })
 
 test('logger filters below configured level', () => {

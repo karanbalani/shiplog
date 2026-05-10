@@ -5,6 +5,8 @@
     {
       "provider": "github",
       "login": "your-github-login",
+      "tokenEnv": "GH_RO_CLASSIC_TOKEN",
+      "organizationTokens": [],
       "ignoreOrganizations": [],
       "ignoreRepositories": ["your-github-login/your-github-login"]
     }

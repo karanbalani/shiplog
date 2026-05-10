@@ -90,6 +90,48 @@ test('run collects GitHub activity into generic schema tables', async () => {
   })
 })
 
+test('run uses organization token for organization-owned repositories', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2011-01-25T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+
+  await collectGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'default-token',
+    organizationTokens: [
+      {
+        organization: 'restricted-org',
+        tokenEnv: 'GH_RO_RESTRICTED_ORG_TOKEN',
+        token: 'org-token'
+      }
+    ],
+    date: '2026-05-07',
+    fetch: mockGitHubFetchWithOrganizationToken()
+  })
+
+  const repositories = await db.query<{ visibility: string; owner_login: string }>(
+    'SELECT visibility, owner_login FROM repositories'
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+
+  expect(repositories.rows[0]).toMatchObject({
+    visibility: 'private',
+    owner_login: 'restricted-org'
+  })
+  expect(commits.rows[0]!.count).toBe(1)
+})
+
 test('collectActiveRepositories deduplicates repositories across contribution groups', () => {
   const fixture = githubContributionsFixture()
   const repository = fixture.user.contributionsCollection.commitContributionsByRepository[0]!
@@ -216,6 +258,107 @@ function mockGitHubFetch(): typeof fetch {
         })
       }
 
+      return jsonResponse({ total_count: 0, items: [] })
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
+function mockGitHubFetchWithOrganizationToken(): typeof fetch {
+  return (async (url: string, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get('authorization')
+
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+
+      if (body.query.includes('query Contributions')) {
+        expect(authorization).toBe('Bearer default-token')
+        return jsonResponse({
+          data: {
+            user: {
+              contributionsCollection: {
+                totalCommitContributions: 1,
+                totalIssueContributions: 0,
+                totalPullRequestContributions: 0,
+                totalPullRequestReviewContributions: 0,
+                restrictedContributionsCount: 0,
+                commitContributionsByRepository: [],
+                pullRequestContributionsByRepository: [],
+                pullRequestReviewContributionsByRepository: [],
+                issueContributionsByRepository: []
+              }
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query RepositoryCommits')) {
+        expect(authorization).toBe('Bearer org-token')
+        return jsonResponse({
+          data: {
+            repository: {
+              defaultBranchRef: {
+                target: {
+                  history: {
+                    totalCount: 1,
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                    nodes: [
+                      {
+                        oid: 'org-commit-1',
+                        committedDate: '2026-05-07T12:34:56Z',
+                        additions: 8,
+                        deletions: 2,
+                        changedFiles: 1,
+                        messageHeadline: 'Restricted org work'
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      expect(authorization).toBe('Bearer default-token')
+      return jsonResponse([])
+    }
+
+    if (parsed.pathname === '/orgs/restricted-org/repos') {
+      expect(authorization).toBe('Bearer org-token')
+      return jsonResponse([
+        {
+          node_id: 'R_RESTRICTED_1',
+          name: 'secret',
+          full_name: 'restricted-org/secret',
+          private: true,
+          fork: false,
+          archived: false,
+          language: 'TypeScript',
+          stargazers_count: 0,
+          forks_count: 0,
+          created_at: '2024-01-01T00:00:00Z',
+          pushed_at: '2026-05-07T12:00:00Z',
+          default_branch: 'main',
+          html_url: 'https://github.com/restricted-org/secret',
+          description: 'restricted test repository',
+          owner: {
+            login: 'restricted-org',
+            node_id: 'O_RESTRICTED_1',
+            type: 'Organization',
+            avatar_url: 'https://avatars.githubusercontent.com/u/2?v=4'
+          }
+        }
+      ])
+    }
+
+    if (parsed.pathname === '/search/issues') {
+      expect(authorization).toBe('Bearer org-token')
       return jsonResponse({ total_count: 0, items: [] })
     }
 

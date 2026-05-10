@@ -159,6 +159,8 @@ function profileConfig(): ProfileConfig {
       {
         provider: 'github',
         login: 'octocat',
+        tokenEnv: 'GH_RO_CLASSIC_TOKEN',
+        organizationTokens: [],
         ignoreOrganizations: [],
         ignoreRepositories: []
       }

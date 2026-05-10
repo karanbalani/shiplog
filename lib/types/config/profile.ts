@@ -3,8 +3,15 @@ import type { Provider } from '../domain/enums.ts'
 export interface IdentityConfig {
   provider: Provider
   login: string
+  tokenEnv: string
+  organizationTokens: OrganizationTokenConfig[]
   ignoreOrganizations: string[]
   ignoreRepositories: string[]
+}
+
+export interface OrganizationTokenConfig {
+  organization: string
+  tokenEnv: string
 }
 
 export interface PublishTargetConfig {

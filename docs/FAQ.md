@@ -106,7 +106,22 @@ Keeping them separate limits what each token can do.
 
 ## How does shiplog collect private repository activity?
 
-GitHub contribution groups are useful for discovering active repositories, but private repositories can be omitted from those grouped lists depending on token access and GitHub visibility rules. shiplog also calls GitHub's authenticated-user repository endpoint with `visibility=private` and owner/collaborator/organization-member affiliations, then processes those repositories through the same normal backfill and collect path as public repositories.
+GitHub contribution groups are useful for discovering active repositories, but private repositories can be omitted from those grouped lists depending on token access and GitHub visibility rules. shiplog also calls GitHub's authenticated-user repository endpoint with `visibility=private` during daily collect and `visibility=all` during historical collect, then processes those repositories through the same normal ingestion path as public repositories.
+
+If an organization blocks or requires separate authorization for the default classic token, add an organization-specific read token to `profile_config.json`:
+
+```json
+{
+  "organizationTokens": [
+    {
+      "organization": "restricted-org",
+      "tokenEnv": "GH_RO_RESTRICTED_ORG_TOKEN"
+    }
+  ]
+}
+```
+
+Repository metadata, commits, pull requests, issues, and reviews for that organization will use the organization-specific token.
 
 Private repository names can appear in local or workflow logs because repository progress logs show the repository currently being processed. This is expected for a single-user ingestion workflow.
 
@@ -138,7 +153,7 @@ If your config contains private repository names or other sensitive metadata, yo
 
 ## Which workflow should I run first?
 
-Run `init` first. It migrates the database, creates the configured accounts, runs the one-time historical backfill, renders the README, and commits it.
+Run `init` first. It migrates the database, creates the configured accounts, runs collect, renders the README, and commits it. Because new accounts have a null `last_successful_collect_on`, that first collect uses the complete historical path.
 
 After that, `collect` runs daily or manually. When `collect` succeeds, `render` updates the README.
 
@@ -150,7 +165,7 @@ shiplog keeps a simple checkpoint on each account:
 accounts.last_successful_collect_on
 ```
 
-Normal collect runs process every missing date from the day after that checkpoint through UTC yesterday. After each date succeeds, shiplog advances the checkpoint.
+When the checkpoint is null, collect runs complete history. After that, normal collect runs process every missing date from the day after that checkpoint through UTC yesterday. After each automatic run succeeds, shiplog advances the checkpoint.
 
 This means a failed or skipped workflow can usually be fixed by rerunning `collect`; it will catch up the missed dates automatically.
 
@@ -162,11 +177,11 @@ COLLECT_DATE=2026-05-07 bun run collect
 
 In GitHub Actions, the manual `collect` workflow has an optional `collect_date` input for the same purpose. The next normal collect run may safely reprocess that date if it is still part of the checkpoint gap.
 
-## Why is the first backfill slow?
+## Why is the first collect slow?
 
-Historical backfill can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps the first backfill under provider limits instead of racing into rate-limit failures.
+Historical collect can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps the first collect under provider limits instead of racing into rate-limit failures.
 
-During backfill, shiplog logs:
+During historical collect, shiplog logs:
 
 - yearly discovery progress
 - discovered repository count
@@ -174,13 +189,13 @@ During backfill, shiplog logs:
 - repository progress
 - elapsed time and approximate ETA
 
-## What should I do if `init` fails during backfill?
+## What should I do if `init` fails during historical collect?
 
 Fix the error and rerun `init`. You do not need to truncate tables.
 
-Backfill is designed to be resumable:
+Historical collect is designed to be resumable:
 
-- `accounts.backfill_completed_at` is only set after provider backfill finishes.
+- `accounts.last_successful_collect_on` stays null until the complete historical collect succeeds.
 - Most writes use database upserts or uniqueness constraints.
 - Repeated rows are deduplicated on rerun.
 
@@ -190,7 +205,7 @@ Partial progress from the failed run is useful and should normally be kept.
 
 GitHub has separate limits for some REST APIs, including search. shiplog throttles GitHub search requests, serializes ingestion workflows in GitHub Actions, and retries rate-limit responses using `Retry-After` or `X-RateLimit-Reset` headers.
 
-If a token was already exhausted by another run or tool, shiplog may wait for the reset window before continuing. That is expected for first-time backfills.
+If a token was already exhausted by another run or tool, shiplog may wait for the reset window before continuing. That is expected for first-time historical collects.
 
 ## Why did collection run after I merged to `main`?
 
@@ -271,10 +286,10 @@ When shiplog adds materialized views, they should use the `mv_*` prefix.
 `source` records where a row came from. For example:
 
 - `live` or `live_rollup`: collected during a daily run
-- `self_backfill`: created during the historical backfill
+- `self_backfill`: created during historical collect
 - `external_import`: reserved for imported data
 
-It is cheap provenance that helps debug whether a row came from live collection, backfill, or a future import path.
+It is cheap provenance that helps debug whether a row came from live collection, historical collection, or a future import path.
 
 ## Do I need to install Git hooks?
 

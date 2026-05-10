@@ -13,16 +13,18 @@ import type {
 } from '../lib/providers/github/types.ts'
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
-import type { CollectArgs, VendorIdentity } from '../lib/types/index.ts'
+import type { CollectArgs, VendorIdentity, VendorOrganizationToken } from '../lib/types/index.ts'
 
 export async function run(args: CollectArgs): Promise<void> {
-  const { identity, token, date, fetch } = args
+  const { identity, token, organizationTokens = [], date, fetch } = args
   if (!identity) throw new Error('collect_github: missing identity')
   if (!token) throw new Error('collect_github: missing token')
   if (!date) throw new Error('collect_github: missing date')
 
   const graphQL = graphQLClient({ token, fetch })
   const rest = restClient({ token, fetch })
+  const defaultClients: GitHubClients = { graphQL, rest }
+  const organizationClients = organizationClientMap(organizationTokens, fetch)
   const { from, to } = dates.dayWindow(date)
 
   const data = await graphQL<{
@@ -39,8 +41,12 @@ export async function run(args: CollectArgs): Promise<void> {
   const collection = data.user.contributionsCollection
   const activeRepositories = collectActiveRepositories(collection)
   await collectAccessiblePrivateRepositories(rest, activeRepositories)
+  for (const [organization, clients] of organizationClients) {
+    await collectOrganizationRepositories(clients.rest, organization, activeRepositories)
+  }
 
   for (const repositoryNode of activeRepositories) {
+    const clients = clientsForRepository(repositoryNode, defaultClients, organizationClients)
     const organizationId = await upsertOrganizationFromRepositoryOwner(repositoryNode, date)
     const repositoryInput = translate.repositoryFromGraphQLNode(
       repositoryNode,
@@ -53,7 +59,7 @@ export async function run(args: CollectArgs): Promise<void> {
 
     await upsertRepositorySnapshot(repository.id, repositoryNode, date)
     await ingestCommits(
-      graphQL,
+      clients.graphQL,
       repository.id,
       repositoryInput.owner_login,
       name,
@@ -61,9 +67,9 @@ export async function run(args: CollectArgs): Promise<void> {
       from,
       to
     )
-    await ingestPullRequests(rest, repository.id, fullName, identity, date)
-    await ingestPullRequestReviews(rest, repository.id, fullName, identity, date)
-    await ingestIssues(rest, repository.id, fullName, identity, date)
+    await ingestPullRequests(clients.rest, repository.id, fullName, identity, date)
+    await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity, date)
+    await ingestIssues(clients.rest, repository.id, fullName, identity, date)
   }
 
   await upserts.upsertDailyUserSummary({
@@ -78,6 +84,34 @@ export async function run(args: CollectArgs): Promise<void> {
   })
 
   await upserts.rollupDailyRepositoryActivity(identity.accountId, date)
+}
+
+interface GitHubClients {
+  graphQL: GraphQLClient
+  rest: RestClient
+}
+
+function organizationClientMap(
+  organizationTokens: VendorOrganizationToken[],
+  fetch: CollectArgs['fetch']
+): Map<string, GitHubClients> {
+  return new Map(
+    organizationTokens.map((orgToken) => [
+      orgToken.organization.toLowerCase(),
+      {
+        graphQL: graphQLClient({ token: orgToken.token, fetch }),
+        rest: restClient({ token: orgToken.token, fetch })
+      }
+    ])
+  )
+}
+
+function clientsForRepository(
+  repositoryNode: GitHubRepositoryNode,
+  defaultClients: GitHubClients,
+  organizationClients: Map<string, GitHubClients>
+): GitHubClients {
+  return organizationClients.get(repositoryNode.owner.login.toLowerCase()) ?? defaultClients
 }
 
 async function upsertOrganizationFromRepositoryOwner(
@@ -140,6 +174,41 @@ async function collectAccessiblePrivateRepositories(
     }
 
     if (privateRepositories.length < 100) break
+  }
+
+  repositories.splice(0, repositories.length, ...repositoriesByExternalId.values())
+}
+
+async function collectOrganizationRepositories(
+  rest: RestClient,
+  organization: string,
+  repositories: GitHubRepositoryNode[]
+): Promise<void> {
+  const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>(
+    repositories.map((repository) => [repository.id, repository])
+  )
+
+  for (let page = 1; ; page += 1) {
+    const organizationRepositories = await rest<GitHubRestRepository[]>(
+      `/orgs/${organization}/repos`,
+      {
+        type: 'all',
+        sort: 'full_name',
+        direction: 'asc',
+        per_page: 100,
+        page
+      }
+    )
+
+    for (const repository of organizationRepositories) {
+      if (repositoriesByExternalId.has(repository.node_id)) continue
+      repositoriesByExternalId.set(
+        repository.node_id,
+        translate.repositoryFromRestRepository(repository)
+      )
+    }
+
+    if (organizationRepositories.length < 100) break
   }
 
   repositories.splice(0, repositories.length, ...repositoriesByExternalId.values())

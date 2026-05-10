@@ -12,6 +12,10 @@ test('load returns parsed valid config', () => {
   expect(c.identities).toHaveLength(1)
   expect(c.identities[0]!.provider).toBe('github')
   expect(c.identities[0]!.login).toBe('octocat')
+  expect(c.identities[0]!.tokenEnv).toBe('GH_RO_CLASSIC_TOKEN')
+  expect(c.identities[0]!.organizationTokens).toEqual([
+    { organization: 'restricted-org', tokenEnv: 'GH_RO_RESTRICTED_ORG_TOKEN' }
+  ])
   expect(c.identities[0]!.ignoreOrganizations).toEqual(['some-noisy-org'])
   expect(c.identities[0]!.ignoreRepositories).toContain('octocat/octocat')
   expect(c.publishTargets).toHaveLength(1)
@@ -31,6 +35,8 @@ test('load defaults render knobs when omitted', () => {
   expect(c.render).toEqual(config.DEFAULT_RENDER)
   expect(c.identities[0]!.ignoreOrganizations).toEqual([])
   expect(c.identities[0]!.ignoreRepositories).toEqual([])
+  expect(c.identities[0]!.tokenEnv).toBe('GH_RO_CLASSIC_TOKEN')
+  expect(c.identities[0]!.organizationTokens).toEqual([])
 })
 
 test('validate allows schema hint without returning it', () => {

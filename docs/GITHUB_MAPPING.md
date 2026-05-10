@@ -126,11 +126,11 @@ This document records that translation.
 
 ## Daily Collector Coverage
 
-`bin/collect_github.ts` maps one activity date at a time. It discovers active repositories from `contributionsCollection`, merges in private repositories from REST `GET /user/repos?visibility=private` for repositories the token can read, upserts organization rows for repositories owned by GitHub organizations, upserts generic repository rows, captures repository snapshots when star/fork fields are present, ingests commit/PR/review/issue events, writes `daily_user_summary`, then derives `daily_repository_activity` from the event tables.
+`bin/collect_github.ts` maps one activity date at a time. It discovers active repositories from `contributionsCollection`, merges in private repositories from REST `GET /user/repos?visibility=private` for repositories the configured read tokens can read, upserts organization rows for repositories owned by GitHub organizations, upserts generic repository rows, captures repository snapshots when star/fork fields are present, ingests commit/PR/review/issue events, writes `daily_user_summary`, then derives `daily_repository_activity` from the event tables.
 
-## Backfill Coverage
+## Historical Collect Coverage
 
-`bin/backfill_github.ts` starts from GraphQL `user.createdAt`, walks each year through `contributionsCollection`, stores year-start `daily_user_summary` rows with `source = 'self_backfill'`, and merges in private repositories from REST `GET /user/repos?visibility=private` for repositories the token can read. It then upserts organization rows for repositories owned by GitHub organizations, enriches every discovered repository, backfills commits by year, imports authored pull requests and issues, imports submitted reviews, captures repository language snapshots, and derives `daily_repository_activity` for every distinct event date.
+The internal historical collect strategy starts from GraphQL `user.createdAt`, walks each year through `contributionsCollection`, stores year-start `daily_user_summary` rows with `source = 'self_backfill'`, enumerates repositories from REST `GET /user/repos?visibility=all` for the default read token, and enumerates configured organization repositories from REST `GET /orgs/{organization}/repos?type=all` with organization-specific read tokens. It then upserts organization rows, enriches every discovered repository, imports commits by year, imports authored pull requests and issues, imports submitted reviews, captures repository language snapshots, and derives `daily_repository_activity` for every distinct event date.
 
 ## Pending Mappings
 
