@@ -1,8 +1,10 @@
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
+import { isGitHubRepositoryUnavailableError } from '../lib/providers/github/errors.ts'
 import {
-  gitHubErrorSummary,
-  isGitHubRepositoryUnavailableError
-} from '../lib/providers/github/errors.ts'
+  privateRepositoryFailure,
+  repositoryErrorSummary,
+  repositoryLogLabel
+} from '../lib/providers/github/logging.ts'
 import * as logger from '../lib/logger.ts'
 import * as queries from '../lib/providers/github/queries.ts'
 import { restClient, type RestClient } from '../lib/providers/github/rest.ts'
@@ -62,6 +64,7 @@ export async function run(args: CollectArgs): Promise<void> {
     const fullName = requiredString(repositoryInput.full_name, 'repository full name')
     const name = requiredString(repositoryInput.name, 'repository name')
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
+    const logLabel = repositoryLogLabel(repositoryNode, fullName)
 
     await upsertRepositorySnapshot(repository.id, repositoryNode, date)
     try {
@@ -78,10 +81,14 @@ export async function run(args: CollectArgs): Promise<void> {
       await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity, date)
       await ingestIssues(clients.rest, repository.id, fullName, identity, date)
     } catch (error) {
-      if (!isGitHubRepositoryUnavailableError(error)) throw error
+      if (!isGitHubRepositoryUnavailableError(error)) {
+        if (repositoryNode.isPrivate) throw privateRepositoryFailure(repositoryNode)
+        throw error
+      }
 
       logger.warn(
-        `[collect] github/${identity.externalLogin}: repository [${visibility}] ${fullName} is unavailable; skipping enrichment (${gitHubErrorSummary(
+        `[collect] github/${identity.externalLogin}: repository [${visibility}] ${logLabel} is unavailable; skipping enrichment (${repositoryErrorSummary(
+          repositoryNode,
           error
         )})`
       )
