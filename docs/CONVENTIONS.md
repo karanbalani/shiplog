@@ -75,6 +75,8 @@ This document captures project conventions that should stay consistent across im
 - User-authored JSON config is validated with JSON Schema.
 - JSON schemas live under `schemas/`.
 - Keep `schemas/profile-config.schema.json` as the source of truth for `profile-config.json` validation.
+- The upstream org/template repo should commit `profile-config.example.json`, not a real `profile-config.json`.
+- Personal forks or generated instances may commit their own `profile-config.json`; config must not contain secrets.
 - Keep `lib/types/config/` aligned with the schema return shape.
 - Keep `lib/config.ts` focused on loading, schema validation, default application, and typed return values.
 

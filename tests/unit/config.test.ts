@@ -3,18 +3,26 @@ import path from 'node:path'
 import * as config from '../../lib/config.ts'
 
 const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
+const ROOT = path.join(import.meta.dir, '..', '..')
 
 test('load returns parsed valid config', () => {
   const c = config.load(path.join(FIXTURES, 'profile-config-valid.json'))
 
-  expect(c.displayName).toBe('Karan Balani')
+  expect(c.displayName).toBe('Example User')
   expect(c.identities).toHaveLength(1)
   expect(c.identities[0]!.provider).toBe('github')
-  expect(c.identities[0]!.login).toBe('balanikaran')
+  expect(c.identities[0]!.login).toBe('octocat')
   expect(c.identities[0]!.ignoreOrganizations).toEqual(['some-noisy-org'])
-  expect(c.identities[0]!.ignoreRepositories).toContain('balanikaran/balanikaran')
+  expect(c.identities[0]!.ignoreRepositories).toContain('octocat/octocat')
   expect(c.publishTargets).toHaveLength(1)
-  expect(c.publishTargets[0]!.repositoryFullName).toBe('balanikaran/balanikaran')
+  expect(c.publishTargets[0]!.repositoryFullName).toBe('octocat/octocat')
+})
+
+test('load accepts the shipped example config', () => {
+  const c = config.load(path.join(ROOT, 'profile-config.example.json'))
+
+  expect(c.identities[0]!.login).toBe('your-github-login')
+  expect(c.publishTargets[0]!.repositoryFullName).toBe('your-github-login/your-github-login')
 })
 
 test('load defaults render knobs when omitted', () => {
@@ -28,11 +36,11 @@ test('load defaults render knobs when omitted', () => {
 test('validate allows schema hint without returning it', () => {
   const c = config.validate({
     $schema: '../schemas/profile-config.schema.json',
-    identities: [{ provider: 'github', login: 'balanikaran' }],
+    identities: [{ provider: 'github', login: 'octocat' }],
     publishTargets: [
       {
         provider: 'github',
-        repositoryFullName: 'balanikaran/balanikaran',
+        repositoryFullName: 'octocat/octocat',
         branch: 'main',
         path: 'README.md',
         tokenEnv: 'GITHUB_README_TOKEN'

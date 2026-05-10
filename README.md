@@ -73,6 +73,21 @@ DATABASE_URL=postgres://user:password@host:5432/shiplog?sslmode=require
 GITHUB_API_TOKEN=ghp_xxx
 ```
 
+Create your profile config from the template:
+
+```bash
+cp profile-config.example.json profile-config.json
+```
+
+Then edit `profile-config.json`:
+
+- Set `displayName`.
+- Set `identities[0].login` to your GitHub username.
+- Set `publishTargets[0].repositoryFullName` to the repository that should receive the rendered README, usually `your-github-login/your-github-login` for a GitHub profile README.
+- Set `publishTargets[0].tokenEnv` to the secret name your workflow will expose for pushing the rendered README.
+
+The upstream org/template repo commits `profile-config.example.json`, not a real `profile-config.json`. Your personal fork or generated instance can commit its own `profile-config.json`; it should not contain secrets.
+
 ## Development Commands
 
 Run the TypeScript checker:

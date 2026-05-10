@@ -1,17 +1,18 @@
 {
-  "displayName": "Example User",
+  "$schema": "./schemas/profile-config.schema.json",
+  "displayName": "Your Name",
   "identities": [
     {
       "provider": "github",
-      "login": "octocat",
-      "ignoreOrganizations": ["some-noisy-org"],
-      "ignoreRepositories": ["octocat/octocat"]
+      "login": "your-github-login",
+      "ignoreOrganizations": [],
+      "ignoreRepositories": ["your-github-login/your-github-login"]
     }
   ],
   "publishTargets": [
     {
       "provider": "github",
-      "repositoryFullName": "octocat/octocat",
+      "repositoryFullName": "your-github-login/your-github-login",
       "branch": "main",
       "path": "README.md",
       "tokenEnv": "GITHUB_README_TOKEN"

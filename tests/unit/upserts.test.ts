@@ -23,10 +23,10 @@ afterEach(async () => {
 })
 
 test('upsertUser inserts and returns the created row', async () => {
-  const user = await upserts.upsertUser({ display_name: 'Karan' })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
 
   expect(user.id).toBeGreaterThan(0)
-  expect(user.display_name).toBe('Karan')
+  expect(user.display_name).toBe('Example User')
   expect(user.created_at).toBeDefined()
   expect(user.updated_at).toBeDefined()
 })
