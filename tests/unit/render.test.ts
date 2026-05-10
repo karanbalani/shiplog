@@ -58,6 +58,29 @@ test('run writes rendered markdown to the requested output path', async () => {
   expect(fs.readFileSync(outputPath, 'utf8')).toContain('# Example User')
 })
 
+test('run writes rendered.md by default without overwriting README.md', async () => {
+  await seedActivity()
+  const previousCwd = process.cwd()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-render-default-'))
+  const readmePath = path.join(dir, 'README.md')
+  const renderedPath = path.join(dir, 'rendered.md')
+  fs.writeFileSync(readmePath, '# Project README\n')
+
+  try {
+    process.chdir(dir)
+    await render.run({
+      profileConfig: profileConfig(),
+      template: '# {{ DISPLAY_NAME }}\n{{ ACCOUNT_LINKS }}\n',
+      now: new Date('2026-05-10T00:00:00Z')
+    })
+  } finally {
+    process.chdir(previousCwd)
+  }
+
+  expect(fs.readFileSync(renderedPath, 'utf8')).toContain('# Example User')
+  expect(fs.readFileSync(readmePath, 'utf8')).toBe('# Project README\n')
+})
+
 async function seedActivity(): Promise<void> {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
