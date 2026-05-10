@@ -1,10 +1,12 @@
 import * as db from '../lib/db.ts'
 import * as logger from '../lib/logger.ts'
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
+import { isGitHubRepositoryUnavailableError } from '../lib/providers/github/errors.ts'
 import {
-  gitHubErrorSummary,
-  isGitHubRepositoryUnavailableError
-} from '../lib/providers/github/errors.ts'
+  privateRepositoryFailure,
+  repositoryErrorSummary,
+  repositoryLogLabel
+} from '../lib/providers/github/logging.ts'
 import * as queries from '../lib/providers/github/queries.ts'
 import {
   GITHUB_SEARCH_REQUEST_INTERVAL_MS,
@@ -95,9 +97,10 @@ export async function run(args: BackfillArgs): Promise<void> {
     const fullName = requiredString(repositoryInput.full_name, 'repository full name')
     const name = requiredString(repositoryInput.name, 'repository name')
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
+    const logLabel = repositoryLogLabel(repositoryNode, fullName)
 
     logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName}`
+      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel}`
     )
 
     let repositoryStatus = 'complete'
@@ -126,11 +129,15 @@ export async function run(args: BackfillArgs): Promise<void> {
         observedOn
       )
     } catch (error) {
-      if (!isGitHubRepositoryUnavailableError(error)) throw error
+      if (!isGitHubRepositoryUnavailableError(error)) {
+        if (repositoryNode.isPrivate) throw privateRepositoryFailure(repositoryNode)
+        throw error
+      }
 
       repositoryStatus = 'skipped'
       logger.warn(
-        `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName} is unavailable; skipping enrichment (${gitHubErrorSummary(
+        `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is unavailable; skipping enrichment (${repositoryErrorSummary(
+          repositoryNode,
           error
         )})`
       )
@@ -138,7 +145,7 @@ export async function run(args: BackfillArgs): Promise<void> {
 
     completedRepositories += 1
     logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${repositoryStatus} (${progressPercent(
+      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${logLabel} ${repositoryStatus} (${progressPercent(
         completedRepositories,
         repositoryCount
       )}%, elapsed ${formatDuration(Date.now() - repositoriesStartedAt)}, eta ${formatDuration(

@@ -139,7 +139,8 @@ test('run backfills accessible private repositories outside contribution groups'
   expect(repositories.rows[0]!.count).toBe(1)
   expect(commits.rows[0]!.count).toBe(1)
   expect(activity.rows[0]!.commits).toBe(1)
-  expect(logs.some((line) => line.includes('[private] octocat/secret'))).toBe(true)
+  expect(logs.join('\n')).toContain('[private] id:R_PRIVATE_1')
+  expect(logs.join('\n')).not.toContain('octocat/secret')
 })
 
 test('run skips repositories that GitHub no longer resolves', async () => {

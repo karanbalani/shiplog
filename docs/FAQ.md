@@ -125,7 +125,7 @@ If an organization blocks or requires separate authorization for the default cla
 
 Repository metadata, commits, pull requests, issues, and reviews for that organization will use the organization-specific token.
 
-Private repository names can appear in local or workflow logs because repository progress logs show the repository currently being processed. This is expected for a single-user ingestion workflow.
+Private repository names are stored in the database when your token can read them, but they are not printed in workflow logs. Log lines use the provider repository id for private repositories, for example `id:R_abc123`, so a public Actions run does not leak private repository names.
 
 ## Why did GitHub say it could not resolve a repository during backfill?
 
