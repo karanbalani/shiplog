@@ -168,11 +168,13 @@ Required GitHub repository settings:
 Token responsibilities:
 
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org` so private repository activity is available.
-- `GH_RW_REPO_TOKEN` authenticates README publishing commits.
+- `GH_RW_REPO_TOKEN` authenticates README publishing commits for configured publish targets.
 
 If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_TOKEN`, add it to `identities[0].organizationTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders, and commits the initial README. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
+The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
+
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders, and publishes the initial README to `publishTargets`. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates `README.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
@@ -286,15 +288,22 @@ Render only:
 bun run render
 ```
 
+Publish the rendered README to configured targets:
+
+```bash
+bun run publish
+```
+
 ## Implementation Notes
 
-The v1 architecture is five Bun-executed TypeScript binaries:
+The v1 architecture is six Bun-executed TypeScript binaries:
 
 - `bin/init.ts`
 - `bin/collect.ts`
 - `bin/collect_github.ts`
 - `bin/backfill_github.ts`
 - `bin/render.ts`
+- `bin/publish.ts`
 
 Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/github/`, and database migrations under `db/migrations/`.
 
@@ -309,5 +318,7 @@ The init dispatcher reads `profile_config.json`, ensures the human `users` row e
 The collect dispatcher reads `profile_config.json`, resolves initialized `accounts`, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE`, or catches up every missing date through UTC yesterday. After a successful automatic run, it advances the account checkpoint.
 
 The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `README.md`.
+
+The publisher reads the rendered `README.md` and writes it to each configured `publishTargets[]` entry. GitHub targets use the Contents API with the target's `tokenEnv`, `repositoryFullName`, `branch`, and `path`.
 
 CLI logs use `lib/logger.ts`, write to stderr, include ISO timestamps, support log levels, and colorize levels unless `NO_COLOR` is set.
