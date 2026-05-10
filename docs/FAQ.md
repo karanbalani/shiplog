@@ -136,6 +136,28 @@ Run `init` first. It migrates the database, creates the configured accounts, run
 
 After that, `collect` runs daily or manually. When `collect` succeeds, `render` updates the README.
 
+## Why is the first backfill slow?
+
+Historical backfill can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps the first backfill under provider limits instead of racing into rate-limit failures.
+
+## What should I do if `init` fails during backfill?
+
+Fix the error and rerun `init`. You do not need to truncate tables.
+
+Backfill is designed to be resumable:
+
+- `accounts.backfill_completed_at` is only set after provider backfill finishes.
+- Most writes use database upserts or uniqueness constraints.
+- Repeated rows are deduplicated on rerun.
+
+Partial progress from the failed run is useful and should normally be kept.
+
+## Why did GitHub return `API rate limit exceeded`?
+
+GitHub has separate limits for some REST APIs, including search. shiplog throttles GitHub search requests, serializes ingestion workflows in GitHub Actions, and retries rate-limit responses using `Retry-After` or `X-RateLimit-Reset` headers.
+
+If a token was already exhausted by another run or tool, shiplog may wait for the reset window before continuing. That is expected for first-time backfills.
+
 ## Why did collection run after I merged to `main`?
 
 If `collect.yml` has a `push` trigger for `main`, merging a PR starts ingestion immediately. The intended setup is:

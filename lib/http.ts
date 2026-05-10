@@ -7,6 +7,20 @@ export interface FetchJsonOptions {
   timeoutMs?: number
 }
 
+export class HttpError extends Error {
+  readonly status: number
+  readonly body: string
+  readonly headers: Headers
+
+  constructor(url: string, status: number, body: string, headers: Headers) {
+    super(`HTTP ${status} ${url}: ${body.slice(0, 200)}`)
+    this.name = 'HttpError'
+    this.status = status
+    this.body = body
+    this.headers = headers
+  }
+}
+
 export async function fetchJson<T = unknown>(
   url: string,
   init: RequestInit = {},
@@ -31,7 +45,7 @@ export async function fetchJson<T = unknown>(
         continue
       }
 
-      throw httpError(url, response.status, body)
+      throw new HttpError(url, response.status, body, new Headers(response.headers))
     } catch (err) {
       lastError = err
       if (attempt < retries && isRetryableError(err)) {
@@ -82,14 +96,6 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   return body ? (JSON.parse(body) as T) : (null as T)
 }
 
-function httpError(url: string, status: number, body: string): Error & { status?: number } {
-  const error = new Error(`HTTP ${status} ${url}: ${body.slice(0, 200)}`) as Error & {
-    status?: number
-  }
-  error.status = status
-  return error
-}
-
 function isRetryableError(err: unknown): boolean {
-  return !(err instanceof Error && 'status' in err)
+  return !(err instanceof HttpError)
 }
