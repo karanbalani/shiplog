@@ -131,7 +131,7 @@ Token responsibilities:
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The `collect` workflow then runs daily, on pushes to `main`, or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`.
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The `collect` workflow then runs daily or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
