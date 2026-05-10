@@ -58,6 +58,37 @@ test('organizationFromRepositoryOwner maps GitHub organization owner', () => {
   })
 })
 
+test('repositoryFromRestRepository maps authenticated private repository metadata', () => {
+  const node = translate.repositoryFromRestRepository({
+    node_id: 'R_PRIVATE_1',
+    name: 'secret',
+    full_name: 'octocat/secret',
+    private: true,
+    fork: false,
+    archived: false,
+    language: 'TypeScript',
+    stargazers_count: 0,
+    forks_count: 0,
+    created_at: '2024-01-01T00:00:00Z',
+    pushed_at: '2026-05-07T12:00:00Z',
+    default_branch: 'main',
+    html_url: 'https://github.com/octocat/secret',
+    description: 'private test repository',
+    owner: {
+      login: 'octocat',
+      node_id: 'U_TEST_1',
+      type: 'User',
+      avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4'
+    }
+  })
+
+  expect(node.id).toBe('R_PRIVATE_1')
+  expect(node.nameWithOwner).toBe('octocat/secret')
+  expect(node.isPrivate).toBe(true)
+  expect(node.primaryLanguage?.name).toBe('TypeScript')
+  expect(node.defaultBranchRef?.name).toBe('main')
+})
+
 test('commitFromGraphQLNode maps commit fields and dates', () => {
   const row = translate.commitFromGraphQLNode(
     {

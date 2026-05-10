@@ -120,7 +120,9 @@ This document captures project conventions that should stay consistent across im
 
 ## Tables
 
+- Every table should have `id BIGSERIAL PRIMARY KEY`.
 - Every table should have `created_at` and `updated_at`.
+- Use `UNIQUE (...)` constraints for natural grains and deduplication rules.
 - Keep raw event provenance with `source` where useful.
 - Keep `source` on `daily_*` tables as cheap provenance for generated or provider-reported facts.
 - `daily_repository_activity` is a derived fact table from raw events.

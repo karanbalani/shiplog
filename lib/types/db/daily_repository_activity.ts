@@ -2,6 +2,7 @@ import type { RollupSource } from '../domain/enums.ts'
 import type { AuditTimestampColumns } from './common.ts'
 
 export interface DailyRepositoryActivityRow extends AuditTimestampColumns {
+  id: number
   account_id: number
   activity_on: Date | string
   repository_id: number

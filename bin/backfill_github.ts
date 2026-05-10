@@ -12,6 +12,7 @@ import type {
   GitHubCommitHistory,
   GitHubContributionsCollection,
   GitHubRepositoryNode,
+  GitHubRestRepository,
   GitHubReviewItem,
   GitHubSearchPullRequestItem,
   GitHubSearchResult,
@@ -61,6 +62,8 @@ export async function run(args: BackfillArgs): Promise<void> {
     })
   }
 
+  await collectAccessiblePrivateRepositories(rest, repositoriesByExternalId)
+
   const repositoryCount = repositoriesByExternalId.size
   logger.info(
     `[backfill] github/${identity.externalLogin}: discovered ${repositoryCount} repositories; estimated minimum GitHub Search pacing ${formatDuration(
@@ -81,9 +84,10 @@ export async function run(args: BackfillArgs): Promise<void> {
     const repository = await upserts.upsertRepository(repositoryInput)
     const fullName = requiredString(repositoryInput.full_name, 'repository full name')
     const name = requiredString(repositoryInput.name, 'repository name')
+    const visibility = repositoryNode.isPrivate ? 'private' : 'public'
 
     logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} ${fullName}`
+      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName}`
     )
 
     for (const year of years) {
@@ -112,7 +116,7 @@ export async function run(args: BackfillArgs): Promise<void> {
 
     completedRepositories += 1
     logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} complete (${progressPercent(
+      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] complete (${progressPercent(
         completedRepositories,
         repositoryCount
       )}%, elapsed ${formatDuration(Date.now() - repositoriesStartedAt)}, eta ${formatDuration(
@@ -178,6 +182,32 @@ function collectActiveRepositories(
     for (const contribution of group) {
       repositoriesByExternalId.set(contribution.repository.id, contribution.repository)
     }
+  }
+}
+
+async function collectAccessiblePrivateRepositories(
+  rest: RestClient,
+  repositoriesByExternalId: Map<string, GitHubRepositoryNode>
+): Promise<void> {
+  for (let page = 1; ; page += 1) {
+    const repositories = await rest<GitHubRestRepository[]>('/user/repos', {
+      visibility: 'private',
+      affiliation: 'owner,collaborator,organization_member',
+      sort: 'full_name',
+      direction: 'asc',
+      per_page: 100,
+      page
+    })
+
+    for (const repository of repositories) {
+      if (repositoriesByExternalId.has(repository.node_id)) continue
+      repositoriesByExternalId.set(
+        repository.node_id,
+        translate.repositoryFromRestRepository(repository)
+      )
+    }
+
+    if (repositories.length < 100) return
   }
 }
 

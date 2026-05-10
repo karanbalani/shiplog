@@ -25,6 +25,29 @@ export interface GitHubRepositoryNode {
   description?: string | null
 }
 
+export interface GitHubRestRepository {
+  node_id: string
+  name: string
+  full_name: string
+  private: boolean
+  fork: boolean
+  archived?: boolean
+  language: string | null
+  stargazers_count?: number
+  forks_count?: number
+  created_at?: string | null
+  pushed_at?: string | null
+  default_branch?: string | null
+  html_url?: string
+  description?: string | null
+  owner: {
+    login: string
+    node_id?: string
+    type?: string
+    avatar_url?: string | null
+  }
+}
+
 export interface GitHubContributionByRepository {
   repository: GitHubRepositoryNode
   contributions: { totalCount: number }

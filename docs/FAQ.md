@@ -99,10 +99,16 @@ GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
 
 The tokens have different jobs:
 
-- `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion.
+- `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org`; the `repo` scope lets shiplog read private repository activity.
 - `GH_RW_REPO_TOKEN` writes the rendered README commit.
 
 Keeping them separate limits what each token can do.
+
+## How does shiplog collect private repository activity?
+
+GitHub contribution groups are useful for discovering active repositories, but private repositories can be omitted from those grouped lists depending on token access and GitHub visibility rules. shiplog also calls GitHub's authenticated-user repository endpoint with `visibility=private` and owner/collaborator/organization-member affiliations, then processes those repositories through the same normal backfill and collect path as public repositories.
+
+Private repository names can appear in local or workflow logs because repository progress logs show the repository currently being processed. This is expected for a single-user ingestion workflow.
 
 ## Why not name the secrets `GITHUB_*`?
 
@@ -135,6 +141,26 @@ If your config contains private repository names or other sensitive metadata, yo
 Run `init` first. It migrates the database, creates the configured accounts, runs the one-time historical backfill, renders the README, and commits it.
 
 After that, `collect` runs daily or manually. When `collect` succeeds, `render` updates the README.
+
+## What happens if daily collect fails for a few days?
+
+shiplog keeps a simple checkpoint on each account:
+
+```text
+accounts.last_successful_collect_on
+```
+
+Normal collect runs process every missing date from the day after that checkpoint through UTC yesterday. After each date succeeds, shiplog advances the checkpoint.
+
+This means a failed or skipped workflow can usually be fixed by rerunning `collect`; it will catch up the missed dates automatically.
+
+If you want to repair or inspect one specific day without moving the checkpoint, run with `COLLECT_DATE`:
+
+```bash
+COLLECT_DATE=2026-05-07 bun run collect
+```
+
+In GitHub Actions, the manual `collect` workflow has an optional `collect_date` input for the same purpose. The next normal collect run may safely reprocess that date if it is still part of the checkpoint gap.
 
 ## Why is the first backfill slow?
 

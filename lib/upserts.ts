@@ -21,10 +21,15 @@ export type NewUserRow = Pick<UserRow, 'display_name'>
 
 export type NewAccountRow = Omit<
   AccountRow,
-  'id' | 'backfill_completed_at' | 'captured_at' | 'created_at' | 'updated_at'
+  | 'id'
+  | 'backfill_completed_at'
+  | 'last_successful_collect_on'
+  | 'captured_at'
+  | 'created_at'
+  | 'updated_at'
 >
 
-export type NewProfileSnapshotRow = Omit<ProfileSnapshotRow, 'created_at' | 'updated_at'>
+export type NewProfileSnapshotRow = Omit<ProfileSnapshotRow, 'id' | 'created_at' | 'updated_at'>
 
 export type NewOrganizationRow = Omit<OrganizationRow, 'id' | 'created_at' | 'updated_at'>
 
@@ -38,7 +43,10 @@ export type NewRepositorySnapshotRow = Omit<
   'id' | 'created_at' | 'updated_at'
 >
 
-export type NewRepositoryLanguageRow = Omit<RepositoryLanguageRow, 'created_at' | 'updated_at'>
+export type NewRepositoryLanguageRow = Omit<
+  RepositoryLanguageRow,
+  'id' | 'created_at' | 'updated_at'
+>
 
 export type NewCommitRow = Omit<CommitRow, 'id' | 'captured_at' | 'created_at' | 'updated_at'>
 
@@ -56,12 +64,12 @@ export type NewIssueRow = Omit<IssueRow, 'id' | 'captured_at' | 'created_at' | '
 
 export type NewDailyUserSummaryRow = Omit<
   DailyUserSummaryRow,
-  'captured_at' | 'created_at' | 'updated_at'
+  'id' | 'captured_at' | 'created_at' | 'updated_at'
 >
 
 export type NewDailyRepositoryActivityRow = Omit<
   DailyRepositoryActivityRow,
-  'captured_at' | 'created_at' | 'updated_at'
+  'id' | 'captured_at' | 'created_at' | 'updated_at'
 >
 
 export async function upsertUser(row: NewUserRow): Promise<UserRow> {
@@ -105,13 +113,36 @@ export async function upsertAccount(row: NewAccountRow): Promise<AccountRow> {
   return result.rows[0]!
 }
 
-export async function markBackfillComplete(accountId: number): Promise<void> {
+export async function markBackfillComplete(
+  accountId: number,
+  lastSuccessfulCollectOn?: string
+): Promise<void> {
   await db.query(
     `UPDATE accounts
      SET backfill_completed_at = COALESCE(backfill_completed_at, now()),
+         last_successful_collect_on = CASE
+           WHEN $2::date IS NULL THEN last_successful_collect_on
+           WHEN last_successful_collect_on IS NULL THEN $2::date
+           WHEN last_successful_collect_on < $2::date THEN $2::date
+           ELSE last_successful_collect_on
+         END,
          updated_at = now()
      WHERE id = $1`,
-    [accountId]
+    [accountId, lastSuccessfulCollectOn ?? null]
+  )
+}
+
+export async function markCollectSuccess(accountId: number, collectedOn: string): Promise<void> {
+  await db.query(
+    `UPDATE accounts
+     SET last_successful_collect_on = CASE
+           WHEN last_successful_collect_on IS NULL THEN $2::date
+           WHEN last_successful_collect_on < $2::date THEN $2::date
+           ELSE last_successful_collect_on
+         END,
+         updated_at = now()
+     WHERE id = $1`,
+    [accountId, collectedOn]
   )
 }
 

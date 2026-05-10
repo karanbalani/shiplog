@@ -1,5 +1,6 @@
 -- migrate:up
 CREATE TABLE daily_repository_activity (
+  id BIGSERIAL PRIMARY KEY,
   account_id BIGINT NOT NULL REFERENCES accounts (id),
   activity_on DATE NOT NULL,
   repository_id BIGINT NOT NULL REFERENCES repositories (id),
@@ -22,7 +23,7 @@ CREATE TABLE daily_repository_activity (
   captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (account_id, activity_on, repository_id)
+  UNIQUE (account_id, activity_on, repository_id)
 );
 
 -- migrate:down

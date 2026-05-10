@@ -50,20 +50,79 @@ test('run dispatches daily collection for configured account', async () => {
   expect(activity.rows[0]!.commits).toBe(1)
 })
 
+test('run catches up missing collect dates and advances checkpoint', async () => {
+  await seedAccount({ lastSuccessfulCollectOn: '2026-05-05' })
+
+  await collect.run({
+    profileConfig: profileConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
+    fetch: mockGitHubFetch()
+  })
+
+  const summaries = await db.query<{ activity_on: Date | string }>(
+    'SELECT activity_on FROM daily_user_summary ORDER BY activity_on'
+  )
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+
+  expect(summaries.rows.map((row) => dateOnly(row.activity_on))).toEqual([
+    '2026-05-06',
+    '2026-05-07'
+  ])
+  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
+})
+
+test('run skips automatic collect when account is already current', async () => {
+  await seedAccount({ lastSuccessfulCollectOn: '2026-05-07' })
+
+  await collect.run({
+    profileConfig: profileConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
+    fetch: async () => {
+      throw new Error('fetch should not be called')
+    }
+  })
+
+  const summaries = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM daily_user_summary'
+  )
+
+  expect(summaries.rows[0]!.count).toBe(0)
+})
+
 test('run uses COLLECT_DATE when date option is omitted', async () => {
-  await seedAccount()
+  await seedAccount({ lastSuccessfulCollectOn: '2026-05-05' })
   process.env.COLLECT_DATE = '2026-05-07'
 
   await collect.run({
     profileConfig: profileConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
     fetch: mockGitHubFetch()
   })
 
   const summaries = await db.query<{ activity_on: Date | string }>(
     'SELECT activity_on FROM daily_user_summary'
   )
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
 
   expect(dateOnly(summaries.rows[0]!.activity_on)).toBe('2026-05-07')
+  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-05')
+})
+
+test('run rejects future COLLECT_DATE', async () => {
+  await seedAccount()
+  process.env.COLLECT_DATE = '2026-05-08'
+
+  await expect(
+    collect.run({
+      profileConfig: profileConfig(),
+      now: new Date('2026-05-08T00:00:00Z'),
+      fetch: mockGitHubFetch()
+    })
+  ).rejects.toThrow(/COLLECT_DATE.*2026-05-07.*2026-05-08/)
 })
 
 test('run throws when account has not been initialized', async () => {
@@ -76,9 +135,9 @@ test('run throws when account has not been initialized', async () => {
   ).rejects.toThrow(/run bun run init first/i)
 })
 
-async function seedAccount(): Promise<void> {
+async function seedAccount(options: { lastSuccessfulCollectOn?: string } = {}): Promise<void> {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
-  await upserts.upsertAccount({
+  const account = await upserts.upsertAccount({
     user_id: user.id,
     provider: 'github',
     external_login: 'octocat',
@@ -87,6 +146,10 @@ async function seedAccount(): Promise<void> {
     external_created_at: '2026-01-01T00:00:00Z',
     first_seen_on: '2026-05-07'
   })
+
+  if (options.lastSuccessfulCollectOn) {
+    await upserts.markCollectSuccess(account.id, options.lastSuccessfulCollectOn)
+  }
 }
 
 function profileConfig(): ProfileConfig {
@@ -156,6 +219,10 @@ function mockGitHubFetch(): typeof fetch {
 
     const parsed = new URL(url)
     const q = parsed.searchParams.get('q') ?? ''
+
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([])
+    }
 
     if (parsed.pathname === '/search/issues' && q.includes('type:pr author:')) {
       return jsonResponse({ total_count: 0, items: [] })
