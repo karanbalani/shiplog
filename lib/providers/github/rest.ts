@@ -1,7 +1,7 @@
 import { fetchJson, HttpError, sleep, type Fetcher } from '../../http.ts'
 
 const BASE_URL = 'https://api.github.com'
-const SEARCH_REQUEST_INTERVAL_MS = 2500
+export const GITHUB_SEARCH_REQUEST_INTERVAL_MS = 2500
 const RATE_LIMIT_RESET_BUFFER_MS = 1000
 const RATE_LIMIT_RETRIES = 5
 
@@ -24,7 +24,7 @@ export function restClient(options: RestClientOptions): RestClient {
     token,
     fetch,
     rateLimitRetries = RATE_LIMIT_RETRIES,
-    searchRequestIntervalMs = fetch ? 0 : SEARCH_REQUEST_INTERVAL_MS,
+    searchRequestIntervalMs = fetch ? 0 : GITHUB_SEARCH_REQUEST_INTERVAL_MS,
     sleep: sleepFn = sleep,
     now = Date.now
   } = options

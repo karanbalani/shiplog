@@ -166,7 +166,7 @@ Token responsibilities:
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The first backfill can be slow because shiplog deliberately throttles GitHub REST Search calls and waits through rate-limit reset windows instead of failing fast. If `init` fails before completion, fix the error and rerun it; backfill writes are upserted and the completion marker is only set after the backfill finishes. The `collect` workflow then runs daily or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The first backfill can be slow because shiplog deliberately throttles GitHub REST Search calls and waits through rate-limit reset windows instead of failing fast. During backfill, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; backfill writes are upserted and the completion marker is only set after the backfill finishes. The `collect` workflow then runs daily or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
@@ -260,7 +260,7 @@ Run the one-time backfill after configuring `profile_config.json` and migrating 
 bun run init
 ```
 
-`init` is resumable. If it fails midway because of a provider or database error, rerun it after fixing the issue. Existing rows are deduplicated by database constraints and upserts, and `accounts.backfill_completed_at` is set only after the provider backfill succeeds.
+`init` is resumable. If it fails midway because of a provider or database error, rerun it after fixing the issue. Existing rows are deduplicated by database constraints and upserts, and `accounts.backfill_completed_at` is set only after the provider backfill succeeds. Backfill logs include approximate ETA updates while repositories are processed.
 
 Collect yesterday's activity and regenerate the README:
 

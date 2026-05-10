@@ -140,6 +140,14 @@ After that, `collect` runs daily or manually. When `collect` succeeds, `render` 
 
 Historical backfill can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps the first backfill under provider limits instead of racing into rate-limit failures.
 
+During backfill, shiplog logs:
+
+- yearly discovery progress
+- discovered repository count
+- estimated minimum GitHub Search pacing time
+- repository progress
+- elapsed time and approximate ETA
+
 ## What should I do if `init` fails during backfill?
 
 Fix the error and rerun `init`. You do not need to truncate tables.

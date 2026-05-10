@@ -1,7 +1,12 @@
 import * as db from '../lib/db.ts'
+import * as logger from '../lib/logger.ts'
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
 import * as queries from '../lib/providers/github/queries.ts'
-import { restClient, type RestClient } from '../lib/providers/github/rest.ts'
+import {
+  GITHUB_SEARCH_REQUEST_INTERVAL_MS,
+  restClient,
+  type RestClient
+} from '../lib/providers/github/rest.ts'
 import * as translate from '../lib/providers/github/translate.ts'
 import type {
   GitHubCommitHistory,
@@ -21,6 +26,7 @@ export async function run(args: BackfillArgs): Promise<void> {
   if (!identity) throw new Error('backfill_github: missing identity')
   if (!token) throw new Error('backfill_github: missing token')
 
+  const startedAt = Date.now()
   const graphQL = graphQLClient({ token, fetch })
   const rest = restClient({ token, fetch })
   const user = await fetchGitHubUser(graphQL, identity.externalLogin)
@@ -31,8 +37,15 @@ export async function run(args: BackfillArgs): Promise<void> {
   const observedOn = dates.yesterdayUTC()
   const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>()
 
-  for (const year of years) {
+  logger.info(
+    `[backfill] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)})`
+  )
+
+  for (const [index, year] of years.entries()) {
     const { from, to } = dates.yearWindow(year)
+    logger.info(
+      `[backfill] github/${identity.externalLogin}: discovery ${index + 1}/${years.length} (${year})`
+    )
     const collection = await fetchContributionsCollection(graphQL, identity.externalLogin, from, to)
 
     collectActiveRepositories(collection, repositoriesByExternalId)
@@ -48,6 +61,16 @@ export async function run(args: BackfillArgs): Promise<void> {
     })
   }
 
+  const repositoryCount = repositoriesByExternalId.size
+  logger.info(
+    `[backfill] github/${identity.externalLogin}: discovered ${repositoryCount} repositories; estimated minimum GitHub Search pacing ${formatDuration(
+      estimatedSearchPacingMs(repositoryCount)
+    )}`
+  )
+
+  const repositoriesStartedAt = Date.now()
+  let completedRepositories = 0
+
   for (const repositoryNode of repositoriesByExternalId.values()) {
     const organizationId = await upsertOrganizationFromRepositoryOwner(repositoryNode, observedOn)
     const repositoryInput = translate.repositoryFromGraphQLNode(
@@ -58,6 +81,10 @@ export async function run(args: BackfillArgs): Promise<void> {
     const repository = await upserts.upsertRepository(repositoryInput)
     const fullName = requiredString(repositoryInput.full_name, 'repository full name')
     const name = requiredString(repositoryInput.name, 'repository name')
+
+    logger.info(
+      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} ${fullName}`
+    )
 
     for (const year of years) {
       const { from, to } = dates.yearWindow(year)
@@ -82,9 +109,23 @@ export async function run(args: BackfillArgs): Promise<void> {
       name,
       observedOn
     )
+
+    completedRepositories += 1
+    logger.info(
+      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} complete (${progressPercent(
+        completedRepositories,
+        repositoryCount
+      )}%, elapsed ${formatDuration(Date.now() - repositoriesStartedAt)}, eta ${formatDuration(
+        estimatedRemainingMs(repositoriesStartedAt, completedRepositories, repositoryCount)
+      )})`
+    )
   }
 
+  logger.info(`[backfill] github/${identity.externalLogin}: rolling up activity dates`)
   await rollupDistinctActivityDates(identity.accountId)
+  logger.info(
+    `[backfill] github/${identity.externalLogin}: complete in ${formatDuration(Date.now() - startedAt)}`
+  )
 }
 
 async function upsertOrganizationFromRepositoryOwner(
@@ -360,6 +401,41 @@ async function rollupDistinctActivityDates(accountId: number): Promise<void> {
 
 function dateOnly(value: Date | string): string {
   return value instanceof Date ? value.toISOString().slice(0, 10) : value.slice(0, 10)
+}
+
+export function estimatedSearchPacingMs(repositoryCount: number): number {
+  const searchCallsPerRepository = 3
+  const searchCalls = repositoryCount * searchCallsPerRepository
+  if (searchCalls <= 1) return 0
+  return (searchCalls - 1) * GITHUB_SEARCH_REQUEST_INTERVAL_MS
+}
+
+export function estimatedRemainingMs(
+  startedAt: number,
+  completed: number,
+  total: number,
+  now = Date.now()
+): number {
+  if (completed <= 0 || total <= 0 || completed >= total) return 0
+  const elapsed = Math.max(0, now - startedAt)
+  const averageMs = elapsed / completed
+  return Math.max(0, Math.round(averageMs * (total - completed)))
+}
+
+export function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
+function progressPercent(completed: number, total: number): number {
+  if (total <= 0) return 100
+  return Math.min(100, Math.round((completed / total) * 100))
 }
 
 function requiredString(value: string | null, label: string): string {
