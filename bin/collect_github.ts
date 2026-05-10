@@ -6,6 +6,7 @@ import type {
   GitHubCommitHistory,
   GitHubContributionsCollection,
   GitHubRepositoryNode,
+  GitHubRestRepository,
   GitHubReviewItem,
   GitHubSearchPullRequestItem,
   GitHubSearchResult
@@ -37,6 +38,7 @@ export async function run(args: CollectArgs): Promise<void> {
 
   const collection = data.user.contributionsCollection
   const activeRepositories = collectActiveRepositories(collection)
+  await collectAccessiblePrivateRepositories(rest, activeRepositories)
 
   for (const repositoryNode of activeRepositories) {
     const organizationId = await upsertOrganizationFromRepositoryOwner(repositoryNode, date)
@@ -109,6 +111,38 @@ export function collectActiveRepositories(
   }
 
   return [...repositories.values()]
+}
+
+async function collectAccessiblePrivateRepositories(
+  rest: RestClient,
+  repositories: GitHubRepositoryNode[]
+): Promise<void> {
+  const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>(
+    repositories.map((repository) => [repository.id, repository])
+  )
+
+  for (let page = 1; ; page += 1) {
+    const privateRepositories = await rest<GitHubRestRepository[]>('/user/repos', {
+      visibility: 'private',
+      affiliation: 'owner,collaborator,organization_member',
+      sort: 'full_name',
+      direction: 'asc',
+      per_page: 100,
+      page
+    })
+
+    for (const repository of privateRepositories) {
+      if (repositoriesByExternalId.has(repository.node_id)) continue
+      repositoriesByExternalId.set(
+        repository.node_id,
+        translate.repositoryFromRestRepository(repository)
+      )
+    }
+
+    if (privateRepositories.length < 100) break
+  }
+
+  repositories.splice(0, repositories.length, ...repositoriesByExternalId.values())
 }
 
 async function upsertRepositorySnapshot(

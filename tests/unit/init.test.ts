@@ -178,6 +178,10 @@ function mockGitHubFetch(): typeof fetch {
     const parsed = new URL(url)
     const q = parsed.searchParams.get('q') ?? ''
 
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([])
+    }
+
     if (parsed.pathname === '/search/issues' && q.includes('type:pr author:')) {
       return jsonResponse({
         total_count: 1,

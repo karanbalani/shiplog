@@ -1,5 +1,10 @@
 import type { NewCommitRow, NewOrganizationRow, NewRepositoryRow } from '../../upserts.ts'
-import type { GitHubCommitNode, GitHubRepositoryNode, GitHubRepositoryOwner } from './types.ts'
+import type {
+  GitHubCommitNode,
+  GitHubRepositoryNode,
+  GitHubRepositoryOwner,
+  GitHubRestRepository
+} from './types.ts'
 
 export function repositoryFromGraphQLNode(
   node: GitHubRepositoryNode,
@@ -25,6 +30,32 @@ export function repositoryFromGraphQLNode(
     first_seen_on: observedOn,
     last_seen_on: observedOn,
     redacted: false
+  }
+}
+
+export function repositoryFromRestRepository(
+  repository: GitHubRestRepository
+): GitHubRepositoryNode {
+  return {
+    id: repository.node_id,
+    nameWithOwner: repository.full_name,
+    owner: {
+      __typename: repository.owner.type === 'Organization' ? 'Organization' : 'User',
+      id: repository.owner.node_id,
+      login: repository.owner.login,
+      avatarUrl: repository.owner.avatar_url ?? null
+    },
+    isPrivate: repository.private,
+    isFork: repository.fork,
+    isArchived: repository.archived ?? false,
+    primaryLanguage: repository.language ? { name: repository.language } : null,
+    stargazerCount: repository.stargazers_count ?? 0,
+    forkCount: repository.forks_count ?? 0,
+    createdAt: repository.created_at ?? undefined,
+    pushedAt: repository.pushed_at ?? null,
+    defaultBranchRef: repository.default_branch ? { name: repository.default_branch } : null,
+    url: repository.html_url ?? `https://github.com/${repository.full_name}`,
+    description: repository.description ?? null
   }
 }
 

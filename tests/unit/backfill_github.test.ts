@@ -103,6 +103,41 @@ test('run backfills GitHub history into generic schema tables', async () => {
   expect(logs.some((line) => line.includes('eta'))).toBe(true)
 })
 
+test('run backfills accessible private repositories outside contribution groups', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+
+  await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: mockGitHubFetchWithPrivateRepository()
+  })
+
+  const repositories = await db.query<{ count: number }>(
+    "SELECT COUNT(*)::int AS count FROM repositories WHERE visibility = 'private'"
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+  const activity = await db.query<{ commits: number }>(
+    'SELECT commits FROM daily_repository_activity'
+  )
+
+  expect(repositories.rows[0]!.count).toBe(1)
+  expect(commits.rows[0]!.count).toBe(1)
+  expect(activity.rows[0]!.commits).toBe(1)
+})
+
 test('estimatedSearchPacingMs estimates minimum GitHub search throttle time', () => {
   expect(backfillGitHub.estimatedSearchPacingMs(0)).toBe(0)
   expect(backfillGitHub.estimatedSearchPacingMs(1)).toBe(5000)
@@ -196,6 +231,10 @@ function mockGitHubFetch(): typeof fetch {
     const parsed = new URL(url)
     const q = parsed.searchParams.get('q') ?? ''
 
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([])
+    }
+
     if (parsed.pathname === '/search/issues' && q.includes('type:pr author:')) {
       return jsonResponse({
         total_count: 1,
@@ -258,6 +297,132 @@ function mockGitHubFetch(): typeof fetch {
           submitted_at: '2026-05-07T09:00:00Z'
         }
       ])
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
+function mockGitHubFetchWithPrivateRepository(): typeof fetch {
+  const currentYear = new Date().getUTCFullYear()
+
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as {
+        query: string
+        variables?: Record<string, string>
+      }
+
+      if (body.query.includes('query ViewerAndUser')) {
+        return jsonResponse({
+          data: {
+            user: {
+              id: 'U_TEST_1',
+              login: 'octocat',
+              name: 'Octocat',
+              url: 'https://github.com/octocat',
+              createdAt: `${currentYear}-01-01T00:00:00Z`
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({
+          data: {
+            user: {
+              contributionsCollection: {
+                totalCommitContributions: 1,
+                totalIssueContributions: 0,
+                totalPullRequestContributions: 0,
+                totalPullRequestReviewContributions: 0,
+                restrictedContributionsCount: 0,
+                commitContributionsByRepository: [],
+                pullRequestContributionsByRepository: [],
+                pullRequestReviewContributionsByRepository: [],
+                issueContributionsByRepository: []
+              }
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query RepositoryCommits')) {
+        expect(body.variables?.name).toBe('secret')
+        return jsonResponse({
+          data: {
+            repository: {
+              defaultBranchRef: {
+                target: {
+                  history: {
+                    totalCount: 1,
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                    nodes: [
+                      {
+                        oid: 'private-commit-1',
+                        committedDate: '2026-05-07T12:34:56Z',
+                        additions: 4,
+                        deletions: 1,
+                        changedFiles: 2,
+                        messageHeadline: 'Private work'
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query RepositoryLanguages')) {
+        return jsonResponse({
+          data: {
+            repository: {
+              stargazerCount: 0,
+              forkCount: 0,
+              isArchived: false,
+              isPrivate: true,
+              languages: {
+                edges: [{ size: 100, node: { name: 'TypeScript' } }]
+              }
+            }
+          }
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([
+        {
+          node_id: 'R_PRIVATE_1',
+          name: 'secret',
+          full_name: 'octocat/secret',
+          private: true,
+          fork: false,
+          archived: false,
+          language: 'TypeScript',
+          stargazers_count: 0,
+          forks_count: 0,
+          created_at: '2024-01-01T00:00:00Z',
+          pushed_at: '2026-05-07T12:00:00Z',
+          default_branch: 'main',
+          html_url: 'https://github.com/octocat/secret',
+          description: 'private test repository',
+          owner: {
+            login: 'octocat',
+            node_id: 'U_TEST_1',
+            type: 'User',
+            avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4'
+          }
+        }
+      ])
+    }
+
+    if (parsed.pathname === '/search/issues') {
+      return jsonResponse({ total_count: 0, items: [] })
     }
 
     return new Response(`unexpected request: ${url}`, { status: 500 })

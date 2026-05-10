@@ -38,7 +38,7 @@ Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`
 - TypeScript, installed through `bun install`
 - dbmate, needed once database migrations are added
 - A Neon Postgres database
-- A GitHub token with `read:user`, `repo`, and `read:org` scopes
+- A classic GitHub token with `read:user`, `repo`, and `read:org` scopes. The `repo` scope is required for private repository activity.
 
 ## Setup
 
@@ -163,7 +163,7 @@ Required GitHub repository settings:
 
 Token responsibilities:
 
-- `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion.
+- `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org` so private repository activity is available.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits.
 
 After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The first backfill can be slow because shiplog deliberately throttles GitHub REST Search calls and waits through rate-limit reset windows instead of failing fast. During backfill, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; backfill writes are upserted and the completion marker is only set after the backfill finishes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
@@ -294,9 +294,9 @@ Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/git
 
 Project conventions live in `docs/CONVENTIONS.md`. Frequently asked setup and operations questions live in `docs/FAQ.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
-The GitHub daily collector currently ingests active repositories from GitHub contribution data, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups.
+The GitHub daily collector currently ingests active repositories from GitHub contribution data, merges in authenticated private repositories the token can read, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups.
 
-The GitHub backfill walker uses the account creation year to walk contribution history by year, discovers active repositories, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
+The GitHub backfill walker uses the account creation year to walk contribution history by year, discovers active repositories, merges in authenticated private repositories the token can read, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
 
 The init dispatcher reads `profile_config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, runs backfill for accounts where `backfill_completed_at` is null, then marks the account as backfilled.
 
