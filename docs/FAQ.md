@@ -17,7 +17,7 @@ sslmode=verify-full
 Example:
 
 ```bash
-DATABASE_CONNECTION_STRING=postgres://user:password@host:5432/shiplog?sslmode=verify-full
+DATABASE_CONNECTION_STRING=postgres://shiplog:password@host:5432/shiplog?sslmode=verify-full
 ```
 
 You do not need to rotate the database password. This change keeps the current `pg` behavior explicit and avoids the `pg-connection-string` warning about future SSL mode semantics.
@@ -33,6 +33,67 @@ Update every place that stores the connection string:
 ## Should `DATABASE_CONNECTION_STRING` be called a URL, URI, or connection string?
 
 shiplog uses `DATABASE_CONNECTION_STRING` because the value contains the full connection material: protocol, user, password, host, database, and connection parameters.
+
+## What database permissions does shiplog need?
+
+shiplog should use a dedicated Postgres role, usually named `shiplog`, against a dedicated database, usually also named `shiplog`.
+
+The role must be able to:
+
+- connect to the database
+- create tables, indexes, and views during migrations
+- read and write the tables it owns
+
+Run this as a Postgres admin user:
+
+```sql
+CREATE ROLE shiplog LOGIN PASSWORD 'replace-with-a-strong-password';
+CREATE DATABASE shiplog OWNER shiplog;
+```
+
+Then connect to the new database and grant schema permissions:
+
+```sql
+\connect shiplog
+
+GRANT CONNECT ON DATABASE shiplog TO shiplog;
+GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
+```
+
+Use that role in the connection string:
+
+```bash
+DATABASE_CONNECTION_STRING=postgres://shiplog:replace-with-a-strong-password@host:5432/shiplog?sslmode=verify-full
+```
+
+Verify the role can create objects by connecting with `DATABASE_CONNECTION_STRING` and running:
+
+```sql
+CREATE TABLE shiplog_permission_check (id int);
+DROP TABLE shiplog_permission_check;
+```
+
+## Why did migrations fail with `permission denied for schema public`?
+
+The database connection works, but the role does not have permission to create objects in the `public` schema.
+
+Fix it by using a role that can create objects in the target schema, or grant the current role schema permissions:
+
+```sql
+GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
+```
+
+After updating permissions, rerun the `init` workflow.
+
+## Why did `ALTER SCHEMA public OWNER TO shiplog` fail?
+
+Changing schema ownership is stricter than granting schema permissions. Postgres requires the current role to own the schema and be able to `SET ROLE` to the new owner. Managed Postgres providers often do not allow that from normal project roles.
+
+shiplog does not require ownership of the `public` schema. It only needs:
+
+```sql
+GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
+```
 
 ## Why does shiplog use two GitHub tokens?
 
@@ -74,6 +135,36 @@ If your config contains private repository names or other sensitive metadata, yo
 Run `init` first. It migrates the database, creates the configured accounts, runs the one-time historical backfill, renders the README, and commits it.
 
 After that, `collect` runs daily or manually. When `collect` succeeds, `render` updates the README.
+
+## Why is the first backfill slow?
+
+Historical backfill can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps the first backfill under provider limits instead of racing into rate-limit failures.
+
+During backfill, shiplog logs:
+
+- yearly discovery progress
+- discovered repository count
+- estimated minimum GitHub Search pacing time
+- repository progress
+- elapsed time and approximate ETA
+
+## What should I do if `init` fails during backfill?
+
+Fix the error and rerun `init`. You do not need to truncate tables.
+
+Backfill is designed to be resumable:
+
+- `accounts.backfill_completed_at` is only set after provider backfill finishes.
+- Most writes use database upserts or uniqueness constraints.
+- Repeated rows are deduplicated on rerun.
+
+Partial progress from the failed run is useful and should normally be kept.
+
+## Why did GitHub return `API rate limit exceeded`?
+
+GitHub has separate limits for some REST APIs, including search. shiplog throttles GitHub search requests, serializes ingestion workflows in GitHub Actions, and retries rate-limit responses using `Retry-After` or `X-RateLimit-Reset` headers.
+
+If a token was already exhausted by another run or tool, shiplog may wait for the reset window before continuing. That is expected for first-time backfills.
 
 ## Why did collection run after I merged to `main`?
 

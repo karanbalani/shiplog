@@ -83,6 +83,25 @@ test('fetchJson throws on 4xx without retrying', async () => {
   expect(attempts).toBe(1)
 })
 
+test('fetchJson exposes generic HTTP error metadata', async () => {
+  const mockFetch: Fetcher = async () =>
+    new Response('too many requests', {
+      status: 429,
+      headers: { 'retry-after': '2' }
+    })
+
+  try {
+    await http.fetchJson('https://example.com', {}, { fetch: mockFetch, retries: 0 })
+    throw new Error('expected request to fail')
+  } catch (err) {
+    expect(err).toBeInstanceOf(http.HttpError)
+    const httpErr = err as http.HttpError
+    expect(httpErr.status).toBe(429)
+    expect(httpErr.body).toBe('too many requests')
+    expect(httpErr.headers.get('retry-after')).toBe('2')
+  }
+})
+
 test('fetchJson times out requests', async () => {
   const mockFetch: Fetcher = async (_url, init) => {
     await new Promise((_resolve, reject) => {

@@ -66,6 +66,41 @@ If Bun is installed but not on your shell `PATH`, run it by absolute path or add
 ~/.bun/bin/bun install
 ```
 
+## Postgres Database Setup
+
+shiplog needs a Postgres database where the application role can create schema objects and then read/write the data it owns.
+
+Create a dedicated role and database before running migrations. Run this as a Postgres admin user:
+
+```sql
+CREATE ROLE shiplog LOGIN PASSWORD 'replace-with-a-strong-password';
+CREATE DATABASE shiplog OWNER shiplog;
+```
+
+Then connect to the new database as an admin and make sure the `shiplog` role can create objects in the `public` schema:
+
+```sql
+\connect shiplog
+
+GRANT CONNECT ON DATABASE shiplog TO shiplog;
+GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
+```
+
+Use the `shiplog` role in `DATABASE_CONNECTION_STRING`:
+
+```bash
+DATABASE_CONNECTION_STRING=postgres://shiplog:replace-with-a-strong-password@host:5432/shiplog?sslmode=verify-full
+```
+
+You can verify the application role can run migrations by connecting with `DATABASE_CONNECTION_STRING` and creating a temporary table:
+
+```sql
+CREATE TABLE shiplog_permission_check (id int);
+DROP TABLE shiplog_permission_check;
+```
+
+On Neon, you can create the database and role from the Neon dashboard or SQL editor. The important requirement is the same: the role used by `DATABASE_CONNECTION_STRING` must be able to run migrations, which means it needs `CREATE` permission on the target schema. The `public` schema does not need to be owned by the `shiplog` role.
+
 Create a local environment file:
 
 ```bash
@@ -75,7 +110,7 @@ cp .env.example .env
 Then fill in:
 
 ```bash
-DATABASE_CONNECTION_STRING=postgres://user:password@host:5432/shiplog?sslmode=verify-full
+DATABASE_CONNECTION_STRING=postgres://shiplog:password@host:5432/shiplog?sslmode=verify-full
 GH_RO_CLASSIC_TOKEN=ghp_xxx
 GH_RW_REPO_TOKEN=github_pat_xxx
 ```
@@ -131,7 +166,7 @@ Token responsibilities:
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The `collect` workflow then runs daily or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The first backfill can be slow because shiplog deliberately throttles GitHub REST Search calls and waits through rate-limit reset windows instead of failing fast. During backfill, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; backfill writes are upserted and the completion marker is only set after the backfill finishes. The `collect` workflow then runs daily or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
@@ -183,7 +218,7 @@ bun run migrate
 shiplog reads `DATABASE_CONNECTION_STRING` from the environment. For local smoke checks against a Neon dev branch:
 
 ```bash
-export DATABASE_CONNECTION_STRING='postgres://user:password@host:5432/shiplog?sslmode=verify-full'
+export DATABASE_CONNECTION_STRING='postgres://shiplog:password@host:5432/shiplog?sslmode=verify-full'
 bun run migrate
 bun run migration:down
 bun run migrate
@@ -224,6 +259,8 @@ Run the one-time backfill after configuring `profile_config.json` and migrating 
 ```bash
 bun run init
 ```
+
+`init` is resumable. If it fails midway because of a provider or database error, rerun it after fixing the issue. Existing rows are deduplicated by database constraints and upserts, and `accounts.backfill_completed_at` is set only after the provider backfill succeeds. Backfill logs include approximate ETA updates while repositories are processed.
 
 Collect yesterday's activity and regenerate the README:
 

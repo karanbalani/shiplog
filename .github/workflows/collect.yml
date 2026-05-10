@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: shiplog-ingestion-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   collect:
     runs-on: ubuntu-latest

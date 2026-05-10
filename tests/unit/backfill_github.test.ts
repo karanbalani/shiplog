@@ -5,6 +5,7 @@ import { newDb } from 'pg-mem'
 import type { Pool } from 'pg'
 import * as backfillGitHub from '../../bin/backfill_github.ts'
 import * as db from '../../lib/db.ts'
+import * as logger from '../../lib/logger.ts'
 import * as upserts from '../../lib/upserts.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
@@ -12,13 +13,17 @@ const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
+  logger.configureLogger({ level: 'silent', write: () => undefined })
 })
 
 afterEach(async () => {
   await db.close()
+  logger.resetLogger()
 })
 
 test('run backfills GitHub history into generic schema tables', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
     user_id: user.id,
@@ -94,6 +99,26 @@ test('run backfills GitHub history into generic schema tables', async () => {
     issues_closed: 1,
     source: 'self_backfill'
   })
+  expect(logs.some((line) => line.includes('estimated minimum GitHub Search pacing'))).toBe(true)
+  expect(logs.some((line) => line.includes('eta'))).toBe(true)
+})
+
+test('estimatedSearchPacingMs estimates minimum GitHub search throttle time', () => {
+  expect(backfillGitHub.estimatedSearchPacingMs(0)).toBe(0)
+  expect(backfillGitHub.estimatedSearchPacingMs(1)).toBe(5000)
+  expect(backfillGitHub.estimatedSearchPacingMs(2)).toBe(12500)
+})
+
+test('estimatedRemainingMs estimates from elapsed completed work', () => {
+  expect(backfillGitHub.estimatedRemainingMs(1000, 2, 5, 7000)).toBe(9000)
+  expect(backfillGitHub.estimatedRemainingMs(1000, 0, 5, 7000)).toBe(0)
+  expect(backfillGitHub.estimatedRemainingMs(1000, 5, 5, 7000)).toBe(0)
+})
+
+test('formatDuration produces compact human-readable durations', () => {
+  expect(backfillGitHub.formatDuration(12_400)).toBe('12s')
+  expect(backfillGitHub.formatDuration(90_000)).toBe('1m 30s')
+  expect(backfillGitHub.formatDuration(3_660_000)).toBe('1h 1m')
 })
 
 function mockGitHubFetch(): typeof fetch {
