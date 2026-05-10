@@ -45,13 +45,13 @@ export async function run(args: BackfillArgs): Promise<void> {
   const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>()
 
   logger.info(
-    `[collect:history] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)})`
+    `[backfill] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)})`
   )
 
   for (const [index, year] of years.entries()) {
     const { from, to } = dates.yearWindow(year)
     logger.info(
-      `[collect:history] github/${identity.externalLogin}: discovery ${index + 1}/${years.length} (${year})`
+      `[backfill] github/${identity.externalLogin}: discovery ${index + 1}/${years.length} (${year})`
     )
     const collection = await fetchContributionsCollection(graphQL, identity.externalLogin, from, to)
 
@@ -75,7 +75,7 @@ export async function run(args: BackfillArgs): Promise<void> {
 
   const repositoryCount = repositoriesByExternalId.size
   logger.info(
-    `[collect:history] github/${identity.externalLogin}: discovered ${repositoryCount} repositories; estimated minimum GitHub Search pacing ${formatDuration(
+    `[backfill] github/${identity.externalLogin}: discovered ${repositoryCount} repositories; estimated minimum GitHub Search pacing ${formatDuration(
       estimatedSearchPacingMs(repositoryCount)
     )}`
   )
@@ -97,7 +97,7 @@ export async function run(args: BackfillArgs): Promise<void> {
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
 
     logger.info(
-      `[collect:history] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName}`
+      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName}`
     )
 
     let repositoryStatus = 'complete'
@@ -130,7 +130,7 @@ export async function run(args: BackfillArgs): Promise<void> {
 
       repositoryStatus = 'skipped'
       logger.warn(
-        `[collect:history] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName} is unavailable; skipping enrichment (${gitHubErrorSummary(
+        `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName} is unavailable; skipping enrichment (${gitHubErrorSummary(
           error
         )})`
       )
@@ -138,7 +138,7 @@ export async function run(args: BackfillArgs): Promise<void> {
 
     completedRepositories += 1
     logger.info(
-      `[collect:history] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${repositoryStatus} (${progressPercent(
+      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${repositoryStatus} (${progressPercent(
         completedRepositories,
         repositoryCount
       )}%, elapsed ${formatDuration(Date.now() - repositoriesStartedAt)}, eta ${formatDuration(
@@ -147,10 +147,10 @@ export async function run(args: BackfillArgs): Promise<void> {
     )
   }
 
-  logger.info(`[collect:history] github/${identity.externalLogin}: rolling up activity dates`)
+  logger.info(`[backfill] github/${identity.externalLogin}: rolling up activity dates`)
   await rollupDistinctActivityDates(identity.accountId)
   logger.info(
-    `[collect:history] github/${identity.externalLogin}: complete in ${formatDuration(Date.now() - startedAt)}`
+    `[backfill] github/${identity.externalLogin}: complete in ${formatDuration(Date.now() - startedAt)}`
   )
 }
 
