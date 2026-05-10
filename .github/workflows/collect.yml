@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
+    inputs:
+      collect_date:
+        description: 'Optional YYYY-MM-DD date to collect exactly one day'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -55,3 +60,4 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          COLLECT_DATE: ${{ github.event.inputs.collect_date }}

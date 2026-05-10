@@ -40,7 +40,10 @@ test('run creates account from config identity and marks backfill complete', asy
     external_login: string
     external_id: string
     backfill_completed_at: Date | null
-  }>('SELECT external_login, external_id, backfill_completed_at FROM accounts')
+    last_successful_collect_on: Date | string | null
+  }>(
+    'SELECT external_login, external_id, backfill_completed_at, last_successful_collect_on FROM accounts'
+  )
   const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
 
   expect(users.rows[0]!.count).toBe(1)
@@ -49,6 +52,7 @@ test('run creates account from config identity and marks backfill complete', asy
     external_id: 'U_TEST_1'
   })
   expect(accounts.rows[0]!.backfill_completed_at).not.toBeNull()
+  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
   expect(commits.rows[0]!.count).toBe(1)
 })
 
@@ -245,4 +249,8 @@ function loadMigration(filename: string): string {
     .readFileSync(path.join(MIGRATIONS, filename), 'utf8')
     .split(/-- migrate:down/)[0]!
     .replace(/^-- migrate:up\s*/m, '')
+}
+
+function dateOnly(value: Date | string): string {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : value.slice(0, 10)
 }

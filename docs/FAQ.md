@@ -136,6 +136,26 @@ Run `init` first. It migrates the database, creates the configured accounts, run
 
 After that, `collect` runs daily or manually. When `collect` succeeds, `render` updates the README.
 
+## What happens if daily collect fails for a few days?
+
+shiplog keeps a simple checkpoint on each account:
+
+```text
+accounts.last_successful_collect_on
+```
+
+Normal collect runs process every missing date from the day after that checkpoint through UTC yesterday. After each date succeeds, shiplog advances the checkpoint.
+
+This means a failed or skipped workflow can usually be fixed by rerunning `collect`; it will catch up the missed dates automatically.
+
+If you want to repair or inspect one specific day without moving the checkpoint, run with `COLLECT_DATE`:
+
+```bash
+COLLECT_DATE=2026-05-07 bun run collect
+```
+
+In GitHub Actions, the manual `collect` workflow has an optional `collect_date` input for the same purpose. The next normal collect run may safely reprocess that date if it is still part of the checkpoint gap.
+
 ## Why is the first backfill slow?
 
 Historical backfill can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps the first backfill under provider limits instead of racing into rate-limit failures.

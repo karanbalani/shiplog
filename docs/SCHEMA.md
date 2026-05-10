@@ -27,20 +27,21 @@ One row per human profile owner. v1 normally has exactly one user row, but the s
 
 One row per external forge account connected to a user, such as a GitHub account.
 
-| Column                  | Type          | Notes                                                                                                           |
-| ----------------------- | ------------- | --------------------------------------------------------------------------------------------------------------- |
-| `id`                    | `BIGSERIAL`   | Primary key.                                                                                                    |
-| `user_id`               | `BIGINT`      | Required reference to `users.id`.                                                                               |
-| `provider`              | `TEXT`        | Provider key. Must be one of `github`, `gitlab`, `bitbucket`, or `gitea`. v1 only implements GitHub collection. |
-| `external_login`        | `TEXT`        | Account login on the provider, for example a GitHub username.                                                   |
-| `external_id`           | `TEXT`        | Stable provider-side account id. GitHub maps its GraphQL node id here.                                          |
-| `external_url`          | `TEXT`        | Optional profile URL on the provider.                                                                           |
-| `external_created_at`   | `TIMESTAMPTZ` | Provider-side account creation timestamp. Used for historical backfill bounds and account age rendering.        |
-| `first_seen_on`         | `DATE`        | Date shiplog first observed this identity.                                                                      |
-| `backfill_completed_at` | `TIMESTAMPTZ` | Null until the one-time historical backfill succeeds. Used to make `bun run init` idempotent.                   |
-| `captured_at`           | `TIMESTAMPTZ` | Timestamp when this identity row was captured or refreshed. Defaults to `now()`.                                |
-| `created_at`            | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.                                         |
-| `updated_at`            | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`.                                     |
+| Column                       | Type          | Notes                                                                                                           |
+| ---------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------- |
+| `id`                         | `BIGSERIAL`   | Primary key.                                                                                                    |
+| `user_id`                    | `BIGINT`      | Required reference to `users.id`.                                                                               |
+| `provider`                   | `TEXT`        | Provider key. Must be one of `github`, `gitlab`, `bitbucket`, or `gitea`. v1 only implements GitHub collection. |
+| `external_login`             | `TEXT`        | Account login on the provider, for example a GitHub username.                                                   |
+| `external_id`                | `TEXT`        | Stable provider-side account id. GitHub maps its GraphQL node id here.                                          |
+| `external_url`               | `TEXT`        | Optional profile URL on the provider.                                                                           |
+| `external_created_at`        | `TIMESTAMPTZ` | Provider-side account creation timestamp. Used for historical backfill bounds and account age rendering.        |
+| `first_seen_on`              | `DATE`        | Date shiplog first observed this identity.                                                                      |
+| `backfill_completed_at`      | `TIMESTAMPTZ` | Null until the one-time historical backfill succeeds. Used to make `bun run init` idempotent.                   |
+| `last_successful_collect_on` | `DATE`        | Latest target date successfully collected for this account. Used by `bun run collect` to catch up missed days.  |
+| `captured_at`                | `TIMESTAMPTZ` | Timestamp when this identity row was captured or refreshed. Defaults to `now()`.                                |
+| `created_at`                 | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.                                         |
+| `updated_at`                 | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`.                                     |
 
 Constraints and indexes:
 
@@ -48,6 +49,12 @@ Constraints and indexes:
 - `UNIQUE (provider, external_id)` deduplicates accounts by stable provider id.
 - `UNIQUE (provider, external_login)` deduplicates accounts by provider login.
 - `idx_accounts_user` speeds lookups by `user_id`.
+
+Collection checkpoint:
+
+- `last_successful_collect_on` is advanced after each successful daily collect target.
+- Automatic collect runs process every date from `last_successful_collect_on + 1` through UTC yesterday.
+- Manual `COLLECT_DATE` runs collect exactly one requested date without advancing the checkpoint, and safely dedupes on rerun.
 
 ## profile_snapshots
 

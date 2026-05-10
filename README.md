@@ -166,7 +166,7 @@ Token responsibilities:
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The first backfill can be slow because shiplog deliberately throttles GitHub REST Search calls and waits through rate-limit reset windows instead of failing fast. During backfill, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; backfill writes are upserted and the completion marker is only set after the backfill finishes. The `collect` workflow then runs daily or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The first backfill can be slow because shiplog deliberately throttles GitHub REST Search calls and waits through rate-limit reset windows instead of failing fast. During backfill, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; backfill writes are upserted and the completion marker is only set after the backfill finishes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
@@ -262,10 +262,16 @@ bun run init
 
 `init` is resumable. If it fails midway because of a provider or database error, rerun it after fixing the issue. Existing rows are deduplicated by database constraints and upserts, and `accounts.backfill_completed_at` is set only after the provider backfill succeeds. Backfill logs include approximate ETA updates while repositories are processed.
 
-Collect yesterday's activity and regenerate the README:
+Collect activity and regenerate the README:
 
 ```bash
 bun run collect
+```
+
+By default, `collect` catches up every missing date from `accounts.last_successful_collect_on + 1` through UTC yesterday and advances the checkpoint after each successful date. To collect exactly one date without moving the checkpoint, use `COLLECT_DATE`:
+
+```bash
+COLLECT_DATE=2026-05-07 bun run collect
 ```
 
 Render only:
@@ -294,7 +300,7 @@ The GitHub backfill walker uses the account creation year to walk contribution h
 
 The init dispatcher reads `profile_config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, runs backfill for accounts where `backfill_completed_at` is null, then marks the account as backfilled.
 
-The daily collect dispatcher reads `profile_config.json`, resolves initialized `accounts`, chooses `COLLECT_DATE` or UTC yesterday, and invokes the matching provider collector for each configured identity.
+The daily collect dispatcher reads `profile_config.json`, resolves initialized `accounts`, chooses the explicit `COLLECT_DATE` or every missing date from `accounts.last_successful_collect_on + 1` through UTC yesterday, and invokes the matching provider collector for each configured identity. After each successful date, it advances the account checkpoint.
 
 The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `README.md`.
 

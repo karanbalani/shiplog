@@ -64,7 +64,7 @@ export async function run(options: InitRunOptions = {}): Promise<void> {
       token,
       fetch: options.fetch
     })
-    await upserts.markBackfillComplete(account.id)
+    await upserts.markBackfillComplete(account.id, firstSeenOn)
     didBackfill = true
   }
 

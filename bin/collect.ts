@@ -10,6 +10,7 @@ import type {
   VendorIdentity,
   VendorModule
 } from '../lib/types/index.ts'
+import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
 
 export interface CollectRunOptions {
@@ -24,21 +25,60 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
   const profileConfig =
     options.profileConfig ??
     config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
-  const collectDate = options.date ?? process.env.COLLECT_DATE ?? dates.yesterdayUTC(options.now)
+  const requestedDate = options.date ?? process.env.COLLECT_DATE
+  const yesterday = dates.yesterdayUTC(options.now)
 
   for (const identityConfig of profileConfig.identities) {
     const token = tokenForIdentity(identityConfig)
     const account = await findAccount(identityConfig)
     const vendor = await importVendorCollector(identityConfig.provider)
+    const collectDates = collectDatesForAccount(account, yesterday, requestedDate)
 
-    logger.info(`[collect] ${identityConfig.provider}/${account.external_login}: ${collectDate}`)
-    await vendor.run({
-      identity: vendorIdentity(account),
-      token,
-      date: collectDate,
-      fetch: options.fetch
-    })
+    if (collectDates.length === 0) {
+      logger.info(
+        `[collect] ${identityConfig.provider}/${account.external_login}: already collected through ${yesterday}`
+      )
+      continue
+    }
+
+    logger.info(
+      `[collect] ${identityConfig.provider}/${account.external_login}: ${collectDates.length} day(s) (${collectDates[0]} to ${collectDates.at(-1)})`
+    )
+
+    for (const [index, collectDate] of collectDates.entries()) {
+      logger.info(
+        `[collect] ${identityConfig.provider}/${account.external_login}: ${index + 1}/${collectDates.length} ${collectDate}`
+      )
+      await vendor.run({
+        identity: vendorIdentity(account),
+        token,
+        date: collectDate,
+        fetch: options.fetch
+      })
+      if (!requestedDate) {
+        await upserts.markCollectSuccess(account.id, collectDate)
+      }
+    }
   }
+}
+
+export function collectDatesForAccount(
+  account: AccountRow,
+  yesterday: string,
+  requestedDate?: string
+): string[] {
+  if (requestedDate) {
+    assertNotFutureCollectDate(requestedDate, yesterday)
+    return [requestedDate]
+  }
+
+  const lastSuccessfulCollectOn = account.last_successful_collect_on
+    ? dateOnly(account.last_successful_collect_on)
+    : null
+  const start = lastSuccessfulCollectOn ? addDays(lastSuccessfulCollectOn, 1) : yesterday
+  if (start > yesterday) return []
+
+  return dateRange(start, yesterday)
 }
 
 export async function findAccount(identityConfig: IdentityConfig): Promise<AccountRow> {
@@ -82,6 +122,30 @@ function vendorIdentity(account: AccountRow): VendorIdentity {
     externalLogin: account.external_login,
     externalId: account.external_id
   }
+}
+
+function assertNotFutureCollectDate(collectDate: string, yesterday: string): void {
+  if (collectDate > yesterday) {
+    throw new Error(`COLLECT_DATE must be ${yesterday} or earlier; got ${collectDate}`)
+  }
+}
+
+function dateRange(start: string, end: string): string[] {
+  const out: string[] = []
+  for (let d = start; d <= end; d = addDays(d, 1)) {
+    out.push(d)
+  }
+  return out
+}
+
+function addDays(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+function dateOnly(value: Date | string): string {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : value.slice(0, 10)
 }
 
 if (import.meta.main) {
