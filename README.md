@@ -305,7 +305,7 @@ The v1 architecture is six Bun-executed TypeScript binaries:
 - `bin/render.ts`
 - `bin/publish.ts`
 
-Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/github/`, database migrations under `db/migrations/`, and reusable workflow actions under `.github/actions/`.
+Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/github/`, and database migrations under `db/migrations/`.
 
 Project conventions live in `docs/CONVENTIONS.md`. Frequently asked setup and operations questions live in `docs/FAQ.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
