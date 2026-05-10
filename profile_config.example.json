@@ -1,5 +1,5 @@
 {
-  "$schema": "./schemas/profile-config.schema.json",
+  "$schema": "./schemas/profile_config.schema.json",
   "displayName": "Your Name",
   "identities": [
     {

@@ -1,6 +1,6 @@
 import Ajv, { type ErrorObject, type Schema } from 'ajv'
 import fs from 'node:fs'
-import profileConfigSchema from '../schemas/profile-config.schema.json'
+import profileConfigSchema from '../schemas/profile_config.schema.json'
 import type { ProfileConfig, RenderKnobs } from './types/index.ts'
 
 export const DEFAULT_RENDER: RenderKnobs = {
@@ -16,7 +16,7 @@ const ajv = new Ajv({
 
 const validateProfileConfig = ajv.compile<ProfileConfig>(profileConfigSchema as Schema)
 
-export function load(filePath = 'profile-config.json'): ProfileConfig {
+export function load(filePath = 'profile_config.json'): ProfileConfig {
   const raw = fs.readFileSync(filePath, 'utf8')
   return validate(JSON.parse(raw) as unknown)
 }
@@ -43,7 +43,7 @@ function stripSchemaField(config: ProfileConfig & { $schema?: unknown }): Profil
 
 function formatConfigErrors(errors: ErrorObject[]): string {
   const messages = errors.map(formatConfigError)
-  return `profile-config.json is invalid: ${messages.join('; ')}`
+  return `profile_config.json is invalid: ${messages.join('; ')}`
 }
 
 function formatConfigError(error: ErrorObject): string {

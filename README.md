@@ -27,6 +27,7 @@ Completed so far:
 - GitHub historical backfill walker in `bin/backfill_github.ts`
 - Init dispatcher in `bin/init.ts` that creates `users`/`accounts` and runs first-time backfill
 - Daily collect dispatcher in `bin/collect.ts`
+- README renderer in `bin/render.ts`
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -87,17 +88,34 @@ NO_COLOR=1             # disable ANSI colors
 Create your profile config from the template:
 
 ```bash
-cp profile-config.example.json profile-config.json
+cp profile_config.example.json profile_config.json
 ```
 
-Then edit `profile-config.json`:
+Then edit `profile_config.json`:
 
 - Set `displayName`.
 - Set `identities[0].login` to your GitHub username.
 - Set `publishTargets[0].repositoryFullName` to the repository that should receive the rendered README, usually `your-github-login/your-github-login` for a GitHub profile README.
 - Set `publishTargets[0].tokenEnv` to the secret name your workflow will expose for pushing the rendered README.
 
-The upstream org/template repo commits `profile-config.example.json`, not a real `profile-config.json`. Your personal fork or generated instance can commit its own `profile-config.json`; it should not contain secrets.
+The upstream org/template repo commits `profile_config.example.json`, not a real `profile_config.json`. `profile_config.json` is gitignored so local config does not accidentally get committed.
+
+For GitHub Actions, store the config as a repository variable named `SHIPLOG_CONFIG_BASE64`. Generate the value from your local config:
+
+```bash
+base64 < profile_config.json | tr -d '\n'
+```
+
+Then decode it inside the workflow before running `bun run init` or `bun run collect`:
+
+```yaml
+- name: Write profile config
+  run: printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > profile_config.json
+  env:
+    SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
+```
+
+`SHIPLOG_CONFIG_BASE64` is configuration, not a secret. Keep `DATABASE_URL` and provider tokens in GitHub Secrets.
 
 ## Development Commands
 
@@ -119,7 +137,14 @@ Format everything:
 bun run format
 ```
 
-The pre-commit hook runs `bun run format:check`. The commit-msg hook requires Conventional Commit subjects and lowercase-only commit messages, for example:
+Git hooks are currently placeholders and do not enforce checks. Run the checks manually before committing:
+
+```bash
+bun run format:check
+bun run commitmsg:check .git/COMMIT_EDITMSG
+```
+
+Commit messages should still use lowercase Conventional Commit subjects, for example:
 
 ```text
 feat(db): add accounts schema
@@ -170,7 +195,7 @@ bun run migration:new create_table_some_table
 
 This wraps `dbmate new create_table_some_table` and creates a timestamped SQL file under `db/migrations/`. Migration names should follow `<up_action>_<object_type>_<object_name>`, for example `create_table_users`, `create_view_monthly_repository_activity`, or `alter_table_accounts_add_timezone`. Keep schema migrations small: one table or view per migration, with table-specific indexes in the same file.
 
-Run the one-time backfill after configuring `profile-config.json` and migrating the database:
+Run the one-time backfill after configuring `profile_config.json` and migrating the database:
 
 ```bash
 bun run init
@@ -198,7 +223,7 @@ The v1 architecture is five Bun-executed TypeScript binaries:
 - `bin/backfill_github.ts`
 - `bin/render.ts`
 
-Shared code will live under `lib/`, GitHub-specific helpers under `lib/providers/github/`, and database migrations under `db/migrations/`.
+Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/github/`, and database migrations under `db/migrations/`.
 
 Project conventions live in `docs/CONVENTIONS.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
@@ -206,8 +231,10 @@ The GitHub daily collector currently ingests active repositories from GitHub con
 
 The GitHub backfill walker uses the account creation year to walk contribution history by year, discovers active repositories, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
 
-The init dispatcher reads `profile-config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, runs backfill for accounts where `backfill_completed_at` is null, then marks the account as backfilled.
+The init dispatcher reads `profile_config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, runs backfill for accounts where `backfill_completed_at` is null, then marks the account as backfilled.
 
-The daily collect dispatcher reads `profile-config.json`, resolves initialized `accounts`, chooses `COLLECT_DATE` or UTC yesterday, and invokes the matching provider collector for each configured identity.
+The daily collect dispatcher reads `profile_config.json`, resolves initialized `accounts`, chooses `COLLECT_DATE` or UTC yesterday, and invokes the matching provider collector for each configured identity.
+
+The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `README.md`.
 
 CLI logs use `lib/logger.ts`, write to stderr, include ISO timestamps, support log levels, and colorize levels unless `NO_COLOR` is set.

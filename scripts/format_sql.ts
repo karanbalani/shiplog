@@ -30,7 +30,7 @@ if (unformatted.length > 0) {
 function parseMode(args: string[]): Mode {
   if (args.includes('--write')) return 'write'
   if (args.includes('--check')) return 'check'
-  throw new Error('Usage: bun scripts/format-sql.ts --check|--write')
+  throw new Error('Usage: bun scripts/format_sql.ts --check|--write')
 }
 
 async function sqlFiles(dir: string): Promise<string[]> {

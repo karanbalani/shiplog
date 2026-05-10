@@ -34,7 +34,7 @@ interface GitHubAccountProfile {
 export async function run(options: InitRunOptions = {}): Promise<void> {
   const profileConfig =
     options.profileConfig ??
-    config.load(options.configPath ?? path.resolve(process.cwd(), 'profile-config.json'))
+    config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
   const user = await ensureUser(profileConfig.displayName ?? null)
   const firstSeenOn = dates.yesterdayUTC(options.now)
   let didBackfill = false

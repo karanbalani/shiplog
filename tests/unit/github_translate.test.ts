@@ -8,7 +8,7 @@ const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
 
 test('repositoryFromGraphQLNode maps GraphQL repository to schema-shaped row', () => {
   const fixture = JSON.parse(
-    fs.readFileSync(path.join(FIXTURES, 'github-contributions-collection.json'), 'utf8')
+    fs.readFileSync(path.join(FIXTURES, 'github_contributions_collection.json'), 'utf8')
   ) as {
     user: {
       contributionsCollection: {
@@ -35,7 +35,7 @@ test('repositoryFromGraphQLNode maps GraphQL repository to schema-shaped row', (
 
 test('organizationFromRepositoryOwner maps GitHub organization owner', () => {
   const fixture = JSON.parse(
-    fs.readFileSync(path.join(FIXTURES, 'github-contributions-collection.json'), 'utf8')
+    fs.readFileSync(path.join(FIXTURES, 'github_contributions_collection.json'), 'utf8')
   ) as {
     user: {
       contributionsCollection: {

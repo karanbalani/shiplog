@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://shiplog.dev/schemas/profile-config.schema.json",
+  "$id": "https://shiplog.dev/schemas/profile_config.schema.json",
   "title": "shiplog profile config",
   "type": "object",
   "additionalProperties": false,

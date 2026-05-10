@@ -23,7 +23,7 @@ export interface CollectRunOptions {
 export async function run(options: CollectRunOptions = {}): Promise<void> {
   const profileConfig =
     options.profileConfig ??
-    config.load(options.configPath ?? path.resolve(process.cwd(), 'profile-config.json'))
+    config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
   const collectDate = options.date ?? process.env.COLLECT_DATE ?? dates.yesterdayUTC(options.now)
 
   for (const identityConfig of profileConfig.identities) {

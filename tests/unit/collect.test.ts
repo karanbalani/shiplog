@@ -180,7 +180,7 @@ function githubContributionsFixture(): {
 } {
   return JSON.parse(
     fs.readFileSync(
-      path.join(import.meta.dir, '..', 'fixtures', 'github-contributions-collection.json'),
+      path.join(import.meta.dir, '..', 'fixtures', 'github_contributions_collection.json'),
       'utf8'
     )
   ) as {

@@ -3,7 +3,7 @@ const filePath = Bun.argv[2]
 export {}
 
 if (!filePath) {
-  console.error('Usage: bun scripts/check-commit-msg.ts <commit-msg-file>')
+  console.error('Usage: bun scripts/check_commit_msg.ts <commit-msg-file>')
   process.exit(2)
 }
 
