@@ -8,7 +8,8 @@ This document captures project conventions that should stay consistent across im
 - Use TypeScript with `strict: true`.
 - Use dbmate for database migrations.
 - Keep Git hooks repo-local in `.githooks/` and install them with `bun run hooks:install`.
-- Git hooks are currently placeholders; run checks manually before committing.
+- The pre-commit hook runs `bun run precommit`.
+- The commit-msg hook runs `bun run commitmsg:check`.
 - Commit messages must be Conventional Commits.
 - Commit messages must use lowercase letters only.
 

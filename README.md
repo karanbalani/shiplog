@@ -146,14 +146,14 @@ Format everything:
 bun run format
 ```
 
-Git hooks are currently placeholders and do not enforce checks. Run the checks manually before committing:
+Git hooks run the same checks before commits:
 
 ```bash
-bun run format:check
+bun run precommit
 bun run commitmsg:check .git/COMMIT_EDITMSG
 ```
 
-Commit messages should still use lowercase Conventional Commit subjects, for example:
+The pre-commit hook runs formatting checks. The commit-msg hook requires lowercase Conventional Commit subjects, for example:
 
 ```text
 feat(db): add accounts schema
