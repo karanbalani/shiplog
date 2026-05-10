@@ -100,9 +100,11 @@ GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
 The tokens have different jobs:
 
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org`; the `repo` scope lets shiplog read private repository activity.
-- `GH_RW_REPO_TOKEN` writes the rendered README commit.
+- `GH_RW_REPO_TOKEN` writes rendered README commits for configured publish targets.
 
 Keeping them separate limits what each token can do.
+
+If a publish target uses a `tokenEnv` other than `GH_RW_REPO_TOKEN`, expose that secret in the `Publish rendered README` workflow step env. GitHub Actions secrets are not available to scripts unless the workflow maps them into environment variables.
 
 ## How does shiplog collect private repository activity?
 
@@ -159,9 +161,9 @@ If your config contains private repository names or other sensitive metadata, yo
 
 ## Which workflow should I run first?
 
-Run `init` first. It migrates the database, creates the configured accounts, runs collect, renders the README, and commits it. Because new accounts have a null `last_successful_collect_on`, that first collect uses the complete historical path.
+Run `init` first. It migrates the database, creates the configured accounts, runs collect, renders the README, and publishes it to `publishTargets`. Because new accounts have a null `last_successful_collect_on`, that first collect uses the complete historical path.
 
-After that, `collect` runs daily or manually. When `collect` succeeds, `render` updates the README.
+After that, `collect` runs daily or manually. When `collect` succeeds, `render` updates and publishes the README.
 
 ## What happens if daily collect fails for a few days?
 
@@ -231,6 +233,16 @@ bun run render
 
 This reads the existing database state and writes `README.md`.
 
+## Can I publish an already rendered README?
+
+Yes:
+
+```bash
+bun run publish
+```
+
+This reads local `README.md` and writes it to each `publishTargets[]` entry in `profile_config.json`.
+
 ## Can I run shiplog locally?
 
 Yes. Create `.env`, create `profile_config.json`, and export or load the required environment variables:
@@ -249,6 +261,7 @@ bun run migrate
 bun run init
 bun run collect
 bun run render
+bun run publish
 ```
 
 ## What should I do if Neon is hibernating?
