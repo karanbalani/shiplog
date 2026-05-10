@@ -1,4 +1,9 @@
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
+import {
+  gitHubErrorSummary,
+  isGitHubRepositoryUnavailableError
+} from '../lib/providers/github/errors.ts'
+import * as logger from '../lib/logger.ts'
 import * as queries from '../lib/providers/github/queries.ts'
 import { restClient, type RestClient } from '../lib/providers/github/rest.ts'
 import * as translate from '../lib/providers/github/translate.ts'
@@ -56,20 +61,31 @@ export async function run(args: CollectArgs): Promise<void> {
     const repository = await upserts.upsertRepository(repositoryInput)
     const fullName = requiredString(repositoryInput.full_name, 'repository full name')
     const name = requiredString(repositoryInput.name, 'repository name')
+    const visibility = repositoryNode.isPrivate ? 'private' : 'public'
 
     await upsertRepositorySnapshot(repository.id, repositoryNode, date)
-    await ingestCommits(
-      clients.graphQL,
-      repository.id,
-      repositoryInput.owner_login,
-      name,
-      identity,
-      from,
-      to
-    )
-    await ingestPullRequests(clients.rest, repository.id, fullName, identity, date)
-    await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity, date)
-    await ingestIssues(clients.rest, repository.id, fullName, identity, date)
+    try {
+      await ingestCommits(
+        clients.graphQL,
+        repository.id,
+        repositoryInput.owner_login,
+        name,
+        identity,
+        from,
+        to
+      )
+      await ingestPullRequests(clients.rest, repository.id, fullName, identity, date)
+      await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity, date)
+      await ingestIssues(clients.rest, repository.id, fullName, identity, date)
+    } catch (error) {
+      if (!isGitHubRepositoryUnavailableError(error)) throw error
+
+      logger.warn(
+        `[collect] github/${identity.externalLogin}: repository [${visibility}] ${fullName} is unavailable; skipping enrichment (${gitHubErrorSummary(
+          error
+        )})`
+      )
+    }
   }
 
   await upserts.upsertDailyUserSummary({

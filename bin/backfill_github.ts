@@ -1,6 +1,10 @@
 import * as db from '../lib/db.ts'
 import * as logger from '../lib/logger.ts'
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
+import {
+  gitHubErrorSummary,
+  isGitHubRepositoryUnavailableError
+} from '../lib/providers/github/errors.ts'
 import * as queries from '../lib/providers/github/queries.ts'
 import {
   GITHUB_SEARCH_REQUEST_INTERVAL_MS,
@@ -96,33 +100,45 @@ export async function run(args: BackfillArgs): Promise<void> {
       `[collect:history] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName}`
     )
 
-    for (const year of years) {
-      const { from, to } = dates.yearWindow(year)
-      await ingestCommits(
+    let repositoryStatus = 'complete'
+    try {
+      for (const year of years) {
+        const { from, to } = dates.yearWindow(year)
+        await ingestCommits(
+          clients.graphQL,
+          repository.id,
+          repositoryInput.owner_login,
+          name,
+          identity,
+          from,
+          to
+        )
+      }
+
+      await ingestPullRequests(clients.rest, repository.id, fullName, identity)
+      await ingestIssues(clients.rest, repository.id, fullName, identity)
+      await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity)
+      await upsertRepositoryLanguageSnapshot(
         clients.graphQL,
         repository.id,
         repositoryInput.owner_login,
         name,
-        identity,
-        from,
-        to
+        observedOn
+      )
+    } catch (error) {
+      if (!isGitHubRepositoryUnavailableError(error)) throw error
+
+      repositoryStatus = 'skipped'
+      logger.warn(
+        `[collect:history] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName} is unavailable; skipping enrichment (${gitHubErrorSummary(
+          error
+        )})`
       )
     }
 
-    await ingestPullRequests(clients.rest, repository.id, fullName, identity)
-    await ingestIssues(clients.rest, repository.id, fullName, identity)
-    await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity)
-    await upsertRepositoryLanguageSnapshot(
-      clients.graphQL,
-      repository.id,
-      repositoryInput.owner_login,
-      name,
-      observedOn
-    )
-
     completedRepositories += 1
     logger.info(
-      `[collect:history] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] complete (${progressPercent(
+      `[collect:history] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${repositoryStatus} (${progressPercent(
         completedRepositories,
         repositoryCount
       )}%, elapsed ${formatDuration(Date.now() - repositoriesStartedAt)}, eta ${formatDuration(

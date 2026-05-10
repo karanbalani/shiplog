@@ -1,4 +1,5 @@
 import { fetchJson, type Fetcher } from '../../http.ts'
+import { GitHubGraphQLError } from './errors.ts'
 
 const ENDPOINT = 'https://api.github.com/graphql'
 
@@ -35,7 +36,7 @@ export function graphQLClient({ token, fetch }: GraphQLClientOptions): GraphQLCl
     )
 
     if (body.errors?.length) {
-      throw new Error(`graphql error: ${body.errors.map((error) => error.message).join('; ')}`)
+      throw new GitHubGraphQLError(body.errors)
     }
 
     return body.data

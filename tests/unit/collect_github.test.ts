@@ -5,6 +5,7 @@ import { newDb } from 'pg-mem'
 import type { Pool } from 'pg'
 import * as collectGitHub from '../../bin/collect_github.ts'
 import * as db from '../../lib/db.ts'
+import * as logger from '../../lib/logger.ts'
 import * as upserts from '../../lib/upserts.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
@@ -12,10 +13,12 @@ const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
+  logger.configureLogger({ level: 'silent', write: () => undefined })
 })
 
 afterEach(async () => {
   await db.close()
+  logger.resetLogger()
 })
 
 test('run collects GitHub activity into generic schema tables', async () => {
@@ -130,6 +133,46 @@ test('run uses organization token for organization-owned repositories', async ()
     owner_login: 'restricted-org'
   })
   expect(commits.rows[0]!.count).toBe(1)
+})
+
+test('run skips repositories that GitHub no longer resolves', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2011-01-25T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+
+  await collectGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    date: '2026-05-07',
+    fetch: mockGitHubFetchWithUnavailableRepository()
+  })
+
+  const repositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories'
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+  const summaries = await db.query<{ total_commit_contributions: number }>(
+    'SELECT total_commit_contributions FROM daily_user_summary'
+  )
+
+  expect(repositories.rows[0]!.count).toBe(1)
+  expect(commits.rows[0]!.count).toBe(0)
+  expect(summaries.rows[0]!.total_commit_contributions).toBe(1)
+  expect(logs.some((line) => line.includes('[public] octocat/deleted'))).toBe(true)
+  expect(logs.some((line) => line.includes('is unavailable; skipping enrichment'))).toBe(true)
 })
 
 test('collectActiveRepositories deduplicates repositories across contribution groups', () => {
@@ -366,6 +409,54 @@ function mockGitHubFetchWithOrganizationToken(): typeof fetch {
   }) as typeof fetch
 }
 
+function mockGitHubFetchWithUnavailableRepository(): typeof fetch {
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({
+          data: githubContributionsWithRepository({
+            id: 'R_DELETED_1',
+            nameWithOwner: 'octocat/deleted',
+            owner: { __typename: 'User', id: 'U_TEST_1', login: 'octocat' },
+            isPrivate: false,
+            isFork: false,
+            isArchived: false,
+            primaryLanguage: null,
+            stargazerCount: 0,
+            forkCount: 0,
+            createdAt: '2020-01-01T00:00:00Z',
+            pushedAt: null,
+            defaultBranchRef: null,
+            url: 'https://github.com/octocat/deleted',
+            description: null
+          })
+        })
+      }
+
+      if (body.query.includes('query RepositoryCommits')) {
+        return jsonResponse({
+          data: { repository: null },
+          errors: [
+            {
+              message: "Could not resolve to a Repository with the name 'octocat/deleted'."
+            }
+          ]
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([])
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
 function githubContributionsFixture(): {
   user: {
     contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
@@ -376,6 +467,30 @@ function githubContributionsFixture(): {
   ) as {
     user: {
       contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
+    }
+  }
+}
+
+function githubContributionsWithRepository(
+  repository: import('../../lib/providers/github/types.ts').GitHubRepositoryNode
+): {
+  user: {
+    contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
+  }
+} {
+  return {
+    user: {
+      contributionsCollection: {
+        totalCommitContributions: 1,
+        totalIssueContributions: 0,
+        totalPullRequestContributions: 0,
+        totalPullRequestReviewContributions: 0,
+        restrictedContributionsCount: 0,
+        commitContributionsByRepository: [{ repository, contributions: { totalCount: 1 } }],
+        pullRequestContributionsByRepository: [],
+        pullRequestReviewContributionsByRepository: [],
+        issueContributionsByRepository: []
+      }
     }
   }
 }

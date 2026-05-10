@@ -125,6 +125,12 @@ Repository metadata, commits, pull requests, issues, and reviews for that organi
 
 Private repository names can appear in local or workflow logs because repository progress logs show the repository currently being processed. This is expected for a single-user ingestion workflow.
 
+## Why did GitHub say it could not resolve a repository during backfill?
+
+GitHub can include a repository in historical contribution groups even when that repository can no longer be resolved by its current `owner/name`. Common causes are deleted repositories, renamed repositories, transferred repositories, or repositories that the token can no longer access.
+
+shiplog treats this as a repository-level skip. It keeps the repository row discovered from contribution metadata, logs that enrichment was skipped, and continues collecting the rest of the account. Rerunning later is safe because database writes are deduplicated with upserts and unique keys.
+
 ## Why not name the secrets `GITHUB_*`?
 
 GitHub reserves the `GITHUB_` prefix for built-in Actions environment variables. shiplog uses `GH_*` so user-defined secrets are clearly project-owned.
