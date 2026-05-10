@@ -142,6 +142,41 @@ test('run backfills accessible private repositories outside contribution groups'
   expect(logs.some((line) => line.includes('[private] octocat/secret'))).toBe(true)
 })
 
+test('run skips repositories that GitHub no longer resolves', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+
+  await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: mockGitHubFetchWithUnavailableRepository()
+  })
+
+  const repositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories'
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+
+  expect(repositories.rows[0]!.count).toBe(1)
+  expect(commits.rows[0]!.count).toBe(0)
+  expect(logs.some((line) => line.includes('[public] octocat/deleted'))).toBe(true)
+  expect(logs.some((line) => line.includes('is unavailable; skipping enrichment'))).toBe(true)
+})
+
 test('estimatedSearchPacingMs estimates minimum GitHub search throttle time', () => {
   expect(backfillGitHub.estimatedSearchPacingMs(0)).toBe(0)
   expect(backfillGitHub.estimatedSearchPacingMs(1)).toBe(5000)
@@ -433,6 +468,70 @@ function mockGitHubFetchWithPrivateRepository(): typeof fetch {
   }) as typeof fetch
 }
 
+function mockGitHubFetchWithUnavailableRepository(): typeof fetch {
+  const currentYear = new Date().getUTCFullYear()
+
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+
+      if (body.query.includes('query ViewerAndUser')) {
+        return jsonResponse({
+          data: {
+            user: {
+              id: 'U_TEST_1',
+              login: 'octocat',
+              name: 'Octocat',
+              url: 'https://github.com/octocat',
+              createdAt: `${currentYear}-01-01T00:00:00Z`
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({
+          data: githubContributionsWithRepository({
+            id: 'R_DELETED_1',
+            nameWithOwner: 'octocat/deleted',
+            owner: { __typename: 'User', id: 'U_TEST_1', login: 'octocat' },
+            isPrivate: false,
+            isFork: false,
+            isArchived: false,
+            primaryLanguage: null,
+            stargazerCount: 0,
+            forkCount: 0,
+            createdAt: '2020-01-01T00:00:00Z',
+            pushedAt: null,
+            defaultBranchRef: null,
+            url: 'https://github.com/octocat/deleted',
+            description: null
+          })
+        })
+      }
+
+      if (body.query.includes('query RepositoryCommits')) {
+        return jsonResponse({
+          data: { repository: null },
+          errors: [
+            {
+              message: "Could not resolve to a Repository with the name 'octocat/deleted'."
+            }
+          ]
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([])
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
 function githubContributionsFixture(): {
   user: {
     contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
@@ -443,6 +542,30 @@ function githubContributionsFixture(): {
   ) as {
     user: {
       contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
+    }
+  }
+}
+
+function githubContributionsWithRepository(
+  repository: import('../../lib/providers/github/types.ts').GitHubRepositoryNode
+): {
+  user: {
+    contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
+  }
+} {
+  return {
+    user: {
+      contributionsCollection: {
+        totalCommitContributions: 1,
+        totalIssueContributions: 0,
+        totalPullRequestContributions: 0,
+        totalPullRequestReviewContributions: 0,
+        restrictedContributionsCount: 0,
+        commitContributionsByRepository: [{ repository, contributions: { totalCount: 1 } }],
+        pullRequestContributionsByRepository: [],
+        pullRequestReviewContributionsByRepository: [],
+        issueContributionsByRepository: []
+      }
     }
   }
 }
