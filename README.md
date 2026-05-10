@@ -26,6 +26,7 @@ Completed so far:
 - GitHub daily collector in `bin/collect_github.ts`
 - GitHub historical backfill walker in `bin/backfill_github.ts`
 - Init dispatcher in `bin/init.ts` that creates `users`/`accounts` and runs first-time backfill
+- Daily collect dispatcher in `bin/collect.ts`
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -206,5 +207,7 @@ The GitHub daily collector currently ingests active repositories from GitHub con
 The GitHub backfill walker uses the account creation year to walk contribution history by year, discovers active repositories, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
 
 The init dispatcher reads `profile-config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, runs backfill for accounts where `backfill_completed_at` is null, then marks the account as backfilled.
+
+The daily collect dispatcher reads `profile-config.json`, resolves initialized `accounts`, chooses `COLLECT_DATE` or UTC yesterday, and invokes the matching provider collector for each configured identity.
 
 CLI logs use `lib/logger.ts`, write to stderr, include ISO timestamps, support log levels, and colorize levels unless `NO_COLOR` is set.
