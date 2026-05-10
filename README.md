@@ -84,7 +84,6 @@ Then connect to the new database as an admin and make sure the `shiplog` role ca
 
 GRANT CONNECT ON DATABASE shiplog TO shiplog;
 GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
-ALTER SCHEMA public OWNER TO shiplog;
 ```
 
 Use the `shiplog` role in `DATABASE_CONNECTION_STRING`:
@@ -93,7 +92,14 @@ Use the `shiplog` role in `DATABASE_CONNECTION_STRING`:
 DATABASE_CONNECTION_STRING=postgres://shiplog:replace-with-a-strong-password@host:5432/shiplog?sslmode=verify-full
 ```
 
-On Neon, you can create the database and role from the Neon dashboard or SQL editor. The important requirement is the same: the role used by `DATABASE_CONNECTION_STRING` must be able to run migrations, which means it needs `CREATE` permission on the target schema.
+You can verify the application role can run migrations by connecting with `DATABASE_CONNECTION_STRING` and creating a temporary table:
+
+```sql
+CREATE TABLE shiplog_permission_check (id int);
+DROP TABLE shiplog_permission_check;
+```
+
+On Neon, you can create the database and role from the Neon dashboard or SQL editor. The important requirement is the same: the role used by `DATABASE_CONNECTION_STRING` must be able to run migrations, which means it needs `CREATE` permission on the target schema. The `public` schema does not need to be owned by the `shiplog` role.
 
 Create a local environment file:
 

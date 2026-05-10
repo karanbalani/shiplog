@@ -58,7 +58,6 @@ Then connect to the new database and grant schema permissions:
 
 GRANT CONNECT ON DATABASE shiplog TO shiplog;
 GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
-ALTER SCHEMA public OWNER TO shiplog;
 ```
 
 Use that role in the connection string:
@@ -67,18 +66,34 @@ Use that role in the connection string:
 DATABASE_CONNECTION_STRING=postgres://shiplog:replace-with-a-strong-password@host:5432/shiplog?sslmode=verify-full
 ```
 
+Verify the role can create objects by connecting with `DATABASE_CONNECTION_STRING` and running:
+
+```sql
+CREATE TABLE shiplog_permission_check (id int);
+DROP TABLE shiplog_permission_check;
+```
+
 ## Why did migrations fail with `permission denied for schema public`?
 
 The database connection works, but the role does not have permission to create objects in the `public` schema.
 
-Fix it by using the database owner role in `DATABASE_CONNECTION_STRING`, or grant the current role schema permissions:
+Fix it by using a role that can create objects in the target schema, or grant the current role schema permissions:
 
 ```sql
 GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
-ALTER SCHEMA public OWNER TO shiplog;
 ```
 
 After updating permissions, rerun the `init` workflow.
+
+## Why did `ALTER SCHEMA public OWNER TO shiplog` fail?
+
+Changing schema ownership is stricter than granting schema permissions. Postgres requires the current role to own the schema and be able to `SET ROLE` to the new owner. Managed Postgres providers often do not allow that from normal project roles.
+
+shiplog does not require ownership of the `public` schema. It only needs:
+
+```sql
+GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
+```
 
 ## Why does shiplog use two GitHub tokens?
 
