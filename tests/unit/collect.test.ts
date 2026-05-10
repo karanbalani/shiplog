@@ -10,13 +10,13 @@ import type { ProfileConfig } from '../../lib/types/index.ts'
 import * as upserts from '../../lib/upserts.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
-const originalGitHubToken = process.env.GITHUB_API_TOKEN
+const originalGitHubToken = process.env.GITHUB_RO_CLASSIC_TOKEN
 const originalCollectDate = process.env.COLLECT_DATE
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
   logger.configureLogger({ level: 'silent', write: () => undefined })
-  process.env.GITHUB_API_TOKEN = 'test-token'
+  process.env.GITHUB_RO_CLASSIC_TOKEN = 'test-token'
   delete process.env.COLLECT_DATE
 })
 
@@ -24,7 +24,7 @@ afterEach(async () => {
   await db.close()
   logger.resetLogger()
 
-  restoreEnv('GITHUB_API_TOKEN', originalGitHubToken)
+  restoreEnv('GITHUB_RO_CLASSIC_TOKEN', originalGitHubToken)
   restoreEnv('COLLECT_DATE', originalCollectDate)
 })
 
@@ -106,7 +106,7 @@ function profileConfig(): ProfileConfig {
         repositoryFullName: 'octocat/octocat',
         branch: 'main',
         path: 'README.md',
-        tokenEnv: 'GITHUB_README_TOKEN'
+        tokenEnv: 'GITHUB_RW_REPO_TOKEN'
       }
     ],
     render: {

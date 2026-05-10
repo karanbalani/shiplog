@@ -43,7 +43,7 @@ test('validate allows schema hint without returning it', () => {
         repositoryFullName: 'octocat/octocat',
         branch: 'main',
         path: 'README.md',
-        tokenEnv: 'GITHUB_README_TOKEN'
+        tokenEnv: 'GITHUB_RW_REPO_TOKEN'
       }
     ]
   })

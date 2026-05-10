@@ -76,7 +76,8 @@ Then fill in:
 
 ```bash
 DATABASE_URL=postgres://user:password@host:5432/shiplog?sslmode=require
-GITHUB_API_TOKEN=ghp_xxx
+GITHUB_RO_CLASSIC_TOKEN=ghp_xxx
+GITHUB_RW_REPO_TOKEN=github_pat_xxx
 ```
 
 Optional logging controls:
@@ -97,7 +98,7 @@ Then edit `profile_config.json`:
 - Set `displayName`.
 - Set `identities[0].login` to your GitHub username.
 - Set `publishTargets[0].repositoryFullName` to the repository that should receive the rendered README, usually `your-github-login/your-github-login` for a GitHub profile README.
-- Set `publishTargets[0].tokenEnv` to the secret name your workflow will expose for pushing the rendered README.
+- Set `publishTargets[0].tokenEnv` to `GITHUB_RW_REPO_TOKEN`.
 
 The upstream org/template repo commits `profile_config.example.json`, not a real `profile_config.json`. `profile_config.json` is gitignored so local config does not accidentally get committed.
 
@@ -122,9 +123,15 @@ Required GitHub repository settings:
 
 - Repository variable: `SHIPLOG_CONFIG_BASE64`
 - Repository secret: `DATABASE_URL`
-- Repository secret: `GITHUB_API_TOKEN`
+- Repository secret: `GITHUB_RO_CLASSIC_TOKEN`
+- Repository secret: `GITHUB_RW_REPO_TOKEN`
 
-After setting those values, run the `init` workflow once from GitHub Actions. The `collect` workflow then runs daily, on pushes to `main`, or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`.
+Token responsibilities:
+
+- `GITHUB_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion.
+- `GITHUB_RW_REPO_TOKEN` authenticates README publishing commits.
+
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, backfills, renders, and commits the initial README. The `collect` workflow then runs daily, on pushes to `main`, or manually. When `collect` succeeds, the `render` workflow regenerates and commits `README.md`.
 
 ## Development Commands
 

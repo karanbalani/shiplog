@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_RW_REPO_TOKEN }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -43,7 +45,12 @@ jobs:
         run: bun run init
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          GITHUB_API_TOKEN: ${{ secrets.GITHUB_API_TOKEN }}
+          GITHUB_RO_CLASSIC_TOKEN: ${{ secrets.GITHUB_RO_CLASSIC_TOKEN }}
+
+      - name: Render README
+        run: bun run render
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
       - name: Commit rendered README
         uses: stefanzweifel/git-auto-commit-action@v5

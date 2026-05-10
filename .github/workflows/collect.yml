@@ -48,4 +48,4 @@ jobs:
         run: bun run collect
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          GITHUB_API_TOKEN: ${{ secrets.GITHUB_API_TOKEN }}
+          GITHUB_RO_CLASSIC_TOKEN: ${{ secrets.GITHUB_RO_CLASSIC_TOKEN }}

@@ -114,10 +114,15 @@ async function importVendorBackfill(provider: string): Promise<VendorModule> {
 }
 
 function tokenForIdentity(identityConfig: IdentityConfig): string {
-  const envName = `${identityConfig.provider.toUpperCase()}_API_TOKEN`
+  const envName = readOnlyTokenEnvName(identityConfig.provider)
   const token = process.env[envName]
   if (!token) throw new Error(`Missing ${envName}`)
   return token
+}
+
+function readOnlyTokenEnvName(provider: string): string {
+  if (provider === 'github') return 'GITHUB_RO_CLASSIC_TOKEN'
+  return `${provider.toUpperCase()}_RO_CLASSIC_TOKEN`
 }
 
 function vendorIdentity(account: AccountRow): VendorIdentity {
