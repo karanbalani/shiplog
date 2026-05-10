@@ -99,11 +99,14 @@ test('run backfills GitHub history into generic schema tables', async () => {
     issues_closed: 1,
     source: 'self_backfill'
   })
+  expect(logs.some((line) => line.includes('[public] octo-org/hello'))).toBe(true)
   expect(logs.some((line) => line.includes('estimated minimum GitHub Search pacing'))).toBe(true)
   expect(logs.some((line) => line.includes('eta'))).toBe(true)
 })
 
 test('run backfills accessible private repositories outside contribution groups', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
     user_id: user.id,
@@ -136,6 +139,7 @@ test('run backfills accessible private repositories outside contribution groups'
   expect(repositories.rows[0]!.count).toBe(1)
   expect(commits.rows[0]!.count).toBe(1)
   expect(activity.rows[0]!.commits).toBe(1)
+  expect(logs.some((line) => line.includes('[private] octocat/secret'))).toBe(true)
 })
 
 test('estimatedSearchPacingMs estimates minimum GitHub search throttle time', () => {

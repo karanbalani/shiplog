@@ -84,9 +84,10 @@ export async function run(args: BackfillArgs): Promise<void> {
     const repository = await upserts.upsertRepository(repositoryInput)
     const fullName = requiredString(repositoryInput.full_name, 'repository full name')
     const name = requiredString(repositoryInput.name, 'repository name')
+    const visibility = repositoryNode.isPrivate ? 'private' : 'public'
 
     logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} ${fullName}`
+      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${fullName}`
     )
 
     for (const year of years) {
@@ -115,7 +116,7 @@ export async function run(args: BackfillArgs): Promise<void> {
 
     completedRepositories += 1
     logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} complete (${progressPercent(
+      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] complete (${progressPercent(
         completedRepositories,
         repositoryCount
       )}%, elapsed ${formatDuration(Date.now() - repositoriesStartedAt)}, eta ${formatDuration(
