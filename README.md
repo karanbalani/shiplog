@@ -189,6 +189,14 @@ dbmate rollback
 dbmate up
 ```
 
+Warm and verify the database connection before migrations or rendering:
+
+```bash
+bun run db:wait
+```
+
+This runs `SELECT now()` with retries, which helps wake hibernating Neon branches before the real work starts.
+
 Roll back the most recent migration:
 
 ```bash

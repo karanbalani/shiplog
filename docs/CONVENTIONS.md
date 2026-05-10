@@ -7,6 +7,7 @@ This document captures project conventions that should stay consistent across im
 - Use Bun for package management, script execution, and tests.
 - Use TypeScript with `strict: true`.
 - Use dbmate for database migrations.
+- Use `bun run db:wait` in workflows before database-dependent steps so hibernating Neon branches can wake up cleanly.
 - Keep Git hooks repo-local in `.githooks/` and install them with `bun run hooks:install`.
 - The pre-commit hook runs `bun run precommit`.
 - The commit-msg hook runs `bun run commitmsg:check`.

@@ -39,6 +39,11 @@ jobs:
         env:
           SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
 
+      - name: Wait for database
+        run: bun run db:wait
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
       - name: Run migrations
         run: bun run migrate
         env:

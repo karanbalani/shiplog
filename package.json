@@ -9,6 +9,7 @@
     "init": "bun bin/init.ts",
     "collect": "bun bin/collect.ts",
     "render": "bun bin/render.ts",
+    "db:wait": "bun scripts/wait_for_db.ts",
     "migrate": "dbmate up",
     "migration:new": "dbmate new",
     "migration:down": "dbmate rollback",
