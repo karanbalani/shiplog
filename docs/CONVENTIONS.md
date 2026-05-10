@@ -87,6 +87,15 @@ This document captures project conventions that should stay consistent across im
 - Move domain-specific behavior into the relevant domain module instead of growing a generic utility module.
 - Infrastructure modules such as `lib/db.ts` and `lib/http.ts` should live at the `lib/` root.
 
+## Logging
+
+- CLI status logs should use `lib/logger.ts`.
+- Logs write to stderr so stdout stays available for command output.
+- Logger output includes ISO timestamps and level labels.
+- Supported levels are `debug`, `info`, `warn`, `error`, and `silent`.
+- `SHIPLOG_LOG_LEVEL` controls runtime verbosity.
+- `NO_COLOR=1` disables ANSI colors.
+
 ## Provider Neutrality
 
 - Keep the schema provider-neutral.

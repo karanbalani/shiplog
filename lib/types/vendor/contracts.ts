@@ -1,3 +1,5 @@
+import type { Fetcher } from '../../http.ts'
+
 export interface VendorIdentity {
   accountId: number
   externalLogin: string
@@ -8,13 +10,13 @@ export interface CollectArgs {
   identity: VendorIdentity
   token: string
   date: string
-  fetch?: typeof fetch
+  fetch?: Fetcher
 }
 
 export interface BackfillArgs {
   identity: VendorIdentity
   token: string
-  fetch?: typeof fetch
+  fetch?: Fetcher
 }
 
 export interface VendorModule {

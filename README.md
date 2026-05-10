@@ -25,6 +25,7 @@ Completed so far:
 - Schema-aware database upsert helpers and daily repository rollups in `lib/upserts.ts`
 - GitHub daily collector in `bin/collect_github.ts`
 - GitHub historical backfill walker in `bin/backfill_github.ts`
+- Init dispatcher in `bin/init.ts` that creates `users`/`accounts` and runs first-time backfill
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -73,6 +74,13 @@ Then fill in:
 ```bash
 DATABASE_URL=postgres://user:password@host:5432/shiplog?sslmode=require
 GITHUB_API_TOKEN=ghp_xxx
+```
+
+Optional logging controls:
+
+```bash
+SHIPLOG_LOG_LEVEL=info # debug, info, warn, error, silent
+NO_COLOR=1             # disable ANSI colors
 ```
 
 Create your profile config from the template:
@@ -196,3 +204,7 @@ Project conventions live in `docs/CONVENTIONS.md`. Schema documentation lives in
 The GitHub daily collector currently ingests active repositories from GitHub contribution data, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups.
 
 The GitHub backfill walker uses the account creation year to walk contribution history by year, discovers active repositories, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
+
+The init dispatcher reads `profile-config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, runs backfill for accounts where `backfill_completed_at` is null, then marks the account as backfilled.
+
+CLI logs use `lib/logger.ts`, write to stderr, include ISO timestamps, support log levels, and colorize levels unless `NO_COLOR` is set.
