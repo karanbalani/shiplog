@@ -23,6 +23,7 @@ Completed so far:
 - Fetch JSON helper with retry and timeout support in `lib/http.ts`
 - GitHub provider API helpers in `lib/providers/github/`
 - Schema-aware database upsert helpers and daily repository rollups in `lib/upserts.ts`
+- GitHub daily collector in `bin/collect_github.ts`
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -191,4 +192,4 @@ Shared code will live under `lib/`, GitHub-specific helpers under `lib/providers
 
 Project conventions live in `docs/CONVENTIONS.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
-Until the first TypeScript source file is added, `bun run typecheck` may report that `tsconfig.json` has no input files. That goes away once the planned `bin/`, `lib/`, or `tests/` TypeScript files are created.
+The GitHub daily collector currently ingests active repositories from GitHub contribution data, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups.

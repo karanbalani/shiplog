@@ -124,6 +124,10 @@ This document records that translation.
 | `total_issue_contributions`               | GraphQL `contributionsCollection.totalIssueContributions`             | Provider-reported issue contribution count.                  |
 | `restricted_contributions_count`          | GraphQL `contributionsCollection.restrictedContributionsCount`        | Private or restricted contribution count reported by GitHub. |
 
+## Daily Collector Coverage
+
+`bin/collect_github.ts` maps one activity date at a time. It discovers active repositories from `contributionsCollection`, upserts generic repository rows, captures repository snapshots when star/fork fields are present, ingests commit/PR/review/issue events, writes `daily_user_summary`, then derives `daily_repository_activity` from the event tables.
+
 ## Pending Mappings
 
-The remaining schema tables are still being reviewed table-by-table. This file should be updated as each table is renamed to provider-neutral column names.
+`profile_snapshots`, `organizations`, and `organization_memberships` are documented as schema concepts, but the daily GitHub collector does not populate them yet.
