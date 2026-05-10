@@ -75,7 +75,7 @@ cp .env.example .env
 Then fill in:
 
 ```bash
-DATABASE_CONNECTION_STRING=postgres://user:password@host:5432/shiplog?sslmode=require
+DATABASE_CONNECTION_STRING=postgres://user:password@host:5432/shiplog?sslmode=verify-full
 GH_RO_CLASSIC_TOKEN=ghp_xxx
 GH_RW_REPO_TOKEN=github_pat_xxx
 ```
@@ -183,7 +183,7 @@ bun run migrate
 shiplog reads `DATABASE_CONNECTION_STRING` from the environment. For local smoke checks against a Neon dev branch:
 
 ```bash
-export DATABASE_CONNECTION_STRING='postgres://user:password@host:5432/shiplog?sslmode=require'
+export DATABASE_CONNECTION_STRING='postgres://user:password@host:5432/shiplog?sslmode=verify-full'
 bun run migrate
 bun run migration:down
 bun run migrate
@@ -249,7 +249,7 @@ The v1 architecture is five Bun-executed TypeScript binaries:
 
 Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/github/`, and database migrations under `db/migrations/`.
 
-Project conventions live in `docs/CONVENTIONS.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
+Project conventions live in `docs/CONVENTIONS.md`. Frequently asked setup and operations questions live in `docs/FAQ.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
 The GitHub daily collector currently ingests active repositories from GitHub contribution data, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups.
 
