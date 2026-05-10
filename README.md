@@ -66,6 +66,35 @@ If Bun is installed but not on your shell `PATH`, run it by absolute path or add
 ~/.bun/bin/bun install
 ```
 
+## Postgres Database Setup
+
+shiplog needs a Postgres database where the application role can create schema objects and then read/write the data it owns.
+
+Create a dedicated role and database before running migrations. Run this as a Postgres admin user:
+
+```sql
+CREATE ROLE shiplog LOGIN PASSWORD 'replace-with-a-strong-password';
+CREATE DATABASE shiplog OWNER shiplog;
+```
+
+Then connect to the new database as an admin and make sure the `shiplog` role can create objects in the `public` schema:
+
+```sql
+\connect shiplog
+
+GRANT CONNECT ON DATABASE shiplog TO shiplog;
+GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
+ALTER SCHEMA public OWNER TO shiplog;
+```
+
+Use the `shiplog` role in `DATABASE_CONNECTION_STRING`:
+
+```bash
+DATABASE_CONNECTION_STRING=postgres://shiplog:replace-with-a-strong-password@host:5432/shiplog?sslmode=verify-full
+```
+
+On Neon, you can create the database and role from the Neon dashboard or SQL editor. The important requirement is the same: the role used by `DATABASE_CONNECTION_STRING` must be able to run migrations, which means it needs `CREATE` permission on the target schema.
+
 Create a local environment file:
 
 ```bash
@@ -75,7 +104,7 @@ cp .env.example .env
 Then fill in:
 
 ```bash
-DATABASE_CONNECTION_STRING=postgres://user:password@host:5432/shiplog?sslmode=verify-full
+DATABASE_CONNECTION_STRING=postgres://shiplog:password@host:5432/shiplog?sslmode=verify-full
 GH_RO_CLASSIC_TOKEN=ghp_xxx
 GH_RW_REPO_TOKEN=github_pat_xxx
 ```
@@ -183,7 +212,7 @@ bun run migrate
 shiplog reads `DATABASE_CONNECTION_STRING` from the environment. For local smoke checks against a Neon dev branch:
 
 ```bash
-export DATABASE_CONNECTION_STRING='postgres://user:password@host:5432/shiplog?sslmode=verify-full'
+export DATABASE_CONNECTION_STRING='postgres://shiplog:password@host:5432/shiplog?sslmode=verify-full'
 bun run migrate
 bun run migration:down
 bun run migrate
