@@ -35,6 +35,17 @@ export function dayWindow(yyyymmdd: string): IsoWindow {
   }
 }
 
+export function contributionDayWindow(yyyymmdd: string): IsoWindow {
+  const [year, month, day] = parseDateOnly(yyyymmdd)
+  const from = new Date(Date.UTC(year, month - 1, day)).toISOString()
+  const to = new Date(Date.UTC(year, month - 1, day, 23, 59, 59)).toISOString()
+
+  return {
+    from: stripMilliseconds(from),
+    to: stripMilliseconds(to)
+  }
+}
+
 function parseDateOnly(yyyymmdd: string): [number, number, number] {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(yyyymmdd)
   if (!match) {

@@ -135,6 +135,82 @@ test('run uses organization token for organization-owned repositories', async ()
   expect(commits.rows[0]!.count).toBe(1)
 })
 
+test('run uses a same-day contribution window and half-open commit window', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2011-01-25T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+
+  await collectGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    date: '2026-05-07',
+    fetch: mockGitHubFetchWithWindowAssertions()
+  })
+
+  const summaries = await db.query<{ total_commit_contributions: number }>(
+    'SELECT total_commit_contributions FROM daily_user_summary'
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+
+  expect(summaries.rows[0]!.total_commit_contributions).toBe(3)
+  expect(commits.rows[0]!.count).toBe(1)
+})
+
+test('run counts co-authored commits and stores a marker', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2011-01-25T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+
+  await collectGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    date: '2026-05-07',
+    fetch: mockGitHubFetchWithCoAuthoredCommit()
+  })
+
+  const commits = await db.query<{
+    oid: string
+    is_co_authored: boolean
+    additions: number
+    deletions: number
+  }>('SELECT oid, is_co_authored, additions, deletions FROM commits ORDER BY oid')
+  const activity = await db.query<{ commits: number; lines_added: number; lines_deleted: number }>(
+    'SELECT commits, lines_added, lines_deleted FROM daily_repository_activity'
+  )
+
+  expect(commits.rows).toEqual([
+    { oid: 'authored', is_co_authored: false, additions: 10, deletions: 2 },
+    { oid: 'coauthored', is_co_authored: true, additions: 5, deletions: 1 }
+  ])
+  expect(activity.rows[0]!).toMatchObject({
+    commits: 2,
+    lines_added: 15,
+    lines_deleted: 3
+  })
+})
+
 test('run skips repositories that GitHub no longer resolves', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
@@ -213,7 +289,9 @@ function mockGitHubFetch(): typeof fetch {
                         additions: 10,
                         deletions: 2,
                         changedFiles: 3,
-                        messageHeadline: 'Ship it'
+                        messageHeadline: 'Ship it',
+                        author: githubCommitActor(),
+                        authors: { nodes: [githubCommitActor()] }
                       }
                     ]
                   }
@@ -353,7 +431,9 @@ function mockGitHubFetchWithOrganizationToken(): typeof fetch {
                         additions: 8,
                         deletions: 2,
                         changedFiles: 1,
-                        messageHeadline: 'Restricted org work'
+                        messageHeadline: 'Restricted org work',
+                        author: githubCommitActor(),
+                        authors: { nodes: [githubCommitActor()] }
                       }
                     ]
                   }
@@ -409,6 +489,164 @@ function mockGitHubFetchWithOrganizationToken(): typeof fetch {
   }) as typeof fetch
 }
 
+function mockGitHubFetchWithWindowAssertions(): typeof fetch {
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as {
+        query: string
+        variables: Record<string, unknown>
+      }
+
+      if (body.query.includes('query Contributions')) {
+        expect(body.variables.from).toBe('2026-05-07T00:00:00Z')
+        expect(body.variables.to).toBe('2026-05-07T23:59:59Z')
+        return jsonResponse({ data: githubContributionsFixture() })
+      }
+
+      if (body.query.includes('query RepositoryCommits')) {
+        expect(body.variables.since).toBe('2026-05-07T00:00:00Z')
+        expect(body.variables.until).toBe('2026-05-08T00:00:00Z')
+        return jsonResponse({
+          data: {
+            repository: {
+              defaultBranchRef: {
+                target: {
+                  history: {
+                    totalCount: 1,
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                    nodes: [
+                      {
+                        oid: 'window-commit-1',
+                        committedDate: '2026-05-07T12:34:56Z',
+                        additions: 10,
+                        deletions: 2,
+                        changedFiles: 3,
+                        messageHeadline: 'Check windows',
+                        author: githubCommitActor(),
+                        authors: { nodes: [githubCommitActor()] }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([])
+    }
+
+    if (parsed.pathname === '/search/issues') {
+      return jsonResponse({ total_count: 0, items: [] })
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
+function mockGitHubFetchWithCoAuthoredCommit(): typeof fetch {
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({ data: githubContributionsFixture() })
+      }
+
+      if (body.query.includes('query RepositoryCommits')) {
+        return jsonResponse({
+          data: {
+            repository: {
+              defaultBranchRef: {
+                target: {
+                  history: {
+                    totalCount: 3,
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                    nodes: [
+                      {
+                        oid: 'authored',
+                        committedDate: '2026-05-07T10:00:00Z',
+                        additions: 10,
+                        deletions: 2,
+                        changedFiles: 1,
+                        messageHeadline: 'Authored work',
+                        author: githubCommitActor(),
+                        authors: { nodes: [githubCommitActor()] }
+                      },
+                      {
+                        oid: 'coauthored',
+                        committedDate: '2026-05-07T11:00:00Z',
+                        additions: 5,
+                        deletions: 1,
+                        changedFiles: 2,
+                        messageHeadline: 'Co-authored work',
+                        author: githubCommitActor({
+                          id: 'U_TEAMMATE',
+                          login: 'teammate',
+                          name: 'Teammate'
+                        }),
+                        authors: {
+                          nodes: [
+                            githubCommitActor({
+                              id: 'U_TEAMMATE',
+                              login: 'teammate',
+                              name: 'Teammate'
+                            }),
+                            githubCommitActor()
+                          ]
+                        }
+                      },
+                      {
+                        oid: 'unrelated',
+                        committedDate: '2026-05-07T12:00:00Z',
+                        additions: 100,
+                        deletions: 50,
+                        changedFiles: 3,
+                        messageHeadline: 'Someone else',
+                        author: githubCommitActor({
+                          id: 'U_SOMEONE_ELSE',
+                          login: 'someone-else',
+                          name: 'Someone Else'
+                        }),
+                        authors: {
+                          nodes: [
+                            githubCommitActor({
+                              id: 'U_SOMEONE_ELSE',
+                              login: 'someone-else',
+                              name: 'Someone Else'
+                            })
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([])
+    }
+
+    if (parsed.pathname === '/search/issues') {
+      return jsonResponse({ total_count: 0, items: [] })
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
 function mockGitHubFetchWithUnavailableRepository(): typeof fetch {
   return (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
@@ -455,6 +693,24 @@ function mockGitHubFetchWithUnavailableRepository(): typeof fetch {
 
     return new Response(`unexpected request: ${url}`, { status: 500 })
   }) as typeof fetch
+}
+
+function githubCommitActor(
+  overrides: {
+    id?: string
+    login?: string
+    name?: string
+    email?: string
+  } = {}
+): import('../../lib/providers/github/types.ts').GitHubCommitActor {
+  const id = overrides.id ?? 'U_TEST_1'
+  const login = overrides.login ?? 'octocat'
+  const name = overrides.name ?? 'octocat'
+  return {
+    name,
+    email: overrides.email ?? `${login}@example.com`,
+    user: { id, login }
+  }
 }
 
 function githubContributionsFixture(): {

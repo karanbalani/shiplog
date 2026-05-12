@@ -309,7 +309,7 @@ Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/git
 
 Project conventions live in `docs/CONVENTIONS.md`. Frequently asked setup and operations questions live in `docs/FAQ.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
-The GitHub daily collector currently ingests active repositories from GitHub contribution data, merges in authenticated private repositories the configured read tokens can read, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups.
+The GitHub daily collector currently ingests active repositories from GitHub contribution data, merges in authenticated private repositories the configured read tokens can read, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups. Commit ingestion counts commits where the configured GitHub account appears in the commit authors list, including `Co-authored-by` credits.
 
 The internal GitHub historical strategy uses the account creation year to walk contribution history by year, enumerates authenticated repositories the configured read tokens can read, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
 

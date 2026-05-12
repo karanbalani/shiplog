@@ -72,6 +72,19 @@ export interface GitHubCommitNode {
   deletions: number
   changedFiles: number
   messageHeadline: string
+  author: GitHubCommitActor | null
+  authors: {
+    nodes: GitHubCommitActor[]
+  }
+}
+
+export interface GitHubCommitActor {
+  name: string | null
+  email: string | null
+  user: {
+    id: string
+    login: string
+  } | null
 }
 
 export interface GitHubCommitHistory {

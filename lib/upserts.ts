@@ -43,7 +43,11 @@ export type NewRepositoryLanguageRow = Omit<
   'id' | 'created_at' | 'updated_at'
 >
 
-export type NewCommitRow = Omit<CommitRow, 'id' | 'captured_at' | 'created_at' | 'updated_at'>
+export type NewCommitRow = Omit<
+  CommitRow,
+  'id' | 'is_co_authored' | 'captured_at' | 'created_at' | 'updated_at'
+> &
+  Partial<Pick<CommitRow, 'is_co_authored'>>
 
 export type NewPullRequestRow = Omit<
   PullRequestRow,
@@ -293,8 +297,8 @@ export async function upsertCommit(row: NewCommitRow): Promise<CommitRow> {
   const result = await db.query<CommitRow>(
     `INSERT INTO commits
        (account_id, oid, repository_id, committed_on, committed_at, additions, deletions,
-        changed_files, message_headline, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        changed_files, message_headline, is_co_authored, source)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (account_id, oid) DO UPDATE
        SET repository_id = EXCLUDED.repository_id,
            committed_on = EXCLUDED.committed_on,
@@ -303,6 +307,7 @@ export async function upsertCommit(row: NewCommitRow): Promise<CommitRow> {
            deletions = EXCLUDED.deletions,
            changed_files = EXCLUDED.changed_files,
            message_headline = EXCLUDED.message_headline,
+           is_co_authored = EXCLUDED.is_co_authored,
            source = EXCLUDED.source,
            captured_at = now(),
            updated_at = now()
@@ -317,6 +322,7 @@ export async function upsertCommit(row: NewCommitRow): Promise<CommitRow> {
       row.deletions,
       row.changed_files,
       row.message_headline,
+      row.is_co_authored ?? false,
       row.source
     ]
   )

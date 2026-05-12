@@ -32,3 +32,10 @@ test('dayWindow returns ISO bounds for a YYYY-MM-DD date', () => {
     to: '2024-03-15T00:00:00Z'
   })
 })
+
+test('contributionDayWindow returns inclusive same-day ISO bounds', () => {
+  expect(dates.contributionDayWindow('2024-03-14')).toEqual({
+    from: '2024-03-14T00:00:00Z',
+    to: '2024-03-14T23:59:59Z'
+  })
+})

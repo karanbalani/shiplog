@@ -12,6 +12,7 @@ export interface CommitRow extends AuditTimestampColumns {
   deletions: number | null
   changed_files: number | null
   message_headline: string | null
+  is_co_authored: boolean
   source: EventSource
   captured_at: Date | string
 }

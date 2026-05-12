@@ -32,14 +32,15 @@ export async function run(args: CollectArgs): Promise<void> {
   const rest = restClient({ token, fetch })
   const defaultClients: GitHubClients = { graphQL, rest }
   const organizationClients = organizationClientMap(organizationTokens, fetch)
-  const { from, to } = dates.dayWindow(date)
+  const commitWindow = dates.dayWindow(date)
+  const contributionWindow = dates.contributionDayWindow(date)
 
   const data = await graphQL<{
     user: { contributionsCollection: GitHubContributionsCollection } | null
   }>(queries.CONTRIBUTIONS_COLLECTION, {
     login: identity.externalLogin,
-    from,
-    to
+    from: contributionWindow.from,
+    to: contributionWindow.to
   })
   if (!data.user) {
     throw new Error(`collect_github: GitHub user not found: ${identity.externalLogin}`)
@@ -74,8 +75,8 @@ export async function run(args: CollectArgs): Promise<void> {
         repositoryInput.owner_login,
         name,
         identity,
-        from,
-        to
+        commitWindow.from,
+        commitWindow.to
       )
       await ingestPullRequests(clients.rest, repository.id, fullName, identity, date)
       await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity, date)
@@ -273,7 +274,6 @@ async function ingestCommits(
       {
         owner,
         name,
-        author: identity.externalId,
         since,
         until,
         cursor
@@ -285,8 +285,9 @@ async function ingestCommits(
     if (!history) return
 
     for (const node of history.nodes) {
+      if (!translate.commitIncludesIdentity(node, identity)) continue
       await upserts.upsertCommit(
-        translate.commitFromGraphQLNode(node, identity.accountId, repositoryId, 'live')
+        translate.commitFromGraphQLNode(node, identity, repositoryId, 'live')
       )
     }
 

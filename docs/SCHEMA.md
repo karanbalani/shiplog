@@ -192,6 +192,7 @@ Individual commits attributed to an account.
 | `deletions`        | `INT`         | Lines deleted, when available.                                              |
 | `changed_files`    | `INT`         | Number of changed files, when available.                                    |
 | `message_headline` | `TEXT`        | First line of the commit message.                                           |
+| `is_co_authored`   | `BOOLEAN`     | True when the account was credited through a GitHub co-author entry.        |
 | `source`           | `TEXT`        | Must be `live`, `self_backfill`, or `external_import`.                      |
 | `captured_at`      | `TIMESTAMPTZ` | Timestamp when shiplog captured the row. Defaults to `now()`.               |
 | `created_at`       | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.     |

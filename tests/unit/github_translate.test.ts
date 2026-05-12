@@ -97,9 +97,23 @@ test('commitFromGraphQLNode maps commit fields and dates', () => {
       additions: 100,
       deletions: 20,
       changedFiles: 5,
-      messageHeadline: 'Refactor X'
+      messageHeadline: 'Refactor X',
+      author: {
+        name: 'octocat',
+        email: 'octocat@example.com',
+        user: { id: 'U_TEST_1', login: 'octocat' }
+      },
+      authors: {
+        nodes: [
+          {
+            name: 'octocat',
+            email: 'octocat@example.com',
+            user: { id: 'U_TEST_1', login: 'octocat' }
+          }
+        ]
+      }
     },
-    1,
+    { accountId: 1, externalId: 'U_TEST_1', externalLogin: 'octocat' },
     2,
     'live'
   )
@@ -110,7 +124,45 @@ test('commitFromGraphQLNode maps commit fields and dates', () => {
   expect(row.committed_on).toBe('2024-03-14')
   expect(row.committed_at).toBe('2024-03-14T12:34:56Z')
   expect(row.changed_files).toBe(5)
+  expect(row.is_co_authored).toBe(false)
   expect(row.source).toBe('live')
+})
+
+test('commitFromGraphQLNode marks commits credited through co-authorship', () => {
+  const row = translate.commitFromGraphQLNode(
+    {
+      oid: 'abc123',
+      committedDate: '2024-03-14T12:34:56Z',
+      additions: 100,
+      deletions: 20,
+      changedFiles: 5,
+      messageHeadline: 'Refactor X',
+      author: {
+        name: 'teammate',
+        email: 'teammate@example.com',
+        user: { id: 'U_TEAMMATE', login: 'teammate' }
+      },
+      authors: {
+        nodes: [
+          {
+            name: 'teammate',
+            email: 'teammate@example.com',
+            user: { id: 'U_TEAMMATE', login: 'teammate' }
+          },
+          {
+            name: 'octocat',
+            email: 'octocat@example.com',
+            user: { id: 'U_TEST_1', login: 'octocat' }
+          }
+        ]
+      }
+    },
+    { accountId: 1, externalId: 'U_TEST_1', externalLogin: 'octocat' },
+    2,
+    'live'
+  )
+
+  expect(row.is_co_authored).toBe(true)
 })
 
 test('languagesFromGraphQLEdges computes percentages', () => {
