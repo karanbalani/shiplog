@@ -1,8 +1,8 @@
-# Hi, I'm {{ DISPLAY_NAME }}
+# Hi there, I'm {{ DISPLAY_NAME }}
 
-> Daily forge activity from my own shiplog database.
+Joined GitHub **{{ ACCOUNT_AGE }}** years ago.
 
-## Activity
+## Stats
 
 | Metric | All time | Last {{ LAST_YEAR_WINDOW_DAYS }} days |
 | ------ | -------: | ------------------------------------: |
@@ -16,10 +16,10 @@
 
 {{ LANGUAGE_ROWS }}
 
-## Organization Activity
+## Organization Snapshot
 
-| Organization | Commits | PRs | Reviews | Issues |
-| ------------ | ------: | --: | ------: | -----: |
+| Organization | Commits | PRs | Reviews | Issues | Lines |
+| ------------ | ------: | --: | ------: | -----: | ----: |
 
 {{ ORGANIZATION_ROWS }}
 
