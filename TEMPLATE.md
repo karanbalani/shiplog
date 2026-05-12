@@ -1,32 +1,29 @@
-# Hi there, I'm {{ DISPLAY_NAME }}
+# Hi there, I'm {{ DISPLAY_NAME }} 👋
 
-Joined GitHub **{{ ACCOUNT_AGE }}** years ago.
+Building, learning, and shipping across GitHub for **{{ ACCOUNT_AGE }}** years 🚀
 
-## Stats
+## 📊 Snapshot
 
-| Metric | All time | Last {{ LAST_YEAR_WINDOW_DAYS }} days |
-| ------ | -------: | ------------------------------------: |
+| All Time | Last {{ LAST_YEAR_WINDOW_DAYS }} Days | Top Languages |
+| -------- | ------------------------------------- | ------------- |
 
-{{ STATS_ROWS }}
+{{ PROFILE_STATS_ROWS }}
 
-## Top Languages
+## 🏢 Organization Snapshot
 
-| Language | Commits |
-| -------- | ------: |
-
-{{ LANGUAGE_ROWS }}
-
-## Organization Snapshot
-
-| Organization | Commits | PRs | Reviews | Issues | Lines |
-| ------------ | ------: | --: | ------: | -----: | ----: |
+| Organization | Activity | Lines |
+| ------------ | -------- | ----- |
 
 {{ ORGANIZATION_ROWS }}
 
-## Most Active Public Repositories
+## 🚀 Most Active Public Projects
 
 {{ TOP_REPOSITORIES }}
 
-## Accounts
+## 🧭 Accounts
 
 {{ ACCOUNT_LINKS }}
+
+---
+
+<sub>Rendered from my own shiplog database.</sub>

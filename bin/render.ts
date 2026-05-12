@@ -6,6 +6,24 @@ import * as logger from '../lib/logger.ts'
 import type { ProfileConfig } from '../lib/types/index.ts'
 
 const DEFAULT_OUTPUT_PATH = 'rendered.md'
+const INLINE_BADGE_STYLE = 'flat-square'
+const LANGUAGE_COLORS: Record<string, string> = {
+  Astro: 'ff5d01',
+  CSS: '563d7c',
+  Dart: '00b4ab',
+  Dockerfile: '384d54',
+  Go: '00add8',
+  HTML: 'e34c26',
+  Java: 'b07219',
+  JavaScript: 'f1e05a',
+  Kotlin: 'a97bff',
+  Python: '3572a5',
+  Rust: 'dea584',
+  Shell: '89e051',
+  TypeScript: '3178c6',
+  Vue: '41b883',
+  Default: '555555'
+}
 
 export interface RenderOptions {
   configPath?: string
@@ -80,6 +98,7 @@ export async function render(options: RenderOptions = {}): Promise<string> {
     LANGUAGE_ROWS: await languageRows(profileConfig, now),
     LAST_YEAR_WINDOW_DAYS: String(profileConfig.render.lastYearWindowDays),
     ORGANIZATION_ROWS: await organizationRows(profileConfig, now),
+    PROFILE_STATS_ROWS: await profileStatsRows(profileConfig, now),
     STATS_ROWS: await statsRows(profileConfig, now),
     TOP_REPOSITORIES: await topRepositories(profileConfig, now)
   }
@@ -97,6 +116,30 @@ export async function run(options: RenderOptions = {}): Promise<void> {
   const outputPath = options.outputPath ?? path.resolve(process.cwd(), DEFAULT_OUTPUT_PATH)
   fs.writeFileSync(outputPath, output)
   logger.info(`[render] wrote ${outputPath}`)
+}
+
+async function profileStatsRows(profileConfig: ProfileConfig, now: Date): Promise<string> {
+  const allTime = await activityTotals(profileConfig)
+  const recent = await activityTotals(
+    profileConfig,
+    dateDaysAgo(now, profileConfig.render.lastYearWindowDays)
+  )
+  const languages = await languageActivityRows(profileConfig, now)
+  const allTimeRows = richMetricRows(allTime)
+  const recentRows = richMetricRows(recent)
+  const rowCount = Math.max(allTimeRows.length, recentRows.length, languages.length)
+  const rows: string[] = []
+
+  for (let index = 0; index < rowCount; index += 1) {
+    const language = languages[index]
+    rows.push(
+      `| ${allTimeRows[index] ?? ''} | ${recentRows[index] ?? ''} | ${
+        language ? languageBadge(language) : ''
+      } |`
+    )
+  }
+
+  return rows.join('\n')
 }
 
 async function accountAge(profileConfig: ProfileConfig, now: Date): Promise<string> {
@@ -176,22 +219,25 @@ async function organizationRows(profileConfig: ProfileConfig, now: Date): Promis
     [dateDaysAgo(now, profileConfig.render.lastYearWindowDays), ...filter.params]
   )
 
-  if (result.rows.length === 0) return '| - | 0 | 0 | 0 | 0 | +0 / -0 |'
+  if (result.rows.length === 0) return '| - | - | - |'
 
   return result.rows
-    .map(
-      (row) =>
-        `| ${row.organization} | ${formatNumber(row.commits)} | ${formatNumber(
-          row.pull_requests
-        )} | ${formatNumber(row.reviews)} | ${formatNumber(row.issues)} | ${formatLines(
-          row.lines_added,
-          row.lines_deleted
-        )} |`
-    )
+    .map((row) => `| **${row.organization}** | ${activitySummary(row)} | ${lineBadges(row)} |`)
     .join('\n')
 }
 
 async function languageRows(profileConfig: ProfileConfig, now: Date): Promise<string> {
+  const rows = await languageActivityRows(profileConfig, now)
+
+  if (rows.length === 0) return '| - | 0 |'
+
+  return rows.map((row) => `| ${row.language} | ${formatNumber(row.commits)} |`).join('\n')
+}
+
+async function languageActivityRows(
+  profileConfig: ProfileConfig,
+  now: Date
+): Promise<LanguageActivityRow[]> {
   const filter = accountFilter(profileConfig, 'a', 3)
   const result = await db.query<LanguageActivityRow>(
     `SELECT
@@ -213,9 +259,7 @@ async function languageRows(profileConfig: ProfileConfig, now: Date): Promise<st
     ]
   )
 
-  if (result.rows.length === 0) return '| - | 0 |'
-
-  return result.rows.map((row) => `| ${row.language} | ${formatNumber(row.commits)} |`).join('\n')
+  return result.rows
 }
 
 async function topRepositories(profileConfig: ProfileConfig, now: Date): Promise<string> {
@@ -253,13 +297,8 @@ async function topRepositories(profileConfig: ProfileConfig, now: Date): Promise
   return result.rows
     .map((row) => {
       const label = row.full_name ?? 'unknown repository'
-      const activity = `${formatNumber(row.commits)} commits, ${formatNumber(
-        row.pull_requests
-      )} prs, ${formatNumber(row.reviews)} reviews, ${formatLines(
-        row.lines_added,
-        row.lines_deleted
-      )}`
-      return row.web_url ? `- [${label}](${row.web_url}) - ${activity}` : `- ${label} - ${activity}`
+      const linkedLabel = row.web_url ? `[**${label}**](${row.web_url})` : `**${label}**`
+      return `- ${linkedLabel} - ${activitySummary(row)} ${lineBadges(row)}`
     })
     .join('\n')
 }
@@ -348,8 +387,51 @@ function metricRow(label: string, allTime: unknown, recent: unknown): string {
   return `| ${label} | ${formatNumber(allTime)} | ${formatNumber(recent)} |`
 }
 
-function formatLines(added: unknown, deleted: unknown): string {
-  return `+${formatNumber(added)} / -${formatNumber(deleted)}`
+function richMetricRows(row: ActivityTotalsRow): string[] {
+  return [
+    `🔥 **${formatNumber(row.commits)}** commits`,
+    `🟢 **${formatNumber(row.lines_added)}** lines added`,
+    `🔴 **${formatNumber(row.lines_deleted)}** lines deleted`,
+    `🔀 **${formatNumber(row.pull_requests_opened)}** PRs opened`,
+    `✅ **${formatNumber(row.pull_requests_merged)}** PRs merged`,
+    `👀 **${formatNumber(row.pull_request_reviews)}** PR reviews`,
+    `📋 **${formatNumber(row.issues_opened)}** issues opened`,
+    `☑️ **${formatNumber(row.issues_closed)}** issues closed`
+  ]
+}
+
+function activitySummary(row: OrganizationActivityRow | RepositoryActivityRow): string {
+  const issues = 'issues' in row ? ` · 📋 **${formatNumber(row.issues)}** issues` : ''
+  return `🔥 **${formatNumber(row.commits)}** commits · 🔀 **${formatNumber(
+    row.pull_requests
+  )}** PRs · 👀 **${formatNumber(row.reviews)}** reviews${issues}`
+}
+
+function languageBadge(row: LanguageActivityRow): string {
+  return badge('', `${row.language} ${formatNumber(row.commits)}`, languageColor(row.language))
+}
+
+function lineBadges(row: Pick<OrganizationActivityRow, 'lines_added' | 'lines_deleted'>): string {
+  return `${badge('', `+${formatNumber(row.lines_added)}`, 'brightgreen')} ${badge(
+    '',
+    `-${formatNumber(row.lines_deleted)}`,
+    'red'
+  )}`
+}
+
+function badge(label: string, message: string, color: string): string {
+  const params = new URLSearchParams({
+    style: INLINE_BADGE_STYLE,
+    label,
+    message,
+    color
+  })
+
+  return `![${message}](https://img.shields.io/static/v1?${params.toString()})`
+}
+
+function languageColor(language: string): string {
+  return LANGUAGE_COLORS[language] ?? LANGUAGE_COLORS.Default ?? '555555'
 }
 
 function formatNumber(value: unknown): string {
