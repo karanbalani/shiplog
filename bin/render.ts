@@ -40,6 +40,8 @@ interface OrganizationActivityRow {
   pull_requests: number | string | null
   reviews: number | string | null
   issues: number | string | null
+  lines_added: number | string | null
+  lines_deleted: number | string | null
 }
 
 interface RepositoryActivityRow {
@@ -48,6 +50,8 @@ interface RepositoryActivityRow {
   commits: number | string | null
   pull_requests: number | string | null
   reviews: number | string | null
+  lines_added: number | string | null
+  lines_deleted: number | string | null
 }
 
 interface LanguageActivityRow {
@@ -70,6 +74,7 @@ export async function render(options: RenderOptions = {}): Promise<string> {
   const now = options.now ?? new Date()
 
   const context: Record<string, string> = {
+    ACCOUNT_AGE: await accountAge(profileConfig, now),
     ACCOUNT_LINKS: await accountLinks(profileConfig, now),
     DISPLAY_NAME: displayName(profileConfig),
     LANGUAGE_ROWS: await languageRows(profileConfig, now),
@@ -92,6 +97,20 @@ export async function run(options: RenderOptions = {}): Promise<void> {
   const outputPath = options.outputPath ?? path.resolve(process.cwd(), DEFAULT_OUTPUT_PATH)
   fs.writeFileSync(outputPath, output)
   logger.info(`[render] wrote ${outputPath}`)
+}
+
+async function accountAge(profileConfig: ProfileConfig, now: Date): Promise<string> {
+  const filter = accountFilter(profileConfig, 'accounts', 1)
+  const result = await db.query<{ external_created_at: Date | string | null }>(
+    `SELECT MIN(external_created_at) AS external_created_at
+     FROM accounts
+     WHERE ${filter.sql}`,
+    filter.params
+  )
+
+  const createdAt = result.rows[0]?.external_created_at
+  if (!createdAt) return 'unknown'
+  return formatNumber(completedYearsSince(createdAt, now))
 }
 
 async function accountLinks(profileConfig: ProfileConfig, now: Date): Promise<string> {
@@ -142,7 +161,9 @@ async function organizationRows(profileConfig: ProfileConfig, now: Date): Promis
        COALESCE(SUM(d.commits), 0)::int AS commits,
        COALESCE(SUM(d.prs_opened), 0)::int AS pull_requests,
        COALESCE(SUM(d.pr_reviews_total), 0)::int AS reviews,
-       COALESCE(SUM(d.issues_opened), 0)::int AS issues
+       COALESCE(SUM(d.issues_opened), 0)::int AS issues,
+       COALESCE(SUM(d.lines_added), 0)::int AS lines_added,
+       COALESCE(SUM(d.lines_deleted), 0)::int AS lines_deleted
      FROM daily_repository_activity d
      JOIN accounts a ON a.id = d.account_id
      JOIN repositories r ON r.id = d.repository_id
@@ -155,14 +176,17 @@ async function organizationRows(profileConfig: ProfileConfig, now: Date): Promis
     [dateDaysAgo(now, profileConfig.render.lastYearWindowDays), ...filter.params]
   )
 
-  if (result.rows.length === 0) return '| - | 0 | 0 | 0 | 0 |'
+  if (result.rows.length === 0) return '| - | 0 | 0 | 0 | 0 | +0 / -0 |'
 
   return result.rows
     .map(
       (row) =>
         `| ${row.organization} | ${formatNumber(row.commits)} | ${formatNumber(
           row.pull_requests
-        )} | ${formatNumber(row.reviews)} | ${formatNumber(row.issues)} |`
+        )} | ${formatNumber(row.reviews)} | ${formatNumber(row.issues)} | ${formatLines(
+          row.lines_added,
+          row.lines_deleted
+        )} |`
     )
     .join('\n')
 }
@@ -202,7 +226,9 @@ async function topRepositories(profileConfig: ProfileConfig, now: Date): Promise
        r.web_url,
        COALESCE(SUM(d.commits), 0)::int AS commits,
        COALESCE(SUM(d.prs_opened), 0)::int AS pull_requests,
-       COALESCE(SUM(d.pr_reviews_total), 0)::int AS reviews
+       COALESCE(SUM(d.pr_reviews_total), 0)::int AS reviews,
+       COALESCE(SUM(d.lines_added), 0)::int AS lines_added,
+       COALESCE(SUM(d.lines_deleted), 0)::int AS lines_deleted
      FROM daily_repository_activity d
      JOIN accounts a ON a.id = d.account_id
      JOIN repositories r ON r.id = d.repository_id
@@ -229,7 +255,10 @@ async function topRepositories(profileConfig: ProfileConfig, now: Date): Promise
       const label = row.full_name ?? 'unknown repository'
       const activity = `${formatNumber(row.commits)} commits, ${formatNumber(
         row.pull_requests
-      )} prs, ${formatNumber(row.reviews)} reviews`
+      )} prs, ${formatNumber(row.reviews)} reviews, ${formatLines(
+        row.lines_added,
+        row.lines_deleted
+      )}`
       return row.web_url ? `- [${label}](${row.web_url}) - ${activity}` : `- ${label} - ${activity}`
     })
     .join('\n')
@@ -317,6 +346,10 @@ function dateDaysAgo(now: Date, days: number): string {
 
 function metricRow(label: string, allTime: unknown, recent: unknown): string {
   return `| ${label} | ${formatNumber(allTime)} | ${formatNumber(recent)} |`
+}
+
+function formatLines(added: unknown, deleted: unknown): string {
+  return `+${formatNumber(added)} / -${formatNumber(deleted)}`
 }
 
 function formatNumber(value: unknown): string {
