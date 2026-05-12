@@ -237,7 +237,9 @@ function mockGitHubFetch(): typeof fetch {
                         additions: 10,
                         deletions: 2,
                         changedFiles: 3,
-                        messageHeadline: 'Ship it'
+                        messageHeadline: 'Ship it',
+                        author: githubCommitActor(),
+                        authors: { nodes: [githubCommitActor()] }
                       }
                     ]
                   }
@@ -404,7 +406,9 @@ function mockGitHubFetchWithPrivateRepository(): typeof fetch {
                         additions: 4,
                         deletions: 1,
                         changedFiles: 2,
-                        messageHeadline: 'Private work'
+                        messageHeadline: 'Private work',
+                        author: githubCommitActor(),
+                        authors: { nodes: [githubCommitActor()] }
                       }
                     ]
                   }
@@ -568,6 +572,14 @@ function githubContributionsWithRepository(
         issueContributionsByRepository: []
       }
     }
+  }
+}
+
+function githubCommitActor(): import('../../lib/providers/github/types.ts').GitHubCommitActor {
+  return {
+    name: 'octocat',
+    email: 'octocat@example.com',
+    user: { id: 'U_TEST_1', login: 'octocat' }
   }
 }
 

@@ -10,6 +10,7 @@ CREATE TABLE commits (
   deletions INT,
   changed_files INT,
   message_headline TEXT,
+  is_co_authored BOOLEAN NOT NULL DEFAULT FALSE,
   source TEXT NOT NULL CHECK (
     source IN ('live', 'self_backfill', 'external_import')
   ),

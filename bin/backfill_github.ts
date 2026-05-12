@@ -311,7 +311,6 @@ async function ingestCommits(
       {
         owner,
         name,
-        author: identity.externalId,
         since,
         until,
         cursor
@@ -323,8 +322,9 @@ async function ingestCommits(
     if (!history) return
 
     for (const node of history.nodes) {
+      if (!translate.commitIncludesIdentity(node, identity)) continue
       await upserts.upsertCommit(
-        translate.commitFromGraphQLNode(node, identity.accountId, repositoryId, 'self_backfill')
+        translate.commitFromGraphQLNode(node, identity, repositoryId, 'self_backfill')
       )
     }
 

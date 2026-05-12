@@ -1,4 +1,5 @@
 import type { NewCommitRow, NewOrganizationRow, NewRepositoryRow } from '../../upserts.ts'
+import type { VendorIdentity } from '../../types/index.ts'
 import type {
   GitHubCommitNode,
   GitHubRepositoryNode,
@@ -81,12 +82,12 @@ export function organizationFromRepositoryOwner(
 
 export function commitFromGraphQLNode(
   node: GitHubCommitNode,
-  accountId: number,
+  identity: VendorIdentity,
   repositoryId: number,
   source: NewCommitRow['source']
 ): NewCommitRow {
   return {
-    account_id: accountId,
+    account_id: identity.accountId,
     repository_id: repositoryId,
     oid: node.oid,
     committed_on: node.committedDate.slice(0, 10),
@@ -95,8 +96,30 @@ export function commitFromGraphQLNode(
     deletions: node.deletions,
     changed_files: node.changedFiles,
     message_headline: node.messageHeadline,
+    is_co_authored: isCoAuthoredByIdentity(node, identity),
     source
   }
+}
+
+export function commitIncludesIdentity(node: GitHubCommitNode, identity: VendorIdentity): boolean {
+  return (
+    actorMatchesIdentity(node.author, identity) ||
+    node.authors.nodes.some((actor) => actorMatchesIdentity(actor, identity))
+  )
+}
+
+function isCoAuthoredByIdentity(node: GitHubCommitNode, identity: VendorIdentity): boolean {
+  if (!commitIncludesIdentity(node, identity)) return false
+  return !actorMatchesIdentity(node.author, identity)
+}
+
+function actorMatchesIdentity(
+  actor: GitHubCommitNode['author'] | GitHubCommitNode['authors']['nodes'][number],
+  identity: VendorIdentity
+): boolean {
+  const user = actor?.user
+  if (!user) return false
+  return user.id === identity.externalId || user.login === identity.externalLogin
 }
 
 export interface GitHubLanguageEdge {

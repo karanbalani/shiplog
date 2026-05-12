@@ -65,15 +65,16 @@ This document records that translation.
 
 ## commits
 
-| shiplog column     | GitHub source                    | Notes                                    |
-| ------------------ | -------------------------------- | ---------------------------------------- |
-| `oid`              | GraphQL commit `oid`             | Git object id.                           |
-| `committed_at`     | GraphQL commit `committedDate`   | Exact commit timestamp.                  |
-| `committed_on`     | derived from `committedDate`     | UTC date portion used for daily rollups. |
-| `additions`        | GraphQL commit `additions`       | Lines added.                             |
-| `deletions`        | GraphQL commit `deletions`       | Lines deleted.                           |
-| `changed_files`    | GraphQL commit `changedFiles`    | Number of changed files.                 |
-| `message_headline` | GraphQL commit `messageHeadline` | First line of the commit message.        |
+| shiplog column     | GitHub source                     | Notes                                                                       |
+| ------------------ | --------------------------------- | --------------------------------------------------------------------------- |
+| `oid`              | GraphQL commit `oid`              | Git object id.                                                              |
+| `committed_at`     | GraphQL commit `committedDate`    | Exact commit timestamp.                                                     |
+| `committed_on`     | derived from `committedDate`      | UTC date portion used for daily rollups.                                    |
+| `additions`        | GraphQL commit `additions`        | Lines added.                                                                |
+| `deletions`        | GraphQL commit `deletions`        | Lines deleted.                                                              |
+| `changed_files`    | GraphQL commit `changedFiles`     | Number of changed files.                                                    |
+| `message_headline` | GraphQL commit `messageHeadline`  | First line of the commit message.                                           |
+| `is_co_authored`   | GraphQL commit `author`/`authors` | True when the account appears in `authors` but is not the primary `author`. |
 
 ## pull_requests
 
@@ -126,7 +127,7 @@ This document records that translation.
 
 ## Daily Collector Coverage
 
-`bin/collect_github.ts` maps one activity date at a time. It discovers active repositories from `contributionsCollection`, merges in private repositories from REST `GET /user/repos?visibility=private` for repositories the configured read tokens can read, upserts organization rows for repositories owned by GitHub organizations, upserts generic repository rows, captures repository snapshots when star/fork fields are present, ingests commit/PR/review/issue events, writes `daily_user_summary`, then derives `daily_repository_activity` from the event tables.
+`bin/collect_github.ts` maps one activity date at a time. It discovers active repositories from `contributionsCollection`, merges in private repositories from REST `GET /user/repos?visibility=private` for repositories the configured read tokens can read, upserts organization rows for repositories owned by GitHub organizations, upserts generic repository rows, captures repository snapshots when star/fork fields are present, ingests commit/PR/review/issue events, writes `daily_user_summary`, then derives `daily_repository_activity` from the event tables. Commit ingestion counts commits whose GitHub `authors` list includes the configured account, including `Co-authored-by` credits, and stores full commit line stats for those rows.
 
 ## Historical Collect Coverage
 
