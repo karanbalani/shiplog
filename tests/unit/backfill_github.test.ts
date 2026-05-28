@@ -296,11 +296,83 @@ test('run skips repositories that GitHub no longer resolves', async () => {
     'SELECT COUNT(*)::int AS count FROM repositories'
   )
   const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+  const state = await db.query<{ status: string }>('SELECT status FROM repository_backfill_state')
 
   expect(repositories.rows[0]!.count).toBe(1)
   expect(commits.rows[0]!.count).toBe(0)
+  expect(state.rows[0]!.status).toBe('skipped_permanent')
   expect(logs.some((line) => line.includes('[public] octocat/deleted'))).toBe(true)
   expect(logs.some((line) => line.includes('is unavailable; skipping enrichment'))).toBe(true)
+})
+
+test('run defers retryable repository errors and continues remaining repositories', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+  const transientFetch = mockGitHubFetchWithTransientRepositoryFailure()
+
+  const first = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: transientFetch.fetch
+  })
+  const firstState = await db.query<{ status: string; last_error: string | null }>(
+    'SELECT status, last_error FROM repository_backfill_state ORDER BY status'
+  )
+  const firstCommits = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM commits'
+  )
+
+  expect(first).toMatchObject({
+    complete: false,
+    repositoriesDiscovered: 2,
+    repositoriesProcessed: 2,
+    repositoriesDeferred: 1
+  })
+  expect(transientFetch.publicCommitAttempts).toBe(7)
+  expect(firstState.rows.map((row) => row.status).sort()).toEqual(['retry_wait', 'succeeded'])
+  expect(firstState.rows.some((row) => row.last_error?.includes('HTTP 503'))).toBe(true)
+  expect(firstCommits.rows[0]!.count).toBe(1)
+  expect(logs.some((line) => line.includes('hit a retryable provider error'))).toBe(true)
+  expect(logs.some((line) => line.includes('retry later'))).toBe(true)
+
+  const second = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: mockGitHubFetchWithTwoRepositories()
+  })
+  const secondState = await db.query<{ status: string }>(
+    'SELECT status FROM repository_backfill_state ORDER BY repository_id'
+  )
+  const secondCommits = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM commits'
+  )
+
+  expect(second).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 2,
+    repositoriesProcessed: 1,
+    repositoriesDeferred: 0
+  })
+  expect(secondState.rows.map((row) => row.status)).toEqual(['succeeded', 'succeeded'])
+  expect(secondCommits.rows[0]!.count).toBe(2)
 })
 
 test('run can pause after a repository budget and resume remaining work', async () => {
@@ -884,6 +956,32 @@ function mockGitHubFetchWithTwoRepositories(): typeof fetch {
 
     return new Response(`unexpected request: ${url}`, { status: 500 })
   }) as typeof fetch
+}
+
+function mockGitHubFetchWithTransientRepositoryFailure(): {
+  fetch: typeof fetch
+  publicCommitAttempts: number
+} {
+  const baseFetch = mockGitHubFetchWithTwoRepositories()
+  const result = {
+    publicCommitAttempts: 0,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (url === 'https://api.github.com/graphql') {
+        const body = JSON.parse(String(init?.body)) as {
+          query: string
+          variables?: Record<string, string>
+        }
+        if (body.query.includes('query RepositoryCommits') && body.variables?.name === 'hello') {
+          result.publicCommitAttempts += 1
+          return new Response('service unavailable', { status: 503 })
+        }
+      }
+
+      return baseFetch(url, init)
+    }) as typeof fetch
+  }
+
+  return result
 }
 
 function githubContributionsFixture(): {

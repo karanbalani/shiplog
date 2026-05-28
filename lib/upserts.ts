@@ -308,6 +308,50 @@ export async function markRepositoryBackfillSucceeded(
   return result.rows[0]!
 }
 
+export async function markRepositoryBackfillRetryWait(
+  accountId: number,
+  repositoryId: number,
+  backfillThroughOn: string,
+  error: string
+): Promise<RepositoryBackfillStateRow> {
+  const result = await db.query<RepositoryBackfillStateRow>(
+    `INSERT INTO repository_backfill_state
+       (account_id, repository_id, backfill_through_on, status, completed_at, last_error)
+     VALUES ($1, $2, $3, 'retry_wait', NULL, $4)
+     ON CONFLICT (account_id, repository_id, backfill_through_on) DO UPDATE
+       SET status = 'retry_wait',
+           completed_at = NULL,
+           last_error = EXCLUDED.last_error,
+           updated_at = now()
+     RETURNING *`,
+    [accountId, repositoryId, backfillThroughOn, error]
+  )
+
+  return result.rows[0]!
+}
+
+export async function markRepositoryBackfillSkippedPermanent(
+  accountId: number,
+  repositoryId: number,
+  backfillThroughOn: string,
+  error: string
+): Promise<RepositoryBackfillStateRow> {
+  const result = await db.query<RepositoryBackfillStateRow>(
+    `INSERT INTO repository_backfill_state
+       (account_id, repository_id, backfill_through_on, status, completed_at, last_error)
+     VALUES ($1, $2, $3, 'skipped_permanent', now(), $4)
+     ON CONFLICT (account_id, repository_id, backfill_through_on) DO UPDATE
+       SET status = 'skipped_permanent',
+           completed_at = now(),
+           last_error = EXCLUDED.last_error,
+           updated_at = now()
+     RETURNING *`,
+    [accountId, repositoryId, backfillThroughOn, error]
+  )
+
+  return result.rows[0]!
+}
+
 export async function enqueueMaintenanceRepairTask(
   row: NewMaintenanceRepairTaskRow
 ): Promise<MaintenanceTaskRow> {
