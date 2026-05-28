@@ -137,6 +137,8 @@ The internal historical collect strategy starts from the account node's `created
 
 `bin/repair.ts` is the provider-neutral dispatcher for explicit date or range repair. It validates `REPAIR_DATE` or `REPAIR_FROM`/`REPAIR_TO`, invokes the daily collector for those dates, and leaves the account checkpoint unchanged.
 
+`bin/maintenance.ts` drains due `maintenance_tasks` rows. The initial task type is `repair_range`, which reruns daily collection for a queued date range without advancing the account checkpoint.
+
 ## Pending Mappings
 
 `profile_snapshots` are documented as a schema concept, but the daily GitHub collector does not populate them yet.

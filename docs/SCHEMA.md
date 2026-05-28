@@ -176,6 +176,35 @@ Constraints and indexes:
 - `UNIQUE (account_id, repository_id, backfill_through_on)` stores one backfill state row per account, repository, and target date.
 - `idx_repository_backfill_state_account_status` speeds account-scoped background work queries.
 
+## maintenance_tasks
+
+Queued background work that should run outside the daily collect lane.
+
+| Column           | Type          | Notes                                                                                       |
+| ---------------- | ------------- | ------------------------------------------------------------------------------------------- |
+| `id`             | `BIGSERIAL`   | Primary key.                                                                                |
+| `account_id`     | `BIGINT`      | Required reference to `accounts.id`.                                                        |
+| `task_type`      | `TEXT`        | Maintenance task type. Must be `repair_range` in v1.                                        |
+| `status`         | `TEXT`        | Task state. Must be `pending`, `running`, `retry_wait`, `succeeded`, or `failed_permanent`. |
+| `priority`       | `INT`         | Higher values run first among due tasks. Defaults to `0`.                                   |
+| `target_from_on` | `DATE`        | Inclusive repair range start.                                                               |
+| `target_to_on`   | `DATE`        | Inclusive repair range end.                                                                 |
+| `reason`         | `TEXT`        | Optional machine or operator reason for queuing the task.                                   |
+| `attempts`       | `INT`         | Number of times the task has started.                                                       |
+| `max_attempts`   | `INT`         | Attempts allowed before permanent failure. Defaults to `3`.                                 |
+| `next_run_at`    | `TIMESTAMPTZ` | Earliest time the task may run.                                                             |
+| `locked_at`      | `TIMESTAMPTZ` | When the current worker claimed the task, when running.                                     |
+| `started_at`     | `TIMESTAMPTZ` | Most recent task start timestamp.                                                           |
+| `completed_at`   | `TIMESTAMPTZ` | Successful completion timestamp, when available.                                            |
+| `last_error`     | `TEXT`        | Last failure message, when available.                                                       |
+| `created_at`     | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.                     |
+| `updated_at`     | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`.                 |
+
+Constraints and indexes:
+
+- `UNIQUE (account_id, task_type, target_from_on, target_to_on)` deduplicates queued repair work for an account and range.
+- `idx_maintenance_tasks_status_due` speeds due-task scans by status, run time, priority, and id.
+
 ## repository_languages
 
 Language breakdown snapshots for repositories.
