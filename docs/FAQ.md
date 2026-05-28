@@ -183,7 +183,13 @@ If you want to repair or inspect one specific day without moving the checkpoint,
 COLLECT_DATE=2026-05-07 bun run collect
 ```
 
-In GitHub Actions, the manual `collect` workflow has an optional `collect_date` input for the same purpose. The next normal collect run may safely reprocess that date if it is still part of the checkpoint gap.
+If you want to repair a historical range without moving the checkpoint, run with `COLLECT_FROM` and `COLLECT_TO` together:
+
+```bash
+COLLECT_FROM=2026-05-01 COLLECT_TO=2026-05-07 bun run collect
+```
+
+In GitHub Actions, the manual `collect` workflow has optional `collect_date`, `collect_from`, and `collect_to` inputs for the same purpose. The next normal collect run may safely reprocess those dates if they are still part of the checkpoint gap or rolling lookback window.
 
 ## Why is the first collect slow?
 

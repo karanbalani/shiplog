@@ -55,7 +55,7 @@ Collection checkpoint:
 - When `last_successful_collect_on` is null, automatic collect runs the complete historical collection path.
 - After the first complete collection, automatic collect runs process every date from `last_successful_collect_on + 1` through UTC yesterday, then reprocess the recent `collect.lookbackDays` window.
 - `last_successful_collect_on` is advanced after successful automatic collection.
-- Manual `COLLECT_DATE` runs collect exactly one requested date without advancing the checkpoint, and safely dedupes on rerun.
+- Manual `COLLECT_DATE`, or `COLLECT_FROM` plus `COLLECT_TO`, reprocesses requested repair dates without advancing the checkpoint, and safely dedupes on rerun.
 
 ## profile_snapshots
 
