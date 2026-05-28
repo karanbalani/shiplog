@@ -9,6 +9,7 @@ test('load returns parsed valid config', () => {
   const c = config.load(path.join(FIXTURES, 'shiplog_config_valid.json'))
 
   expect(c.profile.displayName).toBe('Example User')
+  expect(c.collect.lookbackDays).toBe(7)
   expect(c.collect.accounts).toHaveLength(1)
   expect(c.collect.accounts[0]!.provider).toBe('github')
   expect(c.collect.accounts[0]!.accountId).toBe('U_TEST_1')
@@ -39,6 +40,7 @@ test('load defaults optional config fields when omitted', () => {
   const c = config.load(path.join(FIXTURES, 'shiplog_config_defaults.json'))
 
   expect(c.profile).toEqual({})
+  expect(c.collect.lookbackDays).toBe(7)
   expect(c.collect.accounts[0]!.ignore).toEqual({ organizations: [], repositories: [] })
   expect(c.collect.accounts[0]!.tokenEnv).toBe('GH_RO_CLASSIC_TOKEN')
   expect(c.collect.accounts[0]!.organizationPatTokens).toEqual([])

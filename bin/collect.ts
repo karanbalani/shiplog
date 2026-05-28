@@ -30,6 +30,7 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
   const shiplogConfig = options.config ?? config.load(options.configPath)
   const requestedDate = options.date ?? process.env.COLLECT_DATE
   const yesterday = dates.yesterdayUTC(options.now)
+  const lookbackDays = shiplogConfig.collect.lookbackDays ?? config.DEFAULT_COLLECT_LOOKBACK_DAYS
 
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await findAccount(accountConfig)
@@ -63,7 +64,7 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
     }
 
     const vendor = await importVendorCollector(accountConfig.provider)
-    const collectDates = collectDatesForAccount(account, yesterday, requestedDate)
+    const collectDates = collectDatesForAccount(account, yesterday, requestedDate, lookbackDays)
 
     if (collectDates.length === 0) {
       logger.info(
@@ -107,7 +108,8 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
 export function collectDatesForAccount(
   account: AccountRow,
   yesterday: string,
-  requestedDate?: string
+  requestedDate?: string,
+  lookbackDays = config.DEFAULT_COLLECT_LOOKBACK_DAYS
 ): string[] {
   if (requestedDate) {
     assertNotFutureCollectDate(requestedDate, yesterday)
@@ -117,10 +119,11 @@ export function collectDatesForAccount(
   const lastSuccessfulCollectOn = account.last_successful_collect_on
     ? dateOnly(account.last_successful_collect_on)
     : null
-  const start = lastSuccessfulCollectOn ? addDays(lastSuccessfulCollectOn, 1) : yesterday
-  if (start > yesterday) return []
+  const missingStart = lastSuccessfulCollectOn ? addDays(lastSuccessfulCollectOn, 1) : yesterday
+  const missingDates = missingStart <= yesterday ? dateRange(missingStart, yesterday) : []
+  const lookbackDates = lookbackDatesForAccount(lastSuccessfulCollectOn, yesterday, lookbackDays)
 
-  return dateRange(start, yesterday)
+  return dedupeDates([...missingDates, ...lookbackDates])
 }
 
 export async function findAccount(accountConfig: ShiplogCollectAccountConfig): Promise<AccountRow> {
@@ -228,6 +231,24 @@ function assertNotFutureCollectDate(collectDate: string, yesterday: string): voi
   if (collectDate > yesterday) {
     throw new Error(`COLLECT_DATE must be ${yesterday} or earlier; got ${collectDate}`)
   }
+}
+
+function lookbackDatesForAccount(
+  lastSuccessfulCollectOn: string | null,
+  yesterday: string,
+  lookbackDays: number
+): string[] {
+  if (!lastSuccessfulCollectOn || lookbackDays <= 0) return []
+
+  const lookbackStart = addDays(yesterday, -(lookbackDays - 1))
+  const lookbackEnd = lastSuccessfulCollectOn < yesterday ? lastSuccessfulCollectOn : yesterday
+  if (lookbackStart > lookbackEnd) return []
+
+  return dateRange(lookbackStart, lookbackEnd)
+}
+
+function dedupeDates(dates: string[]): string[] {
+  return [...new Set(dates)]
 }
 
 function dateRange(start: string, end: string): string[] {
