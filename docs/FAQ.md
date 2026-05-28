@@ -161,9 +161,9 @@ If your config contains private repository names or other sensitive metadata, yo
 
 ## Which workflow should I run first?
 
-Run `init` first. It migrates the database, creates the configured accounts, runs collect, renders the README, and publishes it to `publish.targets`. Because new accounts have a null `last_successful_collect_on`, that first collect uses the complete historical path.
+Run `init` first. It migrates the database and creates the configured accounts without collecting activity.
 
-After that, `collect` runs daily or manually. The `backfill` workflow is also available as a manual historical lane; it runs the same historical collector without using the daily collect workflow as the entrypoint. When `collect` or `backfill` succeeds, `render` updates and publishes the README.
+After that, run `backfill` once to collect historical activity. Then `collect` runs daily or manually. When `collect` or `backfill` succeeds, `render` updates and publishes the README.
 
 ## What happens if daily collect fails for a few days?
 
@@ -191,11 +191,11 @@ COLLECT_FROM=2026-05-01 COLLECT_TO=2026-05-07 bun run collect
 
 In GitHub Actions, the manual `collect` workflow has optional `collect_date`, `collect_from`, and `collect_to` inputs for the same purpose. The next normal collect run may safely reprocess those dates if they are still part of the checkpoint gap or rolling lookback window.
 
-## Why is the first collect slow?
+## Why is historical backfill slow?
 
-Historical collect can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps the first collect under provider limits instead of racing into rate-limit failures.
+Historical backfill can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps backfill under provider limits instead of racing into rate-limit failures.
 
-During historical collect, shiplog logs:
+During historical backfill, shiplog logs:
 
 - yearly discovery progress
 - discovered repository count
@@ -203,11 +203,11 @@ During historical collect, shiplog logs:
 - repository progress
 - elapsed time and approximate ETA
 
-## What should I do if `init` fails during historical collect?
+## What should I do if `backfill` fails during historical collect?
 
-Fix the error and rerun `init`. You do not need to truncate tables.
+Fix the error and rerun `backfill`. You do not need to truncate tables.
 
-Historical collect is designed to be resumable:
+Historical backfill is designed to be resumable:
 
 - `accounts.last_successful_collect_on` stays null until the complete historical collect succeeds.
 - Most writes use database upserts or uniqueness constraints.
@@ -266,6 +266,7 @@ Then run:
 bun install
 bun run migrate
 bun run init
+bun run backfill
 bun run collect
 bun run render
 bun run publish

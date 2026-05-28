@@ -28,7 +28,7 @@ afterEach(async () => {
   }
 })
 
-test('run creates account from config identity and collects initial history', async () => {
+test('run creates account from config identity without collecting history', async () => {
   await init.run({
     config: shiplogConfig(),
     fetch: mockGitHubFetch(),
@@ -48,11 +48,11 @@ test('run creates account from config identity and collects initial history', as
     external_login: 'octocat',
     external_id: 'U_TEST_1'
   })
-  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
-  expect(commits.rows[0]!.count).toBe(1)
+  expect(accounts.rows[0]!.last_successful_collect_on).toBeNull()
+  expect(commits.rows[0]!.count).toBe(0)
 })
 
-test('run skips initial history when collect checkpoint is current', async () => {
+test('run is idempotent for account setup', async () => {
   await init.run({
     config: shiplogConfig(),
     fetch: mockGitHubFetch(),
@@ -65,8 +65,12 @@ test('run skips initial history when collect checkpoint is current', async () =>
   })
 
   const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+  const users = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM users')
+  const accounts = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM accounts')
 
-  expect(commits.rows[0]!.count).toBe(1)
+  expect(users.rows[0]!.count).toBe(1)
+  expect(accounts.rows[0]!.count).toBe(1)
+  expect(commits.rows[0]!.count).toBe(0)
 })
 
 function shiplogConfig(): ShiplogConfig {
@@ -122,114 +126,10 @@ function mockGitHubFetch(): typeof fetch {
           }
         })
       }
-
-      if (body.query.includes('query Contributions')) {
-        return jsonResponse({
-          data: githubContributionsFixture()
-        })
-      }
-
-      if (body.query.includes('query RepositoryCommits')) {
-        return jsonResponse({
-          data: {
-            repository: {
-              defaultBranchRef: {
-                target: {
-                  history: {
-                    totalCount: 1,
-                    pageInfo: { hasNextPage: false, endCursor: null },
-                    nodes: [
-                      {
-                        oid: 'abc123',
-                        committedDate: '2026-05-07T12:34:56Z',
-                        additions: 10,
-                        deletions: 2,
-                        changedFiles: 3,
-                        messageHeadline: 'Ship it',
-                        author: githubCommitActor(),
-                        authors: { nodes: [githubCommitActor()] }
-                      }
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        })
-      }
-
-      if (body.query.includes('query RepositoryLanguages')) {
-        return jsonResponse({
-          data: {
-            repository: {
-              stargazerCount: 10,
-              forkCount: 2,
-              isArchived: false,
-              isPrivate: false,
-              languages: {
-                edges: [
-                  { size: 800, node: { name: 'Go' } },
-                  { size: 200, node: { name: 'Shell' } }
-                ]
-              }
-            }
-          }
-        })
-      }
-    }
-
-    const parsed = new URL(url)
-    const q = parsed.searchParams.get('q') ?? ''
-
-    if (parsed.pathname === '/user/repos') {
-      return jsonResponse([])
-    }
-
-    if (parsed.pathname === '/search/issues' && q.includes('type:pr author:')) {
-      return jsonResponse({
-        total_count: 1,
-        items: [
-          {
-            node_id: 'PR_TEST_1',
-            number: 42,
-            title: 'Improve collector',
-            html_url: 'https://github.com/octo-org/hello/pull/42',
-            state: 'closed',
-            created_at: '2026-05-07T08:00:00Z',
-            closed_at: '2026-05-07T10:00:00Z',
-            pull_request: { merged_at: '2026-05-07T10:00:00Z' }
-          }
-        ]
-      })
-    }
-
-    if (parsed.pathname === '/search/issues' && q.includes('type:issue author:')) {
-      return jsonResponse({ total_count: 0, items: [] })
-    }
-
-    if (parsed.pathname === '/search/issues' && q.includes('reviewed-by:')) {
-      return jsonResponse({ total_count: 0, items: [] })
     }
 
     return new Response(`unexpected request: ${url}`, { status: 500 })
   }) as typeof fetch
-}
-
-function githubContributionsFixture(): {
-  user: {
-    contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
-  }
-} {
-  return JSON.parse(
-    fs.readFileSync(
-      path.join(import.meta.dir, '..', 'fixtures', 'github_contributions_collection.json'),
-      'utf8'
-    )
-  ) as {
-    user: {
-      contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
-    }
-  }
 }
 
 function jsonResponse(value: unknown): Response {
@@ -237,14 +137,6 @@ function jsonResponse(value: unknown): Response {
     status: 200,
     headers: { 'content-type': 'application/json' }
   })
-}
-
-function githubCommitActor(): import('../../lib/providers/github/types.ts').GitHubCommitActor {
-  return {
-    name: 'octocat',
-    email: 'octocat@example.com',
-    user: { id: 'U_TEST_1', login: 'octocat' }
-  }
 }
 
 function createMigratedPool(): Pool {
@@ -264,8 +156,4 @@ function loadMigration(filename: string): string {
     .readFileSync(path.join(MIGRATIONS, filename), 'utf8')
     .split(/-- migrate:down/)[0]!
     .replace(/^-- migrate:up\s*/m, '')
-}
-
-function dateOnly(value: Date | string): string {
-  return value instanceof Date ? value.toISOString().slice(0, 10) : value.slice(0, 10)
 }

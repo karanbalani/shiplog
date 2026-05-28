@@ -34,14 +34,6 @@ export async function run(options: InitRunOptions = {}): Promise<void> {
     })
     logger.info(`[init] ${accountConfig.provider}/${account.external_login}: account ready`)
   }
-
-  logger.info('[init] collecting missing activity')
-  const collect = await import('./collect.ts')
-  await collect.run({
-    config: shiplogConfig,
-    fetch: options.fetch,
-    now: options.now
-  })
 }
 
 export async function ensureUser(displayName: string | null): Promise<UserRow> {

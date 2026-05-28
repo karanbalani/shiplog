@@ -48,24 +48,17 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
-      - name: Initialize accounts and collect history
+      - name: Initialize accounts
         run: bun run init
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
 
-      - name: Render README
-        run: bun run render
-        env:
-          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-
-      - name: Print rendered README
+      - name: Print next steps
         run: |
-          echo "::group::rendered.md"
-          cat rendered.md
-          echo "::endgroup::"
-
-      - name: Publish rendered README
-        run: bun run publish
-        env:
-          GH_RW_REPO_TOKEN: ${{ secrets.GH_RW_REPO_TOKEN }}
+          {
+            echo "## shiplog initialized"
+            echo ""
+            echo "Accounts are ready. Run the backfill workflow next to collect historical activity."
+            echo "The render workflow will publish the README after backfill or collect succeeds."
+          } >> "$GITHUB_STEP_SUMMARY"
