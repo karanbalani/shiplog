@@ -29,12 +29,12 @@ export async function run(options: RepairRunOptions = {}): Promise<void> {
   const label = request.date ? request.date : `${request.from} to ${request.to}`
   logger.info(`[repair] repairing ${label}`)
 
-  await collect.run({
+  await collect.runDates({
     configPath: options.configPath,
     config: options.config,
-    date: request.date ?? '',
-    fromDate: request.from ?? '',
-    toDate: request.to ?? '',
+    dates: repairDates(request),
+    advanceCheckpoint: false,
+    logPrefix: 'repair',
     fetch: options.fetch,
     now: options.now
   })
@@ -98,6 +98,25 @@ function assertNotFutureRepairDate(repairDate: string, yesterday: string, label:
   if (repairDate > yesterday) {
     throw new Error(`${label} must be ${yesterday} or earlier; got ${repairDate}`)
   }
+}
+
+function repairDates(request: RepairDateRequest): string[] {
+  if (request.date) return [request.date]
+  return dateRange(request.from!, request.to!)
+}
+
+function dateRange(start: string, end: string): string[] {
+  const out: string[] = []
+  for (let d = start; d <= end; d = addDays(d, 1)) {
+    out.push(d)
+  }
+  return out
+}
+
+function addDays(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
 }
 
 if (import.meta.main) {

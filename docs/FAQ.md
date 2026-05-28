@@ -173,7 +173,7 @@ shiplog keeps a simple checkpoint on each account:
 accounts.last_successful_collect_on
 ```
 
-When the checkpoint is null, collect runs complete history. After that, normal collect runs process every missing date from the day after that checkpoint through UTC yesterday, then recheck the recent `collect.lookbackDays` window. After each automatic run succeeds, shiplog advances the checkpoint.
+When the checkpoint is null, collect processes only UTC yesterday. After that, normal collect runs process every missing date from the day after that checkpoint through UTC yesterday, then recheck the recent `collect.lookbackDays` window. After each automatic run succeeds, shiplog advances the checkpoint. Complete historical ingestion belongs to `backfill`.
 
 This means a failed or skipped workflow can usually be fixed by rerunning `collect`; it will catch up the missed dates automatically. The rolling lookback defaults to 7 days and can be disabled with `collect.lookbackDays: 0`.
 

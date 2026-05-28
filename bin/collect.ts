@@ -21,58 +21,24 @@ import * as dates from '../lib/utils/dates.ts'
 export interface CollectRunOptions {
   configPath?: string
   config?: ShiplogConfig
-  date?: string
-  fromDate?: string
-  toDate?: string
   fetch?: Fetcher
   now?: Date
 }
 
-export interface CollectDateRequest {
-  date?: string
-  from?: string
-  to?: string
+export interface CollectRunDatesOptions extends CollectRunOptions {
+  dates: string[]
+  advanceCheckpoint?: boolean
+  logPrefix?: string
 }
 
 export async function run(options: CollectRunOptions = {}): Promise<void> {
   const shiplogConfig = options.config ?? config.load(options.configPath)
-  const dateRequest = collectDateRequest(options)
   const yesterday = dates.yesterdayUTC(options.now)
   const lookbackDays = shiplogConfig.collect.lookbackDays ?? config.DEFAULT_COLLECT_LOOKBACK_DAYS
 
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await findAccount(accountConfig)
-    const ignoreOrganizationIds = accountConfig.ignore.organizations
-    const ignoreRepositoryIds = accountConfig.ignore.repositories
-
-    if (!hasExplicitCollectRequest(dateRequest) && !account.last_successful_collect_on) {
-      const token = tokenForAccount(accountConfig)
-      const organizationPatTokens = await organizationPatTokensForAccount(
-        accountConfig,
-        options.fetch
-      )
-      const refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
-      const identity = vendorIdentity(refreshedAccount)
-
-      logger.info(
-        `[collect] ${accountConfig.provider}/${refreshedAccount.external_login}: no checkpoint found; collecting complete history through ${yesterday}`
-      )
-      const historicalVendor = await importVendorHistoricalCollector(accountConfig.provider)
-      await historicalVendor.run({
-        identity,
-        token,
-        organizationTokens: organizationPatTokens,
-        ignoreOrganizationIds,
-        ignoreRepositoryIds,
-        throughDate: yesterday,
-        fetch: options.fetch
-      })
-      await upserts.markCollectSuccess(refreshedAccount.id, yesterday)
-      continue
-    }
-
-    const vendor = await importVendorCollector(accountConfig.provider)
-    const collectDates = collectDatesForAccount(account, yesterday, dateRequest, lookbackDays)
+    const collectDates = collectDatesForAccount(account, yesterday, lookbackDays)
 
     if (collectDates.length === 0) {
       logger.info(
@@ -81,34 +47,66 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
       continue
     }
 
-    const token = tokenForAccount(accountConfig)
-    const organizationPatTokens = await organizationPatTokensForAccount(
-      accountConfig,
-      options.fetch
-    )
-    const refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
-    const identity = vendorIdentity(refreshedAccount)
+    await runAccountDates(accountConfig, account, collectDates, {
+      advanceCheckpoint: true,
+      fetch: options.fetch,
+      logPrefix: 'collect'
+    })
+  }
+}
 
+export async function runDates(options: CollectRunDatesOptions): Promise<void> {
+  const shiplogConfig = options.config ?? config.load(options.configPath)
+  const collectDates = dedupeDates(options.dates)
+  if (collectDates.length === 0) return
+
+  for (const accountConfig of shiplogConfig.collect.accounts) {
+    const account = await findAccount(accountConfig)
+    await runAccountDates(accountConfig, account, collectDates, {
+      advanceCheckpoint: options.advanceCheckpoint ?? false,
+      fetch: options.fetch,
+      logPrefix: options.logPrefix ?? 'collect'
+    })
+  }
+}
+
+async function runAccountDates(
+  accountConfig: ShiplogCollectAccountConfig,
+  account: AccountRow,
+  collectDates: string[],
+  options: {
+    advanceCheckpoint: boolean
+    fetch?: Fetcher
+    logPrefix: string
+  }
+): Promise<void> {
+  const ignoreOrganizationIds = accountConfig.ignore.organizations
+  const ignoreRepositoryIds = accountConfig.ignore.repositories
+  const vendor = await importVendorCollector(accountConfig.provider)
+  const token = tokenForAccount(accountConfig)
+  const organizationPatTokens = await organizationPatTokensForAccount(accountConfig, options.fetch)
+  const refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
+  const identity = vendorIdentity(refreshedAccount)
+
+  logger.info(
+    `[${options.logPrefix}] ${accountConfig.provider}/${refreshedAccount.external_login}: ${collectDates.length} day(s) (${collectDates[0]} to ${collectDates.at(-1)})`
+  )
+
+  for (const [index, collectDate] of collectDates.entries()) {
     logger.info(
-      `[collect] ${accountConfig.provider}/${refreshedAccount.external_login}: ${collectDates.length} day(s) (${collectDates[0]} to ${collectDates.at(-1)})`
+      `[${options.logPrefix}] ${accountConfig.provider}/${refreshedAccount.external_login}: ${index + 1}/${collectDates.length} ${collectDate}`
     )
-
-    for (const [index, collectDate] of collectDates.entries()) {
-      logger.info(
-        `[collect] ${accountConfig.provider}/${refreshedAccount.external_login}: ${index + 1}/${collectDates.length} ${collectDate}`
-      )
-      await vendor.run({
-        identity,
-        token,
-        organizationTokens: organizationPatTokens,
-        ignoreOrganizationIds,
-        ignoreRepositoryIds,
-        date: collectDate,
-        fetch: options.fetch
-      })
-      if (!hasExplicitCollectRequest(dateRequest)) {
-        await upserts.markCollectSuccess(refreshedAccount.id, collectDate)
-      }
+    await vendor.run({
+      identity,
+      token,
+      organizationTokens: organizationPatTokens,
+      ignoreOrganizationIds,
+      ignoreRepositoryIds,
+      date: collectDate,
+      fetch: options.fetch
+    })
+    if (options.advanceCheckpoint) {
+      await upserts.markCollectSuccess(refreshedAccount.id, collectDate)
     }
   }
 }
@@ -116,29 +114,8 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
 export function collectDatesForAccount(
   account: AccountRow,
   yesterday: string,
-  request: CollectDateRequest = {},
   lookbackDays = config.DEFAULT_COLLECT_LOOKBACK_DAYS
 ): string[] {
-  if (request.date) {
-    if (request.from || request.to) {
-      throw new Error('COLLECT_DATE cannot be combined with COLLECT_FROM or COLLECT_TO')
-    }
-    assertCollectDate(request.date, 'COLLECT_DATE')
-    assertNotFutureCollectDate(request.date, yesterday, 'COLLECT_DATE')
-    return [request.date]
-  }
-
-  if (request.from || request.to) {
-    if (!request.from || !request.to) {
-      throw new Error('COLLECT_FROM and COLLECT_TO must be set together')
-    }
-    assertCollectDate(request.from, 'COLLECT_FROM')
-    assertCollectDate(request.to, 'COLLECT_TO')
-    assertDateRangeOrder(request.from, request.to)
-    assertNotFutureCollectDate(request.to, yesterday, 'COLLECT_TO')
-    return dateRange(request.from, request.to)
-  }
-
   const lastSuccessfulCollectOn = account.last_successful_collect_on
     ? dateOnly(account.last_successful_collect_on)
     : null
@@ -197,11 +174,6 @@ async function importVendorCollector(provider: string): Promise<VendorModule> {
   return (await import('./collect_github.ts')) as VendorModule
 }
 
-async function importVendorHistoricalCollector(provider: string): Promise<VendorModule> {
-  if (provider !== 'github') throw new Error(`unsupported provider in v1: ${provider}`)
-  return (await import('./backfill_github.ts')) as VendorModule
-}
-
 function tokenForAccount(accountConfig: ShiplogCollectAccountConfig): string {
   const envName = accountConfig.tokenEnv || readOnlyTokenEnvName(accountConfig.provider)
   const token = process.env[envName]
@@ -247,46 +219,6 @@ function vendorIdentity(account: AccountRow): VendorIdentity {
     accountId: account.id,
     externalLogin: account.external_login,
     externalId: account.external_id
-  }
-}
-
-function collectDateRequest(options: CollectRunOptions): CollectDateRequest {
-  return {
-    date: optionalDate(options.date ?? process.env.COLLECT_DATE),
-    from: optionalDate(options.fromDate ?? process.env.COLLECT_FROM),
-    to: optionalDate(options.toDate ?? process.env.COLLECT_TO)
-  }
-}
-
-function optionalDate(value: string | undefined): string | undefined {
-  const trimmed = value?.trim()
-  return trimmed ? trimmed : undefined
-}
-
-function hasExplicitCollectRequest(request: CollectDateRequest): boolean {
-  return Boolean(request.date || request.from || request.to)
-}
-
-function assertCollectDate(collectDate: string, label: string): void {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(collectDate)) {
-    throw new Error(`${label} must use YYYY-MM-DD format; got ${collectDate}`)
-  }
-
-  const parsed = new Date(`${collectDate}T00:00:00Z`)
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== collectDate) {
-    throw new Error(`${label} must be a valid calendar date; got ${collectDate}`)
-  }
-}
-
-function assertDateRangeOrder(from: string, to: string): void {
-  if (from > to) {
-    throw new Error(`COLLECT_FROM must be on or before COLLECT_TO; got ${from} to ${to}`)
-  }
-}
-
-function assertNotFutureCollectDate(collectDate: string, yesterday: string, label: string): void {
-  if (collectDate > yesterday) {
-    throw new Error(`${label} must be ${yesterday} or earlier; got ${collectDate}`)
   }
 }
 

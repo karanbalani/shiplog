@@ -12,16 +12,12 @@ import * as upserts from '../../lib/upserts.ts'
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
 const originalGitHubToken = process.env.GH_RO_CLASSIC_TOKEN
 const originalCollectDate = process.env.COLLECT_DATE
-const originalCollectFrom = process.env.COLLECT_FROM
-const originalCollectTo = process.env.COLLECT_TO
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
   logger.configureLogger({ level: 'silent', write: () => undefined })
   process.env.GH_RO_CLASSIC_TOKEN = 'test-token'
   delete process.env.COLLECT_DATE
-  delete process.env.COLLECT_FROM
-  delete process.env.COLLECT_TO
 })
 
 afterEach(async () => {
@@ -30,16 +26,14 @@ afterEach(async () => {
 
   restoreEnv('GH_RO_CLASSIC_TOKEN', originalGitHubToken)
   restoreEnv('COLLECT_DATE', originalCollectDate)
-  restoreEnv('COLLECT_FROM', originalCollectFrom)
-  restoreEnv('COLLECT_TO', originalCollectTo)
 })
 
-test('run dispatches daily collection for configured account', async () => {
+test('run collects yesterday when no checkpoint exists without backfilling history', async () => {
   await seedAccount()
 
   await collect.run({
     config: shiplogConfig(),
-    date: '2026-05-07',
+    now: new Date('2026-05-08T00:00:00Z'),
     fetch: mockGitHubFetch()
   })
 
@@ -50,10 +44,18 @@ test('run dispatches daily collection for configured account', async () => {
   const activity = await db.query<{ commits: number }>(
     'SELECT commits FROM daily_repository_activity'
   )
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  const backfillState = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+  )
 
   expect(dateOnly(summaries.rows[0]!.activity_on)).toBe('2026-05-07')
   expect(summaries.rows[0]!.total_commit_contributions).toBe(3)
   expect(activity.rows[0]!.commits).toBe(1)
+  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
+  expect(backfillState.rows[0]!.count).toBe(0)
 })
 
 test('run catches up missing collect dates and advances checkpoint', async () => {
@@ -122,66 +124,19 @@ test('run rechecks configured lookback dates when account is already current', a
 })
 
 test('collectDatesForAccount processes new dates before lookback dates', () => {
-  expect(collect.collectDatesForAccount(accountRow('2026-05-05'), '2026-05-07', {}, 3)).toEqual([
+  expect(collect.collectDatesForAccount(accountRow('2026-05-05'), '2026-05-07', 3)).toEqual([
     '2026-05-06',
     '2026-05-07',
     '2026-05-05'
   ])
 })
 
-test('run uses COLLECT_DATE when date option is omitted', async () => {
-  await seedAccount({ lastSuccessfulCollectOn: '2026-05-05' })
-  process.env.COLLECT_DATE = '2026-05-07'
-
-  await collect.run({
-    config: shiplogConfig(),
-    now: new Date('2026-05-08T00:00:00Z'),
-    fetch: mockGitHubFetch()
-  })
-
-  const summaries = await db.query<{ activity_on: Date | string }>(
-    'SELECT activity_on FROM daily_user_summary'
-  )
-  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
-    'SELECT last_successful_collect_on FROM accounts'
-  )
-
-  expect(dateOnly(summaries.rows[0]!.activity_on)).toBe('2026-05-07')
-  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-05')
-})
-
-test('run uses COLLECT_FROM and COLLECT_TO without moving the checkpoint', async () => {
-  await seedAccount({ lastSuccessfulCollectOn: '2026-05-01' })
-  process.env.COLLECT_FROM = '2026-05-05'
-  process.env.COLLECT_TO = '2026-05-07'
-
-  await collect.run({
-    config: shiplogConfig(),
-    now: new Date('2026-05-08T00:00:00Z'),
-    fetch: mockGitHubFetch()
-  })
-
-  const summaries = await db.query<{ activity_on: Date | string }>(
-    'SELECT activity_on FROM daily_user_summary ORDER BY activity_on'
-  )
-  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
-    'SELECT last_successful_collect_on FROM accounts'
-  )
-
-  expect(summaries.rows.map((row) => dateOnly(row.activity_on))).toEqual([
-    '2026-05-05',
-    '2026-05-06',
-    '2026-05-07'
-  ])
-  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-01')
-})
-
 test('run refreshes renamed account login by stable external id', async () => {
-  await seedAccount({ externalLogin: 'old-octocat' })
+  await seedAccount({ externalLogin: 'old-octocat', lastSuccessfulCollectOn: '2026-05-06' })
 
   await collect.run({
     config: shiplogConfig(),
-    date: '2026-05-07',
+    now: new Date('2026-05-08T00:00:00Z'),
     fetch: mockGitHubFetch()
   })
 
@@ -193,66 +148,30 @@ test('run refreshes renamed account login by stable external id', async () => {
   expect(accounts.rows[0]!.external_login).toBe('octocat')
 })
 
-test('run rejects future COLLECT_DATE', async () => {
-  await seedAccount()
+test('run ignores legacy COLLECT_DATE env', async () => {
+  await seedAccount({ lastSuccessfulCollectOn: '2026-05-07' })
   process.env.COLLECT_DATE = '2026-05-08'
 
-  await expect(
-    collect.run({
-      config: shiplogConfig(),
-      now: new Date('2026-05-08T00:00:00Z'),
-      fetch: mockGitHubFetch()
-    })
-  ).rejects.toThrow(/COLLECT_DATE.*2026-05-07.*2026-05-08/)
-})
+  await collect.run({
+    config: shiplogConfig({ lookbackDays: 0 }),
+    now: new Date('2026-05-08T00:00:00Z'),
+    fetch: async () => {
+      throw new Error('fetch should not be called')
+    }
+  })
 
-test('run rejects incomplete collect ranges', async () => {
-  await seedAccount()
-  process.env.COLLECT_FROM = '2026-05-05'
+  const summaries = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM daily_user_summary'
+  )
 
-  await expect(
-    collect.run({
-      config: shiplogConfig(),
-      now: new Date('2026-05-08T00:00:00Z'),
-      fetch: mockGitHubFetch()
-    })
-  ).rejects.toThrow(/COLLECT_FROM and COLLECT_TO/)
-})
-
-test('run rejects collect date mixed with collect range', async () => {
-  await seedAccount()
-  process.env.COLLECT_DATE = '2026-05-07'
-  process.env.COLLECT_FROM = '2026-05-05'
-  process.env.COLLECT_TO = '2026-05-07'
-
-  await expect(
-    collect.run({
-      config: shiplogConfig(),
-      now: new Date('2026-05-08T00:00:00Z'),
-      fetch: mockGitHubFetch()
-    })
-  ).rejects.toThrow(/COLLECT_DATE cannot be combined/)
-})
-
-test('run rejects invalid collect range dates', async () => {
-  await seedAccount()
-  process.env.COLLECT_FROM = '2026-05-08'
-  process.env.COLLECT_TO = '2026-05-07'
-
-  await expect(
-    collect.run({
-      config: shiplogConfig(),
-      now: new Date('2026-05-08T00:00:00Z'),
-      fetch: mockGitHubFetch()
-    })
-  ).rejects.toThrow(/COLLECT_FROM must be on or before COLLECT_TO/)
+  expect(summaries.rows[0]!.count).toBe(0)
 })
 
 test('run throws when account has not been initialized', async () => {
   await expect(
     collect.run({
       config: shiplogConfig(),
-      date: '2026-05-07',
+      now: new Date('2026-05-08T00:00:00Z'),
       fetch: mockGitHubFetch()
     })
   ).rejects.toThrow(/run bun run init first/i)
