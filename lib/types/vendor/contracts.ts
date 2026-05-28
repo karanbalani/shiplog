@@ -31,6 +31,7 @@ export interface BackfillArgs {
   ignoreRepositoryIds?: string[]
   throughDate?: string
   repositoryLimit?: number
+  maxRuntimeMs?: number
   fetch?: Fetcher
 }
 

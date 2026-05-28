@@ -175,7 +175,7 @@ Repository-level historical ingestion progress for an account.
 Constraints and indexes:
 
 - `UNIQUE (account_id, repository_id, backfill_through_on)` stores one backfill state row per account, repository, and target date.
-- Chunked backfill runs use this state to skip completed repositories before spending their repository budget on unfinished work.
+- Chunked backfill runs use this state to skip completed repositories before spending their repository or time budget on unfinished work.
 - `idx_repository_backfill_state_account_status` speeds account-scoped background work queries.
 
 ## maintenance_tasks
