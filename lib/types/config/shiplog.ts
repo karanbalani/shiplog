@@ -19,6 +19,7 @@ export interface ShiplogProfileConfig {
 }
 
 export interface ShiplogCollectConfig {
+  lookbackDays: number
   accounts: ShiplogCollectAccountConfig[]
 }
 

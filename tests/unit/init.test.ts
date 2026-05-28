@@ -74,6 +74,7 @@ function shiplogConfig(): ShiplogConfig {
     version: 1,
     profile: { displayName: 'Example User' },
     collect: {
+      lookbackDays: 7,
       accounts: [
         {
           provider: 'github',

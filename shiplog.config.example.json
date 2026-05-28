@@ -5,6 +5,7 @@
     "displayName": "Your Name"
   },
   "collect": {
+    "lookbackDays": 7,
     "accounts": [
       {
         "provider": "github",

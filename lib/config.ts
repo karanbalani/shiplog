@@ -8,6 +8,7 @@ export const DEFAULT_READ_TOKEN_ENV = 'GH_RO_CLASSIC_TOKEN'
 export const DEFAULT_PUBLISH_TOKEN_ENV = 'GH_RW_REPO_TOKEN'
 export const DEFAULT_PUBLISH_BRANCH = 'main'
 export const DEFAULT_PUBLISH_PATH = 'README.md'
+export const DEFAULT_COLLECT_LOOKBACK_DAYS = 7
 export const DEFAULT_RENDER: RenderKnobs = {
   topLanguagesCount: 7,
   topPublicProjectsCount: 6,

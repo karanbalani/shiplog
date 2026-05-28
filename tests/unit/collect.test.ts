@@ -6,7 +6,7 @@ import type { Pool } from 'pg'
 import * as collect from '../../bin/collect.ts'
 import * as db from '../../lib/db.ts'
 import * as logger from '../../lib/logger.ts'
-import type { ShiplogConfig } from '../../lib/types/index.ts'
+import type { AccountRow, ShiplogConfig } from '../../lib/types/index.ts'
 import * as upserts from '../../lib/upserts.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
@@ -54,7 +54,7 @@ test('run catches up missing collect dates and advances checkpoint', async () =>
   await seedAccount({ lastSuccessfulCollectOn: '2026-05-05' })
 
   await collect.run({
-    config: shiplogConfig(),
+    config: shiplogConfig({ lookbackDays: 0 }),
     now: new Date('2026-05-08T00:00:00Z'),
     fetch: mockGitHubFetch()
   })
@@ -77,7 +77,7 @@ test('run skips automatic collect when account is already current', async () => 
   await seedAccount({ lastSuccessfulCollectOn: '2026-05-07' })
 
   await collect.run({
-    config: shiplogConfig(),
+    config: shiplogConfig({ lookbackDays: 0 }),
     now: new Date('2026-05-08T00:00:00Z'),
     fetch: async () => {
       throw new Error('fetch should not be called')
@@ -89,6 +89,36 @@ test('run skips automatic collect when account is already current', async () => 
   )
 
   expect(summaries.rows[0]!.count).toBe(0)
+})
+
+test('run rechecks configured lookback dates when account is already current', async () => {
+  await seedAccount({ lastSuccessfulCollectOn: '2026-05-07' })
+
+  await collect.run({
+    config: shiplogConfig({ lookbackDays: 3 }),
+    now: new Date('2026-05-08T00:00:00Z'),
+    fetch: mockGitHubFetch()
+  })
+
+  const summaries = await db.query<{ activity_on: Date | string }>(
+    'SELECT activity_on FROM daily_user_summary ORDER BY activity_on'
+  )
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+
+  expect(summaries.rows.map((row) => dateOnly(row.activity_on))).toEqual([
+    '2026-05-05',
+    '2026-05-06',
+    '2026-05-07'
+  ])
+  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
+})
+
+test('collectDatesForAccount processes new dates before lookback dates', () => {
+  expect(
+    collect.collectDatesForAccount(accountRow('2026-05-05'), '2026-05-07', undefined, 3)
+  ).toEqual(['2026-05-06', '2026-05-07', '2026-05-05'])
 })
 
 test('run uses COLLECT_DATE when date option is omitted', async () => {
@@ -171,11 +201,12 @@ async function seedAccount(
   }
 }
 
-function shiplogConfig(): ShiplogConfig {
+function shiplogConfig(options: { lookbackDays?: number } = {}): ShiplogConfig {
   return {
     version: 1,
     profile: { displayName: 'Example User' },
     collect: {
+      lookbackDays: options.lookbackDays ?? 7,
       accounts: [
         {
           provider: 'github',
@@ -200,6 +231,23 @@ function shiplogConfig(): ShiplogConfig {
         }
       ]
     }
+  }
+}
+
+function accountRow(lastSuccessfulCollectOn: string | null): AccountRow {
+  return {
+    id: 1,
+    user_id: 1,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2026-01-01T00:00:00Z',
+    first_seen_on: '2026-05-07',
+    last_successful_collect_on: lastSuccessfulCollectOn,
+    captured_at: '2026-05-07T00:00:00Z',
+    created_at: '2026-05-07T00:00:00Z',
+    updated_at: '2026-05-07T00:00:00Z'
   }
 }
 

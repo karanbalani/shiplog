@@ -178,7 +178,7 @@ If an organization requires a separate read token, create another secret such as
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders `rendered.md`, and publishes the initial README to `publish.targets`. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted, completed repositories are skipped on the next run, and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates `rendered.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders `rendered.md`, and publishes the initial README to `publish.targets`. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted, completed repositories are skipped on the next run, and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday, then rechecks the recent `collect.lookbackDays` window. When `collect` succeeds, the `render` workflow regenerates `rendered.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
@@ -286,7 +286,7 @@ Collect activity and regenerate the README:
 bun run collect
 ```
 
-By default, `collect` runs complete history when `accounts.last_successful_collect_on` is null. After that, it catches up every missing date from `accounts.last_successful_collect_on + 1` through UTC yesterday and advances the checkpoint after each successful date. To collect exactly one date without moving the checkpoint, use `COLLECT_DATE`:
+By default, `collect` runs complete history when `accounts.last_successful_collect_on` is null. After that, it catches up every missing date from `accounts.last_successful_collect_on + 1` through UTC yesterday, rechecks the recent `collect.lookbackDays` window, and advances the checkpoint after each successful date. `collect.lookbackDays` defaults to `7`; set it to `0` to disable rolling rechecks. To collect exactly one date without moving the checkpoint, use `COLLECT_DATE`:
 
 ```bash
 COLLECT_DATE=2026-05-07 bun run collect
@@ -325,7 +325,7 @@ The internal GitHub historical strategy resolves the stable account ID, uses the
 
 The init dispatcher reads `shiplog.config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, then invokes collect. A null `last_successful_collect_on` makes collect run the historical path.
 
-The collect dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE`, or catches up every missing date through UTC yesterday. After a successful automatic run, it advances the account checkpoint.
+The collect dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE`, or catches up every missing date through UTC yesterday before rechecking the recent `collect.lookbackDays` window. After a successful automatic run, it advances the account checkpoint.
 
 The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `rendered.md`. It does not overwrite this repository's own `README.md`.
 
