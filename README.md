@@ -114,7 +114,7 @@ DATABASE_CONNECTION_STRING=postgres://shiplog:password@host:5432/shiplog?sslmode
 GH_RO_CLASSIC_TOKEN=ghp_xxx
 GH_RW_REPO_TOKEN=github_pat_xxx
 # Optional, only when an org requires a separate read token:
-# GH_RO_RESTRICTED_ORG_TOKEN=github_pat_xxx
+# GH_RO_RESTRICTED_ORG_PAT_TOKEN=github_pat_xxx
 ```
 
 Optional logging controls:
@@ -174,7 +174,7 @@ Token responsibilities:
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org` so private repository activity is available.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits for configured publish targets.
 
-If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_TOKEN`, add the stable organization PAT token entry to `collect.accounts[0].organizationPatTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
+If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_PAT_TOKEN`, add the stable organization PAT token entry to `collect.accounts[0].organizationPatTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
 

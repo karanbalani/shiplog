@@ -16,7 +16,7 @@ test('load returns parsed valid config', () => {
   expect(c.collect.accounts[0]!.organizationPatTokens).toEqual([
     {
       organizationId: 'O_RESTRICTED_1',
-      tokenEnv: 'GH_RO_RESTRICTED_ORG_TOKEN'
+      tokenEnv: 'GH_RO_RESTRICTED_ORG_PAT_TOKEN'
     }
   ])
   expect(c.collect.accounts[0]!.ignore.organizations).toEqual(['O_NOISY_1'])

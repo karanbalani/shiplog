@@ -117,7 +117,7 @@ If an organization blocks or requires separate authorization for the default cla
   "organizationPatTokens": [
     {
       "organizationId": "O_kgDO...",
-      "tokenEnv": "GH_RO_RESTRICTED_ORG_TOKEN"
+      "tokenEnv": "GH_RO_RESTRICTED_ORG_PAT_TOKEN"
     }
   ]
 }

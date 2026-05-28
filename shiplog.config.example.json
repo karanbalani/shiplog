@@ -13,7 +13,7 @@
         "organizationPatTokens": [
           {
             "organizationId": "restricted-org-node-id",
-            "tokenEnv": "GH_RO_RESTRICTED_ORG_TOKEN"
+            "tokenEnv": "GH_RO_RESTRICTED_ORG_PAT_TOKEN"
           }
         ],
         "ignore": {

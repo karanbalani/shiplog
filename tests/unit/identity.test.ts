@@ -53,7 +53,7 @@ test('identity helper emits organization PAT token config', async () => {
 
   expect(JSON.parse(output.join(''))).toEqual({
     organizationId: 'O_RESTRICTED_1',
-    tokenEnv: 'GH_RO_RESTRICTED_ORG_TOKEN'
+    tokenEnv: 'GH_RO_RESTRICTED_ORG_PAT_TOKEN'
   })
 })
 

@@ -95,7 +95,7 @@ async function snippetForGitHub(
     const organization = await fetchGitHubOrganization(slug, options)
     return {
       organizationId: organization.node_id,
-      tokenEnv: `GH_RO_${organization.login.toUpperCase().replaceAll('-', '_')}_TOKEN`
+      tokenEnv: `GH_RO_${organization.login.toUpperCase().replaceAll('-', '_')}_PAT_TOKEN`
     }
   }
 
