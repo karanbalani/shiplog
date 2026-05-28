@@ -375,6 +375,93 @@ test('run defers retryable repository errors and continues remaining repositorie
   expect(secondCommits.rows[0]!.count).toBe(2)
 })
 
+test('run resumes retry_wait repositories after completed steps', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+  const failingSearch = mockGitHubFetchWithPullRequestSearchFailure()
+
+  const first = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: failingSearch.fetch
+  })
+  const retryState = await db.query<{ status: string; completed_steps: string }>(
+    'SELECT status, completed_steps FROM repository_backfill_state'
+  )
+
+  expect(first).toMatchObject({
+    complete: false,
+    repositoriesDiscovered: 1,
+    repositoriesProcessed: 1,
+    repositoriesDeferred: 1
+  })
+  expect(failingSearch.pullRequestSearchAttempts).toBe(7)
+  expect(retryState.rows[0]).toMatchObject({
+    status: 'retry_wait',
+    completed_steps: `commits:${new Date().getUTCFullYear()}`
+  })
+
+  const fetch = mockGitHubFetch()
+  let secondRunCommitRequests = 0
+  const countingFetch: typeof fetch = (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (body.query.includes('query RepositoryCommits')) secondRunCommitRequests += 1
+    }
+    return fetch(url, init)
+  }) as typeof fetch
+
+  const second = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: countingFetch
+  })
+  const completedState = await db.query<{ status: string; completed_steps: string }>(
+    'SELECT status, completed_steps FROM repository_backfill_state'
+  )
+  const pullRequests = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM pull_requests'
+  )
+
+  expect(second).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 1,
+    repositoriesProcessed: 1,
+    repositoriesDeferred: 0
+  })
+  expect(secondRunCommitRequests).toBe(0)
+  expect(completedState.rows[0]!.status).toBe('succeeded')
+  expect(completedState.rows[0]!.completed_steps.split(',').sort()).toEqual([
+    `commits:${new Date().getUTCFullYear()}`,
+    'issues',
+    'pull_request_reviews',
+    'pull_requests',
+    'snapshot'
+  ])
+  expect(pullRequests.rows[0]!.count).toBe(1)
+  expect(
+    logs.some((line) => line.includes('commits for') && line.includes('already complete'))
+  ).toBe(true)
+})
+
 test('run can pause after a repository budget and resume remaining work', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
@@ -973,6 +1060,30 @@ function mockGitHubFetchWithTransientRepositoryFailure(): {
         }
         if (body.query.includes('query RepositoryCommits') && body.variables?.name === 'hello') {
           result.publicCommitAttempts += 1
+          return new Response('service unavailable', { status: 503 })
+        }
+      }
+
+      return baseFetch(url, init)
+    }) as typeof fetch
+  }
+
+  return result
+}
+
+function mockGitHubFetchWithPullRequestSearchFailure(): {
+  fetch: typeof fetch
+  pullRequestSearchAttempts: number
+} {
+  const baseFetch = mockGitHubFetch()
+  const result = {
+    pullRequestSearchAttempts: 0,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (url !== 'https://api.github.com/graphql') {
+        const parsed = new URL(url)
+        const q = parsed.searchParams.get('q') ?? ''
+        if (parsed.pathname === '/search/issues' && q.includes('type:pr author:')) {
+          result.pullRequestSearchAttempts += 1
           return new Response('service unavailable', { status: 503 })
         }
       }
