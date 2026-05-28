@@ -22,13 +22,21 @@ export interface CollectRunOptions {
   configPath?: string
   config?: ShiplogConfig
   date?: string
+  fromDate?: string
+  toDate?: string
   fetch?: Fetcher
   now?: Date
 }
 
+export interface CollectDateRequest {
+  date?: string
+  from?: string
+  to?: string
+}
+
 export async function run(options: CollectRunOptions = {}): Promise<void> {
   const shiplogConfig = options.config ?? config.load(options.configPath)
-  const requestedDate = options.date ?? process.env.COLLECT_DATE
+  const dateRequest = collectDateRequest(options)
   const yesterday = dates.yesterdayUTC(options.now)
   const lookbackDays = shiplogConfig.collect.lookbackDays ?? config.DEFAULT_COLLECT_LOOKBACK_DAYS
 
@@ -37,7 +45,7 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
     const ignoreOrganizationIds = accountConfig.ignore.organizations
     const ignoreRepositoryIds = accountConfig.ignore.repositories
 
-    if (!requestedDate && !account.last_successful_collect_on) {
+    if (!hasExplicitCollectRequest(dateRequest) && !account.last_successful_collect_on) {
       const token = tokenForAccount(accountConfig)
       const organizationPatTokens = await organizationPatTokensForAccount(
         accountConfig,
@@ -64,7 +72,7 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
     }
 
     const vendor = await importVendorCollector(accountConfig.provider)
-    const collectDates = collectDatesForAccount(account, yesterday, requestedDate, lookbackDays)
+    const collectDates = collectDatesForAccount(account, yesterday, dateRequest, lookbackDays)
 
     if (collectDates.length === 0) {
       logger.info(
@@ -98,7 +106,7 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
         date: collectDate,
         fetch: options.fetch
       })
-      if (!requestedDate) {
+      if (!hasExplicitCollectRequest(dateRequest)) {
         await upserts.markCollectSuccess(refreshedAccount.id, collectDate)
       }
     }
@@ -108,12 +116,27 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
 export function collectDatesForAccount(
   account: AccountRow,
   yesterday: string,
-  requestedDate?: string,
+  request: CollectDateRequest = {},
   lookbackDays = config.DEFAULT_COLLECT_LOOKBACK_DAYS
 ): string[] {
-  if (requestedDate) {
-    assertNotFutureCollectDate(requestedDate, yesterday)
-    return [requestedDate]
+  if (request.date) {
+    if (request.from || request.to) {
+      throw new Error('COLLECT_DATE cannot be combined with COLLECT_FROM or COLLECT_TO')
+    }
+    assertCollectDate(request.date, 'COLLECT_DATE')
+    assertNotFutureCollectDate(request.date, yesterday, 'COLLECT_DATE')
+    return [request.date]
+  }
+
+  if (request.from || request.to) {
+    if (!request.from || !request.to) {
+      throw new Error('COLLECT_FROM and COLLECT_TO must be set together')
+    }
+    assertCollectDate(request.from, 'COLLECT_FROM')
+    assertCollectDate(request.to, 'COLLECT_TO')
+    assertDateRangeOrder(request.from, request.to)
+    assertNotFutureCollectDate(request.to, yesterday, 'COLLECT_TO')
+    return dateRange(request.from, request.to)
   }
 
   const lastSuccessfulCollectOn = account.last_successful_collect_on
@@ -227,9 +250,43 @@ function vendorIdentity(account: AccountRow): VendorIdentity {
   }
 }
 
-function assertNotFutureCollectDate(collectDate: string, yesterday: string): void {
+function collectDateRequest(options: CollectRunOptions): CollectDateRequest {
+  return {
+    date: optionalDate(options.date ?? process.env.COLLECT_DATE),
+    from: optionalDate(options.fromDate ?? process.env.COLLECT_FROM),
+    to: optionalDate(options.toDate ?? process.env.COLLECT_TO)
+  }
+}
+
+function optionalDate(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
+function hasExplicitCollectRequest(request: CollectDateRequest): boolean {
+  return Boolean(request.date || request.from || request.to)
+}
+
+function assertCollectDate(collectDate: string, label: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(collectDate)) {
+    throw new Error(`${label} must use YYYY-MM-DD format; got ${collectDate}`)
+  }
+
+  const parsed = new Date(`${collectDate}T00:00:00Z`)
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== collectDate) {
+    throw new Error(`${label} must be a valid calendar date; got ${collectDate}`)
+  }
+}
+
+function assertDateRangeOrder(from: string, to: string): void {
+  if (from > to) {
+    throw new Error(`COLLECT_FROM must be on or before COLLECT_TO; got ${from} to ${to}`)
+  }
+}
+
+function assertNotFutureCollectDate(collectDate: string, yesterday: string, label: string): void {
   if (collectDate > yesterday) {
-    throw new Error(`COLLECT_DATE must be ${yesterday} or earlier; got ${collectDate}`)
+    throw new Error(`${label} must be ${yesterday} or earlier; got ${collectDate}`)
   }
 }
 
