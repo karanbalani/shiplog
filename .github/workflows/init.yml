@@ -28,13 +28,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Write profile config
+      - name: Write shiplog config
         run: |
           if [ -z "${SHIPLOG_CONFIG_BASE64:-}" ]; then
             echo "missing repository variable: SHIPLOG_CONFIG_BASE64" >&2
             exit 1
           fi
-          printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > profile_config.json
+          printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > shiplog.config.json
         env:
           SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
 

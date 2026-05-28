@@ -1,8 +1,13 @@
 import Ajv, { type ErrorObject, type Schema } from 'ajv'
 import fs from 'node:fs'
-import profileConfigSchema from '../schemas/profile_config.schema.json'
-import type { ProfileConfig, RenderKnobs } from './types/index.ts'
+import shiplogConfigSchema from '../schemas/shiplog.config.schema.json'
+import type { RenderKnobs, ShiplogConfig } from './types/index.ts'
 
+export const CONFIG_FILE = 'shiplog.config.json'
+export const DEFAULT_READ_TOKEN_ENV = 'GH_RO_CLASSIC_TOKEN'
+export const DEFAULT_PUBLISH_TOKEN_ENV = 'GH_RW_REPO_TOKEN'
+export const DEFAULT_PUBLISH_BRANCH = 'main'
+export const DEFAULT_PUBLISH_PATH = 'README.md'
 export const DEFAULT_RENDER: RenderKnobs = {
   topLanguagesCount: 7,
   topPublicProjectsCount: 6,
@@ -14,21 +19,21 @@ const ajv = new Ajv({
   useDefaults: true
 })
 
-const validateProfileConfig = ajv.compile<ProfileConfig>(profileConfigSchema as Schema)
+const validateShiplogConfig = ajv.compile<ShiplogConfig>(shiplogConfigSchema as Schema)
 
-export function load(filePath = 'profile_config.json'): ProfileConfig {
+export function load(filePath = CONFIG_FILE): ShiplogConfig {
   const raw = fs.readFileSync(filePath, 'utf8')
   return validate(JSON.parse(raw) as unknown)
 }
 
-export function validate(value: unknown): ProfileConfig {
+export function validate(value: unknown): ShiplogConfig {
   const normalized = cloneJson(value)
 
-  if (validateProfileConfig(normalized)) {
+  if (validateShiplogConfig(normalized)) {
     return stripSchemaField(normalized)
   }
 
-  throw new Error(formatConfigErrors(validateProfileConfig.errors ?? []))
+  throw new Error(formatConfigErrors(validateShiplogConfig.errors ?? []))
 }
 
 function cloneJson(value: unknown): unknown {
@@ -36,22 +41,22 @@ function cloneJson(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value)) as unknown
 }
 
-function stripSchemaField(config: ProfileConfig & { $schema?: unknown }): ProfileConfig {
+function stripSchemaField<T extends { $schema?: unknown }>(config: T): T {
   delete config.$schema
   return config
 }
 
 function formatConfigErrors(errors: ErrorObject[]): string {
   const messages = errors.map(formatConfigError)
-  return `profile_config.json is invalid: ${messages.join('; ')}`
+  return `${CONFIG_FILE} is invalid: ${messages.join('; ')}`
 }
 
 function formatConfigError(error: ErrorObject): string {
-  if (error.instancePath === '/identities' && error.keyword === 'minItems') {
-    return 'must define at least one identity'
+  if (error.instancePath === '/collect/accounts' && error.keyword === 'minItems') {
+    return 'must define at least one collect account'
   }
 
-  if (error.instancePath === '/publishTargets' && error.keyword === 'minItems') {
+  if (error.instancePath === '/publish/targets' && error.keyword === 'minItems') {
     return 'must define at least one publish target'
   }
 

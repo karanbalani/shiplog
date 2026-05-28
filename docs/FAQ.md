@@ -110,21 +110,20 @@ If a publish target uses a `tokenEnv` other than `GH_RW_REPO_TOKEN`, expose that
 
 GitHub contribution groups are useful for discovering active repositories, but private repositories can be omitted from those grouped lists depending on token access and GitHub visibility rules. shiplog also calls GitHub's authenticated-user repository endpoint with `visibility=private` during daily collect and `visibility=all` during historical collect, then processes those repositories through the same normal ingestion path as public repositories.
 
-If an organization blocks or requires separate authorization for the default classic token, add an organization-specific read token to `profile_config.json`:
+If an organization blocks or requires separate authorization for the default classic token, add an organization-specific read token to `shiplog.config.json`:
 
 ```json
 {
-  "organizationTokens": [
+  "organizationPatTokens": [
     {
-      "externalId": "O_kgDO...",
-      "loginHint": "restricted-org",
-      "tokenEnv": "GH_RO_RESTRICTED_ORG_TOKEN"
+      "organizationId": "O_kgDO...",
+      "tokenEnv": "GH_RO_RESTRICTED_ORG_PAT_TOKEN"
     }
   ]
 }
 ```
 
-Find the stable organization id with `bun run identity github organization restricted-org`. Repository metadata, commits, pull requests, issues, and reviews for that organization will use the organization-specific token, even if the organization is later renamed.
+Find the stable organization PAT token config with `bun run identity github organization-pat-token restricted-org`. Repository metadata, commits, pull requests, issues, and reviews for that organization will use the organization-specific token, even if the organization is later renamed.
 
 Private repository names are stored in the database when your token can read them, but they are not printed in workflow logs. Log lines use the provider repository id for private repositories, for example `id:R_abc123`, so a public Actions run does not leak private repository names.
 
@@ -138,21 +137,21 @@ shiplog treats this as a repository-level skip. It keeps the repository row disc
 
 GitHub reserves the `GITHUB_` prefix for built-in Actions environment variables. shiplog uses `GH_*` so user-defined secrets are clearly project-owned.
 
-## Should I commit `profile_config.json`?
+## Should I commit `shiplog.config.json`?
 
-No. Commit `profile_config.example.json`, but keep `profile_config.json` local. The file is gitignored so forks do not inherit the upstream maintainer's personal config.
+No. Commit `shiplog.config.example.json`, but keep `shiplog.config.json` local. The file is gitignored so forks do not inherit the upstream maintainer's personal config.
 
-## How does GitHub Actions get `profile_config.json`?
+## How does GitHub Actions get `shiplog.config.json`?
 
 Store the config as a repository variable named `SHIPLOG_CONFIG_BASE64`.
 
 Generate it locally:
 
 ```bash
-base64 < profile_config.json | tr -d '\n'
+base64 < shiplog.config.json | tr -d '\n'
 ```
 
-The workflows decode that value back into `profile_config.json` before running shiplog.
+The workflows decode that value back into `shiplog.config.json` before running shiplog.
 
 ## Is `SHIPLOG_CONFIG_BASE64` a secret?
 
@@ -162,7 +161,7 @@ If your config contains private repository names or other sensitive metadata, yo
 
 ## Which workflow should I run first?
 
-Run `init` first. It migrates the database, creates the configured accounts, runs collect, renders the README, and publishes it to `publishTargets`. Because new accounts have a null `last_successful_collect_on`, that first collect uses the complete historical path.
+Run `init` first. It migrates the database, creates the configured accounts, runs collect, renders the README, and publishes it to `publish.targets`. Because new accounts have a null `last_successful_collect_on`, that first collect uses the complete historical path.
 
 After that, `collect` runs daily or manually. When `collect` succeeds, `render` updates and publishes the README.
 
@@ -242,11 +241,11 @@ Yes:
 bun run publish
 ```
 
-This reads local `rendered.md` and writes it to each `publishTargets[]` entry in `profile_config.json`.
+This reads local `rendered.md` and writes it to each `publish.targets[]` entry in `shiplog.config.json`.
 
 ## Can I run shiplog locally?
 
-Yes. Create `.env`, create `profile_config.json`, and export or load the required environment variables:
+Yes. Create `.env`, create `shiplog.config.json`, and export or load the required environment variables:
 
 ```bash
 DATABASE_CONNECTION_STRING=postgres://user:password@host:5432/shiplog?sslmode=verify-full

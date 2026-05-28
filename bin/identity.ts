@@ -1,6 +1,11 @@
 import { fetchJson, type Fetcher } from '../lib/http.ts'
 
-type IdentityKind = 'user' | 'organization' | 'repository' | 'publish-target'
+type IdentityKind =
+  | 'user'
+  | 'organization'
+  | 'organization-pat-token'
+  | 'repository'
+  | 'publish-target'
 const BASE_URL = 'https://api.github.com'
 
 export interface IdentityRunOptions {
@@ -52,6 +57,9 @@ function parseArgs(argv: string[]): { provider: string; kind: IdentityKind; slug
 function parseKind(value: string): IdentityKind {
   if (value === 'user' || value === 'account' || value === 'identity') return 'user'
   if (value === 'org' || value === 'organization') return 'organization'
+  if (value === 'org-pat-token' || value === 'organization-pat-token') {
+    return 'organization-pat-token'
+  }
   if (value === 'repo' || value === 'repository') return 'repository'
   if (value === 'publish' || value === 'publish-target' || value === 'target') {
     return 'publish-target'
@@ -68,37 +76,38 @@ async function snippetForGitHub(
     const user = await fetchGitHubUser(slug, options)
     return {
       provider: 'github',
-      externalId: user.node_id,
-      loginHint: user.login,
+      accountId: user.node_id,
       tokenEnv: 'GH_RO_CLASSIC_TOKEN',
-      organizationTokens: [],
-      ignoreOrganizations: [],
-      ignoreRepositories: []
+      organizationPatTokens: [],
+      ignore: {
+        organizations: [],
+        repositories: []
+      }
     }
   }
 
   if (kind === 'organization') {
     const organization = await fetchGitHubOrganization(slug, options)
+    return organization.node_id
+  }
+
+  if (kind === 'organization-pat-token') {
+    const organization = await fetchGitHubOrganization(slug, options)
     return {
-      externalId: organization.node_id,
-      loginHint: organization.login,
-      tokenEnv: `GH_RO_${organization.login.toUpperCase().replaceAll('-', '_')}_TOKEN`
+      organizationId: organization.node_id,
+      tokenEnv: `GH_RO_${organization.login.toUpperCase().replaceAll('-', '_')}_PAT_TOKEN`
     }
   }
 
   if (kind === 'repository') {
     const repository = await fetchGitHubRepository(slug, options)
-    return {
-      externalId: repository.node_id,
-      nameHint: repository.full_name
-    }
+    return repository.node_id
   }
 
   const repository = await fetchGitHubRepository(slug, options)
   return {
     provider: 'github',
     repositoryId: repository.node_id,
-    repositoryHint: repository.full_name,
     branch: 'main',
     path: 'README.md',
     tokenEnv: 'GH_RW_REPO_TOKEN'
@@ -160,6 +169,7 @@ function usage(): string {
     '  bun run identity github <username>',
     '  bun run identity github user <username>',
     '  bun run identity github organization <org-login>',
+    '  bun run identity github organization-pat-token <org-login>',
     '  bun run identity github repository <owner/repo>',
     '  bun run identity github publish-target <owner/repo>'
   ].join('\n')

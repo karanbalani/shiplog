@@ -2,6 +2,7 @@ node_modules/
 .env
 .env.local
 profile_config.json
+shiplog.config.json
 rendered.md
 bun.lockb
 *.log

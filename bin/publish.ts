@@ -6,13 +6,13 @@ import * as logger from '../lib/logger.ts'
 import { graphQLClient } from '../lib/providers/github/graphql.ts'
 import { fetchGitHubRepositoryById } from '../lib/providers/github/identity.ts'
 import { publishGitHubFile, type GitHubPublishFileResult } from '../lib/providers/github/publish.ts'
-import type { ProfileConfig, PublishTargetConfig } from '../lib/types/index.ts'
+import type { ShiplogConfig, ShiplogPublishTargetConfig } from '../lib/types/index.ts'
 
 const DEFAULT_INPUT_PATH = 'rendered.md'
 
 export interface PublishOptions {
   configPath?: string
-  profileConfig?: ProfileConfig
+  config?: ShiplogConfig
   content?: string
   inputPath?: string
   message?: string
@@ -20,16 +20,14 @@ export interface PublishOptions {
 }
 
 export async function publish(options: PublishOptions = {}): Promise<GitHubPublishFileResult[]> {
-  const profileConfig =
-    options.profileConfig ??
-    config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
+  const shiplogConfig = options.config ?? config.load(options.configPath)
   const content =
     options.content ??
     fs.readFileSync(options.inputPath ?? path.resolve(process.cwd(), DEFAULT_INPUT_PATH), 'utf8')
   const message = options.message ?? 'chore: update rendered readme'
   const results: GitHubPublishFileResult[] = []
 
-  for (const target of profileConfig.publishTargets) {
+  for (const target of shiplogConfig.publish.targets) {
     const result = await publishTarget(target, content, message, options.fetch)
     logger.info(
       `[publish] ${target.provider}/${result.repositoryFullName}@${target.branch}:${target.path} updated (${result.commitSha ?? result.sha ?? 'unknown sha'})`
@@ -41,7 +39,7 @@ export async function publish(options: PublishOptions = {}): Promise<GitHubPubli
 }
 
 async function publishTarget(
-  target: PublishTargetConfig,
+  target: ShiplogPublishTargetConfig,
   content: string,
   message: string,
   fetch?: Fetcher

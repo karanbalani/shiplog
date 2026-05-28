@@ -3,7 +3,7 @@ import path from 'node:path'
 import * as config from '../lib/config.ts'
 import * as db from '../lib/db.ts'
 import * as logger from '../lib/logger.ts'
-import type { ProfileConfig } from '../lib/types/index.ts'
+import type { ShiplogConfig } from '../lib/types/index.ts'
 
 const DEFAULT_OUTPUT_PATH = 'rendered.md'
 const INLINE_BADGE_STYLE = 'flat-square'
@@ -27,7 +27,7 @@ const LANGUAGE_COLORS: Record<string, string> = {
 
 export interface RenderOptions {
   configPath?: string
-  profileConfig?: ProfileConfig
+  config?: ShiplogConfig
   template?: string
   templatePath?: string
   outputPath?: string
@@ -83,24 +83,22 @@ interface AccountFilter {
 }
 
 export async function render(options: RenderOptions = {}): Promise<string> {
-  const profileConfig =
-    options.profileConfig ??
-    config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
+  const shiplogConfig = options.config ?? config.load(options.configPath)
   const template =
     options.template ??
     fs.readFileSync(options.templatePath ?? path.resolve(process.cwd(), 'TEMPLATE.md'), 'utf8')
   const now = options.now ?? new Date()
 
   const context: Record<string, string> = {
-    ACCOUNT_AGE: await accountAge(profileConfig, now),
-    ACCOUNT_LINKS: await accountLinks(profileConfig, now),
-    DISPLAY_NAME: displayName(profileConfig),
-    LANGUAGE_ROWS: await languageRows(profileConfig, now),
-    LAST_YEAR_WINDOW_DAYS: String(profileConfig.render.lastYearWindowDays),
-    ORGANIZATION_ROWS: await organizationRows(profileConfig, now),
-    PROFILE_STATS_ROWS: await profileStatsRows(profileConfig, now),
-    STATS_ROWS: await statsRows(profileConfig, now),
-    TOP_REPOSITORIES: await topRepositories(profileConfig, now)
+    ACCOUNT_AGE: await accountAge(shiplogConfig, now),
+    ACCOUNT_LINKS: await accountLinks(shiplogConfig, now),
+    DISPLAY_NAME: displayName(shiplogConfig),
+    LANGUAGE_ROWS: await languageRows(shiplogConfig, now),
+    LAST_YEAR_WINDOW_DAYS: String(config.DEFAULT_RENDER.lastYearWindowDays),
+    ORGANIZATION_ROWS: await organizationRows(shiplogConfig, now),
+    PROFILE_STATS_ROWS: await profileStatsRows(shiplogConfig, now),
+    STATS_ROWS: await statsRows(shiplogConfig, now),
+    TOP_REPOSITORIES: await topRepositories(shiplogConfig, now)
   }
 
   let output = template
@@ -118,13 +116,13 @@ export async function run(options: RenderOptions = {}): Promise<void> {
   logger.info(`[render] wrote ${outputPath}`)
 }
 
-async function profileStatsRows(profileConfig: ProfileConfig, now: Date): Promise<string> {
-  const allTime = await activityTotals(profileConfig)
+async function profileStatsRows(shiplogConfig: ShiplogConfig, now: Date): Promise<string> {
+  const allTime = await activityTotals(shiplogConfig)
   const recent = await activityTotals(
-    profileConfig,
-    dateDaysAgo(now, profileConfig.render.lastYearWindowDays)
+    shiplogConfig,
+    dateDaysAgo(now, config.DEFAULT_RENDER.lastYearWindowDays)
   )
-  const languages = await languageActivityRows(profileConfig, now)
+  const languages = await languageActivityRows(shiplogConfig, now)
   const allTimeRows = richMetricRows(allTime)
   const recentRows = richMetricRows(recent)
   const rowCount = Math.max(allTimeRows.length, recentRows.length, languages.length)
@@ -142,8 +140,8 @@ async function profileStatsRows(profileConfig: ProfileConfig, now: Date): Promis
   return rows.join('\n')
 }
 
-async function accountAge(profileConfig: ProfileConfig, now: Date): Promise<string> {
-  const filter = accountFilter(profileConfig, 'accounts', 1)
+async function accountAge(shiplogConfig: ShiplogConfig, now: Date): Promise<string> {
+  const filter = accountFilter(shiplogConfig, 'accounts', 1)
   const result = await db.query<{ external_created_at: Date | string | null }>(
     `SELECT MIN(external_created_at) AS external_created_at
      FROM accounts
@@ -156,8 +154,8 @@ async function accountAge(profileConfig: ProfileConfig, now: Date): Promise<stri
   return formatNumber(completedYearsSince(createdAt, now))
 }
 
-async function accountLinks(profileConfig: ProfileConfig, now: Date): Promise<string> {
-  const filter = accountFilter(profileConfig, 'accounts', 1)
+async function accountLinks(shiplogConfig: ShiplogConfig, now: Date): Promise<string> {
+  const filter = accountFilter(shiplogConfig, 'accounts', 1)
   const result = await db.query<AccountLinkRow>(
     `SELECT provider, external_login, external_url, external_created_at
      FROM accounts
@@ -177,11 +175,11 @@ async function accountLinks(profileConfig: ProfileConfig, now: Date): Promise<st
     .join('\n')
 }
 
-async function statsRows(profileConfig: ProfileConfig, now: Date): Promise<string> {
-  const allTime = await activityTotals(profileConfig)
+async function statsRows(shiplogConfig: ShiplogConfig, now: Date): Promise<string> {
+  const allTime = await activityTotals(shiplogConfig)
   const recent = await activityTotals(
-    profileConfig,
-    dateDaysAgo(now, profileConfig.render.lastYearWindowDays)
+    shiplogConfig,
+    dateDaysAgo(now, config.DEFAULT_RENDER.lastYearWindowDays)
   )
 
   return [
@@ -196,8 +194,8 @@ async function statsRows(profileConfig: ProfileConfig, now: Date): Promise<strin
   ].join('\n')
 }
 
-async function organizationRows(profileConfig: ProfileConfig, now: Date): Promise<string> {
-  const filter = accountFilter(profileConfig, 'a', 2)
+async function organizationRows(shiplogConfig: ShiplogConfig, now: Date): Promise<string> {
+  const filter = accountFilter(shiplogConfig, 'a', 2)
   const result = await db.query<OrganizationActivityRow>(
     `SELECT
        COALESCE(o.display_name, o.external_login) AS organization,
@@ -216,7 +214,7 @@ async function organizationRows(profileConfig: ProfileConfig, now: Date): Promis
      GROUP BY o.id, o.display_name, o.external_login
      ORDER BY commits DESC, organization ASC
      LIMIT 10`,
-    [dateDaysAgo(now, profileConfig.render.lastYearWindowDays), ...filter.params]
+    [dateDaysAgo(now, config.DEFAULT_RENDER.lastYearWindowDays), ...filter.params]
   )
 
   if (result.rows.length === 0) return '| - | - | - |'
@@ -226,8 +224,8 @@ async function organizationRows(profileConfig: ProfileConfig, now: Date): Promis
     .join('\n')
 }
 
-async function languageRows(profileConfig: ProfileConfig, now: Date): Promise<string> {
-  const rows = await languageActivityRows(profileConfig, now)
+async function languageRows(shiplogConfig: ShiplogConfig, now: Date): Promise<string> {
+  const rows = await languageActivityRows(shiplogConfig, now)
 
   if (rows.length === 0) return '| - | 0 |'
 
@@ -235,10 +233,10 @@ async function languageRows(profileConfig: ProfileConfig, now: Date): Promise<st
 }
 
 async function languageActivityRows(
-  profileConfig: ProfileConfig,
+  shiplogConfig: ShiplogConfig,
   now: Date
 ): Promise<LanguageActivityRow[]> {
-  const filter = accountFilter(profileConfig, 'a', 3)
+  const filter = accountFilter(shiplogConfig, 'a', 3)
   const result = await db.query<LanguageActivityRow>(
     `SELECT
        r.primary_language AS language,
@@ -253,8 +251,8 @@ async function languageActivityRows(
      ORDER BY commits DESC, language ASC
      LIMIT $2`,
     [
-      dateDaysAgo(now, profileConfig.render.lastYearWindowDays),
-      profileConfig.render.topLanguagesCount,
+      dateDaysAgo(now, config.DEFAULT_RENDER.lastYearWindowDays),
+      config.DEFAULT_RENDER.topLanguagesCount,
       ...filter.params
     ]
   )
@@ -262,8 +260,8 @@ async function languageActivityRows(
   return result.rows
 }
 
-async function topRepositories(profileConfig: ProfileConfig, now: Date): Promise<string> {
-  const filter = accountFilter(profileConfig, 'a', 3)
+async function topRepositories(shiplogConfig: ShiplogConfig, now: Date): Promise<string> {
+  const filter = accountFilter(shiplogConfig, 'a', 3)
   const result = await db.query<RepositoryActivityRow>(
     `SELECT
        r.full_name,
@@ -284,8 +282,8 @@ async function topRepositories(profileConfig: ProfileConfig, now: Date): Promise
      ORDER BY commits DESC, pull_requests DESC, reviews DESC, full_name ASC
      LIMIT $2`,
     [
-      dateDaysAgo(now, profileConfig.render.lastYearWindowDays),
-      profileConfig.render.topPublicProjectsCount,
+      dateDaysAgo(now, config.DEFAULT_RENDER.lastYearWindowDays),
+      config.DEFAULT_RENDER.topPublicProjectsCount,
       ...filter.params
     ]
   )
@@ -304,10 +302,10 @@ async function topRepositories(profileConfig: ProfileConfig, now: Date): Promise
 }
 
 async function activityTotals(
-  profileConfig: ProfileConfig,
+  shiplogConfig: ShiplogConfig,
   fromDate?: string
 ): Promise<ActivityTotalsRow> {
-  const filter = accountFilter(profileConfig, 'a', fromDate ? 2 : 1)
+  const filter = accountFilter(shiplogConfig, 'a', fromDate ? 2 : 1)
   const datePredicate = fromDate ? 'd.activity_on >= $1::date AND' : ''
   const params = fromDate ? [fromDate, ...filter.params] : filter.params
 
@@ -342,23 +340,23 @@ async function activityTotals(
 }
 
 function accountFilter(
-  profileConfig: ProfileConfig,
+  shiplogConfig: ShiplogConfig,
   tableAlias: string,
   startIndex: number
 ): AccountFilter {
   const params: unknown[] = []
-  const clauses = profileConfig.identities.map((identity) => {
+  const clauses = shiplogConfig.collect.accounts.map((account) => {
     const providerIndex = startIndex + params.length
     const externalIdIndex = providerIndex + 1
-    params.push(identity.provider, identity.externalId)
+    params.push(account.provider, account.accountId)
     return `(${tableAlias}.provider = $${providerIndex} AND ${tableAlias}.external_id = $${externalIdIndex})`
   })
 
   return { sql: `(${clauses.join(' OR ')})`, params }
 }
 
-function displayName(profileConfig: ProfileConfig): string {
-  return profileConfig.displayName ?? profileConfig.identities[0]?.loginHint ?? 'shiplog user'
+function displayName(shiplogConfig: ShiplogConfig): string {
+  return shiplogConfig.profile.displayName ?? 'shiplog user'
 }
 
 function completedYearsSince(value: Date | string, now: Date): number {

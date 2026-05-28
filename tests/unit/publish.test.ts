@@ -7,7 +7,7 @@ import * as publish from '../../bin/publish.ts'
 import type { Fetcher } from '../../lib/http.ts'
 import * as logger from '../../lib/logger.ts'
 import { publishGitHubFile } from '../../lib/providers/github/publish.ts'
-import type { ProfileConfig } from '../../lib/types/index.ts'
+import type { ShiplogConfig } from '../../lib/types/index.ts'
 
 let previousWriteToken: string | undefined
 
@@ -138,7 +138,7 @@ test('publish uses configured publish targets and token env vars', async () => {
   }
 
   const results = await publish.publish({
-    profileConfig: profileConfig(),
+    config: shiplogConfig(),
     content: '# rendered\n',
     fetch
   })
@@ -186,7 +186,7 @@ test('publish reads rendered.md by default', async () => {
   try {
     process.chdir(dir)
     await publish.publish({
-      profileConfig: profileConfig(),
+      config: shiplogConfig(),
       fetch
     })
   } finally {
@@ -200,41 +200,41 @@ test('publish reads rendered.md by default', async () => {
 test('publish fails when target token env var is missing', async () => {
   await expect(
     publish.publish({
-      profileConfig: profileConfig(),
+      config: shiplogConfig(),
       content: '# rendered\n',
       fetch: async () => jsonResponse({})
     })
   ).rejects.toThrow(/Missing GH_RW_REPO_TOKEN/)
 })
 
-function profileConfig(): ProfileConfig {
+function shiplogConfig(): ShiplogConfig {
   return {
-    displayName: 'Example User',
-    identities: [
-      {
-        provider: 'github',
-        externalId: 'U_TEST_1',
-        loginHint: 'octocat',
-        tokenEnv: 'GH_RO_CLASSIC_TOKEN',
-        organizationTokens: [],
-        ignoreOrganizations: [],
-        ignoreRepositories: []
-      }
-    ],
-    publishTargets: [
-      {
-        provider: 'github',
-        repositoryId: 'R_PROFILE_1',
-        repositoryHint: 'octocat/octocat',
-        branch: 'main',
-        path: 'README.md',
-        tokenEnv: 'GH_RW_REPO_TOKEN'
-      }
-    ],
-    render: {
-      topLanguagesCount: 7,
-      topPublicProjectsCount: 6,
-      lastYearWindowDays: 365
+    version: 1,
+    profile: { displayName: 'Example User' },
+    collect: {
+      accounts: [
+        {
+          provider: 'github',
+          accountId: 'U_TEST_1',
+          tokenEnv: 'GH_RO_CLASSIC_TOKEN',
+          organizationPatTokens: [],
+          ignore: {
+            organizations: [],
+            repositories: []
+          }
+        }
+      ]
+    },
+    publish: {
+      targets: [
+        {
+          provider: 'github',
+          repositoryId: 'R_PROFILE_1',
+          branch: 'main',
+          path: 'README.md',
+          tokenEnv: 'GH_RW_REPO_TOKEN'
+        }
+      ]
     }
   }
 }
