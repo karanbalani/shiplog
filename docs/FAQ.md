@@ -195,7 +195,7 @@ For set-and-forget consistency, the scheduled `drift` workflow checks a bounded 
 
 ## Why is historical backfill slow?
 
-Historical backfill can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps backfill under provider limits instead of racing into rate-limit failures.
+Historical backfill can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps backfill under provider limits instead of racing into rate-limit failures. Private repository full scans limit commit queries to the repository's own created-to-pushed year window instead of the account's full lifetime.
 
 During historical backfill, shiplog logs:
 

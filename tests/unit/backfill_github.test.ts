@@ -330,6 +330,33 @@ test('run backfills accessible private repositories outside contribution groups'
   expect(logs.join('\n')).not.toContain('octocat/secret')
 })
 
+test('run limits full private repository commit scans to repository active years', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2020-01-01T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  const fetch = mockGitHubFetchWithPrivateRepositoryActiveWindow()
+
+  await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    throughDate: '2026-05-07',
+    fetch: fetch.fetch
+  })
+
+  expect(fetch.commitYears).toEqual([2025, 2026])
+})
+
 test('run skips repositories that GitHub no longer resolves', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
@@ -1059,6 +1086,105 @@ function mockGitHubFetchWithPrivateRepository(): typeof fetch {
 
     return new Response(`unexpected request: ${url}`, { status: 500 })
   }) as typeof fetch
+}
+
+function mockGitHubFetchWithPrivateRepositoryActiveWindow(): {
+  fetch: typeof fetch
+  commitYears: number[]
+} {
+  const commitYears: number[] = []
+
+  return {
+    commitYears,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (url === 'https://api.github.com/graphql') {
+        const body = JSON.parse(String(init?.body)) as {
+          query: string
+          variables?: Record<string, string>
+        }
+
+        if (body.query.includes('query UserById')) {
+          return jsonResponse({
+            data: {
+              node: {
+                id: 'U_TEST_1',
+                login: 'octocat',
+                name: 'Octocat',
+                url: 'https://github.com/octocat',
+                createdAt: '2020-01-01T00:00:00Z'
+              }
+            }
+          })
+        }
+
+        if (body.query.includes('query Contributions')) {
+          return jsonResponse({
+            data: githubContributionsWithRepositoryActivity({})
+          })
+        }
+
+        if (body.query.includes('query RepositoryCommits')) {
+          if (body.variables?.since) {
+            commitYears.push(new Date(body.variables.since).getUTCFullYear())
+          }
+          return jsonResponse({
+            data: {
+              repository: {
+                defaultBranchRef: {
+                  target: {
+                    history: {
+                      totalCount: 0,
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: []
+                    }
+                  }
+                }
+              }
+            }
+          })
+        }
+
+        if (body.query.includes('query RepositoryLanguages')) {
+          return repositoryLanguagesResponse()
+        }
+      }
+
+      const parsed = new URL(url)
+
+      if (parsed.pathname === '/user/repos') {
+        return jsonResponse([
+          {
+            node_id: 'R_PRIVATE_1',
+            name: 'secret',
+            full_name: 'octocat/secret',
+            private: true,
+            fork: false,
+            archived: false,
+            language: 'TypeScript',
+            stargazers_count: 0,
+            forks_count: 0,
+            created_at: '2025-01-01T00:00:00Z',
+            pushed_at: '2026-05-07T12:00:00Z',
+            default_branch: 'main',
+            html_url: 'https://github.com/octocat/secret',
+            description: 'private test repository',
+            owner: {
+              login: 'octocat',
+              node_id: 'U_TEST_1',
+              type: 'User',
+              avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4'
+            }
+          }
+        ])
+      }
+
+      if (parsed.pathname === '/search/issues') {
+        return jsonResponse({ total_count: 0, items: [] })
+      }
+
+      return new Response(`unexpected request: ${url}`, { status: 500 })
+    }) as typeof fetch
+  }
 }
 
 function mockGitHubFetchWithUnavailableRepository(): typeof fetch {

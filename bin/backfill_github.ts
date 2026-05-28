@@ -671,8 +671,26 @@ function upsertRepositoryPlan(
 }
 
 function commitYearsForPlan(plan: RepositoryBackfillPlan, years: number[]): number[] {
-  if (plan.fullScan) return years
+  if (plan.fullScan) return repositoryActiveYears(plan.node, years)
   return years.filter((year) => plan.commitYears.has(year))
+}
+
+function repositoryActiveYears(repository: GitHubRepositoryNode, years: number[]): number[] {
+  const createdYear = yearFromIso(repository.createdAt)
+  const pushedYear = yearFromIso(repository.pushedAt)
+
+  return years.filter((year) => {
+    if (createdYear !== null && year < createdYear) return false
+    if (pushedYear !== null && year > pushedYear) return false
+    return true
+  })
+}
+
+function yearFromIso(value: string | null | undefined): number | null {
+  if (!value) return null
+
+  const year = new Date(value).getUTCFullYear()
+  return Number.isFinite(year) ? year : null
 }
 
 function shouldSearchPullRequests(plan: RepositoryBackfillPlan): boolean {
