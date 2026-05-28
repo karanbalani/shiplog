@@ -22,6 +22,9 @@ import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
 import type { CollectArgs, VendorIdentity, VendorOrganizationToken } from '../lib/types/index.ts'
 
+const GITHUB_REST_PAGE_SIZE = 100
+const GITHUB_SEARCH_RESULT_LIMIT = 1000
+
 export async function run(args: CollectArgs): Promise<void> {
   const {
     identity,
@@ -388,12 +391,7 @@ async function ingestPullRequests(
     `repo:${fullName} type:pr author:${identity.externalLogin} merged:${date}..${date}`,
     `repo:${fullName} type:pr author:${identity.externalLogin} closed:${date}..${date}`
   ]) {
-    const result = await rest<GitHubSearchResult<GitHubSearchPullRequestItem>>('/search/issues', {
-      q: query,
-      per_page: 100
-    })
-
-    for (const item of result.items) {
+    for (const item of await fetchSearchIssueItems(rest, query)) {
       items.set(item.node_id, item)
     }
   }
@@ -427,19 +425,13 @@ async function ingestPullRequestReviews(
   identity: VendorIdentity,
   date: string
 ): Promise<void> {
-  const reviewedPullRequests = await rest<GitHubSearchResult<GitHubSearchPullRequestItem>>(
-    '/search/issues',
-    {
-      q: `repo:${fullName} type:pr reviewed-by:${identity.externalLogin}`,
-      per_page: 100
-    }
+  const reviewedPullRequests = await fetchSearchIssueItems(
+    rest,
+    `repo:${fullName} type:pr reviewed-by:${identity.externalLogin}`
   )
 
-  for (const pullRequest of reviewedPullRequests.items) {
-    const reviews = await rest<GitHubReviewItem[]>(
-      `/repos/${fullName}/pulls/${pullRequest.number}/reviews`,
-      { per_page: 100 }
-    )
+  for (const pullRequest of reviewedPullRequests) {
+    const reviews = await fetchPullRequestReviews(rest, fullName, pullRequest.number)
 
     for (const review of reviews) {
       if (review.user?.login !== identity.externalLogin) continue
@@ -472,12 +464,7 @@ async function ingestIssues(
     `repo:${fullName} type:issue author:${identity.externalLogin} created:${date}..${date}`,
     `repo:${fullName} type:issue author:${identity.externalLogin} closed:${date}..${date}`
   ]) {
-    const result = await rest<GitHubSearchResult<GitHubSearchPullRequestItem>>('/search/issues', {
-      q: query,
-      per_page: 100
-    })
-
-    for (const item of result.items) {
+    for (const item of await fetchSearchIssueItems(rest, query)) {
       items.set(item.node_id, item)
     }
   }
@@ -495,6 +482,43 @@ async function ingestIssues(
       external_closed_at: item.closed_at,
       source: 'live'
     })
+  }
+}
+
+async function fetchSearchIssueItems(
+  rest: RestClient,
+  query: string
+): Promise<GitHubSearchPullRequestItem[]> {
+  const items: GitHubSearchPullRequestItem[] = []
+
+  for (let page = 1; ; page += 1) {
+    const result = await rest<GitHubSearchResult<GitHubSearchPullRequestItem>>('/search/issues', {
+      q: query,
+      per_page: GITHUB_REST_PAGE_SIZE,
+      page
+    })
+    items.push(...result.items)
+
+    if (result.items.length < GITHUB_REST_PAGE_SIZE) return items
+    if (items.length >= Math.min(result.total_count, GITHUB_SEARCH_RESULT_LIMIT)) return items
+  }
+}
+
+async function fetchPullRequestReviews(
+  rest: RestClient,
+  fullName: string,
+  pullRequestNumber: number
+): Promise<GitHubReviewItem[]> {
+  const reviews: GitHubReviewItem[] = []
+
+  for (let page = 1; ; page += 1) {
+    const pageReviews = await rest<GitHubReviewItem[]>(
+      `/repos/${fullName}/pulls/${pullRequestNumber}/reviews`,
+      { per_page: GITHUB_REST_PAGE_SIZE, page }
+    )
+    reviews.push(...pageReviews)
+
+    if (pageReviews.length < GITHUB_REST_PAGE_SIZE) return reviews
   }
 }
 
