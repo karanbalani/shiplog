@@ -52,8 +52,8 @@ Constraints and indexes:
 
 Collection checkpoint:
 
-- When `last_successful_collect_on` is null, automatic collect runs the complete historical collection path.
-- After the first complete collection, automatic collect runs process every date from `last_successful_collect_on + 1` through UTC yesterday, then reprocess the recent `collect.lookbackDays` window.
+- When `last_successful_collect_on` is null, automatic collect processes only UTC yesterday. Complete historical ingestion belongs to `backfill`.
+- After a checkpoint exists, automatic collect runs process every date from `last_successful_collect_on + 1` through UTC yesterday, then reprocess the recent `collect.lookbackDays` window.
 - `last_successful_collect_on` is advanced after successful automatic collection.
 - Manual `REPAIR_DATE`, or `REPAIR_FROM` plus `REPAIR_TO`, reprocesses requested repair dates without advancing the checkpoint, and safely dedupes on rerun.
 

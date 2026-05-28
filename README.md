@@ -28,7 +28,7 @@ Completed so far:
 - Backfill dispatcher in `bin/backfill.ts` that runs historical collection outside the daily collect workflow
 - Repair dispatcher in `bin/repair.ts` that reruns specific daily windows without moving checkpoints
 - Init dispatcher in `bin/init.ts` that creates and refreshes `users`/`accounts`
-- Collect dispatcher in `bin/collect.ts` that runs full history when no checkpoint exists, then daily catch-up afterward
+- Collect dispatcher in `bin/collect.ts` that runs daily catch-up and rolling lookback only
 - README renderer in `bin/render.ts`
 - GitHub Actions workflows for one-time account init, historical backfill, daily collection, and manual repair
 
@@ -296,7 +296,7 @@ Collect activity and regenerate the README:
 bun run collect
 ```
 
-By default, `collect` runs complete history when `accounts.last_successful_collect_on` is null. After that, it catches up every missing date from `accounts.last_successful_collect_on + 1` through UTC yesterday, rechecks the recent `collect.lookbackDays` window, and advances the checkpoint after each successful date. `collect.lookbackDays` defaults to `7`; set it to `0` to disable rolling rechecks.
+`collect` catches up every missing date from `accounts.last_successful_collect_on + 1` through UTC yesterday, rechecks the recent `collect.lookbackDays` window, and advances the checkpoint after each successful date. When the checkpoint is null, `collect` processes only UTC yesterday; run `backfill` for complete historical ingestion. `collect.lookbackDays` defaults to `7`; set it to `0` to disable rolling rechecks.
 
 Repair exactly one date without moving the checkpoint:
 
@@ -347,7 +347,7 @@ The init dispatcher reads `shiplog.config.json`, ensures the human `users` row e
 
 The backfill dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, runs complete provider history through UTC yesterday, and advances the account checkpoint after successful historical collection.
 
-The collect dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE` or repair range, or catches up every missing date through UTC yesterday before rechecking the recent `collect.lookbackDays` window. After a successful automatic run, it advances the account checkpoint.
+The collect dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, catches up every missing date through UTC yesterday, and rechecks the recent `collect.lookbackDays` window. It never runs historical backfill or manual repair; after each successful automatic date, it advances the account checkpoint.
 
 The repair dispatcher requires `REPAIR_DATE` or `REPAIR_FROM`/`REPAIR_TO`, reruns the daily provider collector for those dates, and leaves the account checkpoint unchanged.
 

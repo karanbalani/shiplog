@@ -4,19 +4,6 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
-    inputs:
-      collect_date:
-        description: 'Optional YYYY-MM-DD date to collect exactly one day'
-        required: false
-        type: string
-      collect_from:
-        description: 'Optional YYYY-MM-DD range start for repair collection'
-        required: false
-        type: string
-      collect_to:
-        description: 'Optional YYYY-MM-DD range end for repair collection'
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -68,6 +55,3 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
-          COLLECT_DATE: ${{ github.event.inputs.collect_date }}
-          COLLECT_FROM: ${{ github.event.inputs.collect_from }}
-          COLLECT_TO: ${{ github.event.inputs.collect_to }}
