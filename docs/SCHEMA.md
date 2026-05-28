@@ -155,6 +155,27 @@ Constraints:
 
 - `UNIQUE (repository_id, captured_on)` stores one snapshot per repository per date.
 
+## repository_backfill_state
+
+Repository-level historical ingestion progress for an account.
+
+| Column                | Type          | Notes                                                                                                                               |
+| --------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                  | `BIGSERIAL`   | Primary key.                                                                                                                        |
+| `account_id`          | `BIGINT`      | Required reference to `accounts.id`.                                                                                                |
+| `repository_id`       | `BIGINT`      | Required reference to `repositories.id`.                                                                                            |
+| `backfill_through_on` | `DATE`        | Historical target date this repository was backfilled through.                                                                      |
+| `status`              | `TEXT`        | Backfill state. Must be `queued`, `running`, `retry_wait`, `succeeded`, `skipped_permanent`, `failed_permanent`, or `blocked_auth`. |
+| `completed_at`        | `TIMESTAMPTZ` | When the repository backfill finished successfully, when available.                                                                 |
+| `last_error`          | `TEXT`        | Last failure message, when available.                                                                                               |
+| `created_at`          | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.                                                             |
+| `updated_at`          | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`.                                                         |
+
+Constraints and indexes:
+
+- `UNIQUE (account_id, repository_id, backfill_through_on)` stores one backfill state row per account, repository, and target date.
+- `idx_repository_backfill_state_account_status` speeds account-scoped background work queries.
+
 ## repository_languages
 
 Language breakdown snapshots for repositories.

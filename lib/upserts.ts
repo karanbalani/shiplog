@@ -10,6 +10,7 @@ import type {
   ProfileSnapshotRow,
   PullRequestReviewRow,
   PullRequestRow,
+  RepositoryBackfillStateRow,
   RepositoryLanguageRow,
   RepositoryRow,
   RepositorySnapshotRow,
@@ -270,6 +271,27 @@ export async function upsertRepositorySnapshot(
       row.is_archived,
       row.visibility
     ]
+  )
+
+  return result.rows[0]!
+}
+
+export async function markRepositoryBackfillSucceeded(
+  accountId: number,
+  repositoryId: number,
+  backfillThroughOn: string
+): Promise<RepositoryBackfillStateRow> {
+  const result = await db.query<RepositoryBackfillStateRow>(
+    `INSERT INTO repository_backfill_state
+       (account_id, repository_id, backfill_through_on, status, completed_at, last_error)
+     VALUES ($1, $2, $3, 'succeeded', now(), NULL)
+     ON CONFLICT (account_id, repository_id, backfill_through_on) DO UPDATE
+       SET status = 'succeeded',
+           completed_at = now(),
+           last_error = NULL,
+           updated_at = now()
+     RETURNING *`,
+    [accountId, repositoryId, backfillThroughOn]
   )
 
   return result.rows[0]!

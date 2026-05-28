@@ -17,3 +17,15 @@ test('table migrations use surrogate primary keys', () => {
     expect(sql, filename).not.toMatch(/PRIMARY KEY\s+\([^)]+\)/)
   }
 })
+
+test('table migrations create one table each', () => {
+  const tableMigrations = fs
+    .readdirSync(MIGRATIONS_DIR)
+    .filter((filename) => filename.endsWith('.sql') && filename.includes('_create_table_'))
+
+  for (const filename of tableMigrations) {
+    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, filename), 'utf8')
+    const createTableMatches = sql.match(/CREATE TABLE\s+[a-z_]+\s*\(/g) ?? []
+    expect(createTableMatches, filename).toHaveLength(1)
+  }
+})

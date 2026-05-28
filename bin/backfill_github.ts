@@ -131,7 +131,7 @@ export async function run(args: BackfillArgs): Promise<void> {
 
     let repositoryStatus = 'complete'
     try {
-      if (await repositoryBackfillComplete(repository.id, observedOn)) {
+      if (await repositoryBackfillComplete(identity.accountId, repository.id, observedOn)) {
         repositoryStatus = 'already complete'
       } else {
         for (const year of commitYearsForPlan(repositoryPlan, years)) {
@@ -179,13 +179,20 @@ export async function run(args: BackfillArgs): Promise<void> {
           logLabel,
           'repository snapshot and languages'
         )
-        await upsertRepositoryLanguageSnapshot(
+        const snapshotCaptured = await upsertRepositoryLanguageSnapshot(
           clients.graphQL,
           repository.id,
           repositoryInput.owner_login,
           name,
           observedOn
         )
+        if (snapshotCaptured) {
+          await upserts.markRepositoryBackfillSucceeded(
+            identity.accountId,
+            repository.id,
+            observedOn
+          )
+        }
       }
     } catch (error) {
       if (!isGitHubRepositoryUnavailableError(error)) {
@@ -477,16 +484,20 @@ function shouldSearchIssues(plan: RepositoryBackfillPlan): boolean {
 }
 
 async function repositoryBackfillComplete(
+  accountId: number,
   repositoryId: number,
-  capturedOn: string
+  backfillThroughOn: string
 ): Promise<boolean> {
   const result = await db.query<{ exists: boolean }>(
     `SELECT EXISTS (
        SELECT 1
-       FROM repository_snapshots
-       WHERE repository_id = $1 AND captured_on = $2
+       FROM repository_backfill_state
+       WHERE account_id = $1
+         AND repository_id = $2
+         AND backfill_through_on = $3::date
+         AND status = 'succeeded'
      ) AS exists`,
-    [repositoryId, capturedOn]
+    [accountId, repositoryId, backfillThroughOn]
   )
 
   return result.rows[0]?.exists ?? false
@@ -640,12 +651,12 @@ async function upsertRepositoryLanguageSnapshot(
   owner: string,
   name: string,
   capturedOn: string
-): Promise<void> {
+): Promise<boolean> {
   const data = await graphQL<RepositoryLanguagesResponse>(queries.REPOSITORY_LANGUAGES, {
     owner,
     name
   })
-  if (!data.repository) return
+  if (!data.repository) return false
 
   await upserts.upsertRepositorySnapshot({
     repository_id: repositoryId,
@@ -665,6 +676,8 @@ async function upsertRepositoryLanguageSnapshot(
       percentage: language.percentage
     })
   }
+
+  return true
 }
 
 interface RepositoryLanguagesResponse {

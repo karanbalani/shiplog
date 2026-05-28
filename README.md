@@ -278,7 +278,7 @@ Initialize accounts and run the first collection after configuring `shiplog.conf
 bun run init
 ```
 
-`init` is resumable. If it fails midway because of a provider or database error, rerun it after fixing the issue. Existing rows are deduplicated by database constraints and upserts. Historical collection also treats a repository snapshot for the current backfill date as a repository-level completion marker, so reruns skip repositories that already finished. `accounts.last_successful_collect_on` stays null until the first complete historical collect succeeds, so rerunning `init` or `collect` will retry the historical path. Historical collect logs include approximate ETA updates while repositories are processed.
+`init` is resumable. If it fails midway because of a provider or database error, rerun it after fixing the issue. Existing rows are deduplicated by database constraints and upserts. Historical collection records explicit repository backfill state, so reruns skip repositories that already finished without relying on repository metric snapshots as markers. `accounts.last_successful_collect_on` stays null until the first complete historical collect succeeds, so rerunning `init` or `collect` will retry the historical path. Historical collect logs include approximate ETA updates while repositories are processed.
 
 Collect activity and regenerate the README:
 

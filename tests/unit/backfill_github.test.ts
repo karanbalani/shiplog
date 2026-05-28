@@ -57,6 +57,9 @@ test('run backfills GitHub history into generic schema tables', async () => {
   const repositorySnapshots = await db.query<{ count: number }>(
     'SELECT COUNT(*)::int AS count FROM repository_snapshots'
   )
+  const repositoryBackfillState = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+  )
   const repositoryLanguages = await db.query<{ count: number }>(
     'SELECT COUNT(*)::int AS count FROM repository_languages'
   )
@@ -83,6 +86,7 @@ test('run backfills GitHub history into generic schema tables', async () => {
   expect(organizations.rows[0]!.count).toBe(1)
   expect(linkedRepositories.rows[0]!.count).toBe(1)
   expect(repositorySnapshots.rows[0]!.count).toBe(1)
+  expect(repositoryBackfillState.rows[0]!.count).toBe(1)
   expect(repositoryLanguages.rows[0]!.count).toBe(2)
   expect(commits.rows[0]!.count).toBe(1)
   expect(pullRequests.rows[0]!.count).toBe(1)
@@ -115,7 +119,7 @@ test('run backfills GitHub history into generic schema tables', async () => {
   expect(logs.some((line) => line.includes('eta'))).toBe(true)
 })
 
-test('run skips repositories that already have a backfill completion snapshot', async () => {
+test('run skips repositories that already have successful backfill state', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
   const user = await upserts.upsertUser({ display_name: 'Example User' })
@@ -153,6 +157,76 @@ test('run skips repositories that already have a backfill completion snapshot', 
 
   expect(commitRequests).toBe(1)
   expect(logs.some((line) => line.includes('already complete'))).toBe(true)
+})
+
+test('run does not treat repository snapshots as backfill completion state', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2026-01-01T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  const repository = await upserts.upsertRepository({
+    provider: 'github',
+    external_id: 'R_TEST_1',
+    organization_id: null,
+    owner_login: 'octo-org',
+    name: 'hello',
+    full_name: 'octo-org/hello',
+    web_url: 'https://github.com/octo-org/hello',
+    description: 'Test repo',
+    visibility: 'public',
+    is_fork: false,
+    is_archived: false,
+    primary_language: 'Go',
+    default_branch: 'main',
+    external_created_at: '2020-01-01T00:00:00Z',
+    external_pushed_at: '2026-05-07T12:00:00Z',
+    first_seen_on: '2026-05-07',
+    last_seen_on: '2026-05-07',
+    redacted: false
+  })
+  await upserts.upsertRepositorySnapshot({
+    repository_id: repository.id,
+    captured_on: '2026-05-07',
+    star_count: 10,
+    fork_count: 2,
+    is_archived: false,
+    visibility: 'public'
+  })
+
+  const fetch = mockGitHubFetch()
+  let commitRequests = 0
+  const countingFetch: typeof fetch = (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (body.query.includes('query RepositoryCommits')) commitRequests += 1
+    }
+    return fetch(url, init)
+  }) as typeof fetch
+
+  await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    throughDate: '2026-05-07',
+    fetch: countingFetch
+  })
+
+  const state = await db.query<{ status: string }>(
+    'SELECT status FROM repository_backfill_state WHERE repository_id = $1',
+    [repository.id]
+  )
+
+  expect(commitRequests).toBe(1)
+  expect(state.rows[0]!.status).toBe('succeeded')
 })
 
 test('run backfills accessible private repositories outside contribution groups', async () => {
