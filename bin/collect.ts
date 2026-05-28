@@ -27,6 +27,7 @@ export interface CollectRunOptions {
 
 export interface CollectRunDatesOptions extends CollectRunOptions {
   dates: string[]
+  accountIds?: number[]
   advanceCheckpoint?: boolean
   logPrefix?: string
 }
@@ -55,19 +56,26 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
   }
 }
 
-export async function runDates(options: CollectRunDatesOptions): Promise<void> {
+export async function runDates(options: CollectRunDatesOptions): Promise<number> {
   const shiplogConfig = options.config ?? config.load(options.configPath)
   const collectDates = dedupeDates(options.dates)
-  if (collectDates.length === 0) return
+  if (collectDates.length === 0) return 0
 
+  const accountIds = new Set(options.accountIds ?? [])
+  let processedAccounts = 0
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await findAccount(accountConfig)
+    if (accountIds.size > 0 && !accountIds.has(account.id)) continue
+
     await runAccountDates(accountConfig, account, collectDates, {
       advanceCheckpoint: options.advanceCheckpoint ?? false,
       fetch: options.fetch,
       logPrefix: options.logPrefix ?? 'collect'
     })
+    processedAccounts += 1
   }
+
+  return processedAccounts
 }
 
 async function runAccountDates(

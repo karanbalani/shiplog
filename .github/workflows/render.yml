@@ -5,6 +5,7 @@ on:
     workflows:
       - backfill
       - collect
+      - maintenance
       - repair
     types:
       - completed

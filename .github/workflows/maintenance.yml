@@ -1,6 +1,8 @@
-name: init
+name: maintenance
 
 on:
+  schedule:
+    - cron: '30 0 * * *'
   workflow_dispatch:
 
 permissions:
@@ -11,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  init:
+  maintenance:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,17 +50,8 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
-      - name: Initialize accounts
-        run: bun run init
+      - name: Run maintenance
+        run: bun run maintenance
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
-
-      - name: Print next steps
-        run: |
-          {
-            echo "## shiplog initialized"
-            echo ""
-            echo "Accounts are ready. Run the backfill workflow next to collect historical activity."
-            echo "The render workflow will publish the README after backfill, collect, repair, or maintenance succeeds."
-          } >> "$GITHUB_STEP_SUMMARY"

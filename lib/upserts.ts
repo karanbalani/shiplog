@@ -6,6 +6,7 @@ import type {
   DailyRepositoryActivityRow,
   DailyUserSummaryRow,
   IssueRow,
+  MaintenanceTaskRow,
   OrganizationRow,
   ProfileSnapshotRow,
   PullRequestReviewRow,
@@ -71,6 +72,16 @@ export type NewDailyRepositoryActivityRow = Omit<
   DailyRepositoryActivityRow,
   'id' | 'captured_at' | 'created_at' | 'updated_at'
 >
+
+export interface NewMaintenanceRepairTaskRow {
+  account_id: number
+  target_from_on: string
+  target_to_on: string
+  reason?: string | null
+  priority?: number
+  max_attempts?: number
+  next_run_at?: Date | string
+}
 
 export async function upsertUser(row: NewUserRow): Promise<UserRow> {
   const result = await db.query<UserRow>(
@@ -292,6 +303,134 @@ export async function markRepositoryBackfillSucceeded(
            updated_at = now()
      RETURNING *`,
     [accountId, repositoryId, backfillThroughOn]
+  )
+
+  return result.rows[0]!
+}
+
+export async function enqueueMaintenanceRepairTask(
+  row: NewMaintenanceRepairTaskRow
+): Promise<MaintenanceTaskRow> {
+  const result = await db.query<MaintenanceTaskRow>(
+    `INSERT INTO maintenance_tasks
+       (account_id, task_type, status, priority, target_from_on, target_to_on, reason,
+        max_attempts, next_run_at)
+     VALUES ($1, 'repair_range', 'pending', $2, $3, $4, $5, $6, COALESCE($7::timestamptz, now()))
+     ON CONFLICT (account_id, task_type, target_from_on, target_to_on) DO UPDATE
+       SET priority = GREATEST(maintenance_tasks.priority, EXCLUDED.priority),
+           reason = COALESCE(EXCLUDED.reason, maintenance_tasks.reason),
+           max_attempts = GREATEST(maintenance_tasks.max_attempts, EXCLUDED.max_attempts),
+           attempts = CASE
+             WHEN maintenance_tasks.status IN ('succeeded', 'failed_permanent') THEN 0
+             ELSE maintenance_tasks.attempts
+           END,
+           next_run_at = CASE
+             WHEN maintenance_tasks.status = 'running' THEN maintenance_tasks.next_run_at
+             ELSE EXCLUDED.next_run_at
+           END,
+           locked_at = CASE
+             WHEN maintenance_tasks.status = 'running' THEN maintenance_tasks.locked_at
+             ELSE NULL
+           END,
+           started_at = CASE
+             WHEN maintenance_tasks.status IN ('succeeded', 'failed_permanent') THEN NULL
+             ELSE maintenance_tasks.started_at
+           END,
+           completed_at = CASE
+             WHEN maintenance_tasks.status IN ('succeeded', 'failed_permanent') THEN NULL
+             ELSE maintenance_tasks.completed_at
+           END,
+           last_error = CASE
+             WHEN maintenance_tasks.status = 'running' THEN maintenance_tasks.last_error
+             ELSE NULL
+           END,
+           status = CASE
+             WHEN maintenance_tasks.status = 'running' THEN maintenance_tasks.status
+             ELSE 'pending'
+           END,
+           updated_at = now()
+     RETURNING *`,
+    [
+      row.account_id,
+      row.priority ?? 0,
+      row.target_from_on,
+      row.target_to_on,
+      row.reason ?? null,
+      row.max_attempts ?? 3,
+      row.next_run_at ?? null
+    ]
+  )
+
+  return result.rows[0]!
+}
+
+export async function dueMaintenanceTasks(
+  now: Date | string,
+  limit: number
+): Promise<MaintenanceTaskRow[]> {
+  const result = await db.query<MaintenanceTaskRow>(
+    `SELECT *
+     FROM maintenance_tasks
+     WHERE status IN ('pending', 'retry_wait')
+       AND next_run_at <= $1::timestamptz
+     ORDER BY priority DESC, next_run_at ASC, id ASC
+     LIMIT $2`,
+    [now, limit]
+  )
+
+  return result.rows
+}
+
+export async function markMaintenanceTaskRunning(id: number): Promise<MaintenanceTaskRow> {
+  const result = await db.query<MaintenanceTaskRow>(
+    `UPDATE maintenance_tasks
+     SET status = 'running',
+         attempts = attempts + 1,
+         locked_at = now(),
+         started_at = now(),
+         updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [id]
+  )
+
+  return result.rows[0]!
+}
+
+export async function markMaintenanceTaskSucceeded(id: number): Promise<MaintenanceTaskRow> {
+  const result = await db.query<MaintenanceTaskRow>(
+    `UPDATE maintenance_tasks
+     SET status = 'succeeded',
+         locked_at = NULL,
+         completed_at = now(),
+         last_error = NULL,
+         updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [id]
+  )
+
+  return result.rows[0]!
+}
+
+export async function markMaintenanceTaskFailed(
+  id: number,
+  error: string,
+  nextRunAt: Date | string
+): Promise<MaintenanceTaskRow> {
+  const result = await db.query<MaintenanceTaskRow>(
+    `UPDATE maintenance_tasks
+     SET status = CASE
+           WHEN attempts >= max_attempts THEN 'failed_permanent'
+           ELSE 'retry_wait'
+         END,
+         locked_at = NULL,
+         next_run_at = $3::timestamptz,
+         last_error = $2,
+         updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [id, error, nextRunAt]
   )
 
   return result.rows[0]!

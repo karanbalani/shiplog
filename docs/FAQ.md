@@ -163,7 +163,7 @@ If your config contains private repository names or other sensitive metadata, yo
 
 Run `init` first. It migrates the database and creates the configured accounts without collecting activity.
 
-After that, run `backfill` once to collect historical activity. Then `collect` runs daily or manually. Use `repair` for explicit one-off date or range repair. When `collect`, `backfill`, or `repair` succeeds, `render` updates and publishes the README.
+After that, run `backfill` once to collect historical activity. Then `collect` runs daily or manually. Use `repair` for explicit one-off date or range repair. `maintenance` drains queued background repair work. When `collect`, `backfill`, `repair`, or `maintenance` succeeds, `render` updates and publishes the README.
 
 ## What happens if daily collect fails for a few days?
 
@@ -229,7 +229,8 @@ If `collect.yml` has a `push` trigger for `main`, merging a PR starts ingestion 
 - `backfill.yml` runs manually for historical collection.
 - `collect.yml` runs on a daily schedule or manually.
 - `repair.yml` runs manually for explicit date or range repair.
-- `render.yml` runs after a successful collect, backfill, or repair, or manually.
+- `maintenance.yml` runs scheduled or manually for queued background repair work.
+- `render.yml` runs after a successful collect, backfill, repair, or maintenance, or manually.
 
 ## Can I run only the renderer?
 
@@ -269,6 +270,7 @@ bun run migrate
 bun run init
 bun run backfill
 bun run collect
+bun run maintenance
 bun run render
 bun run publish
 ```
