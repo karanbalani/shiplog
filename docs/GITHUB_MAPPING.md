@@ -135,6 +135,8 @@ The internal historical collect strategy starts from the account node's `created
 
 `bin/backfill.ts` is the provider-neutral dispatcher for this historical path. It resolves initialized accounts from `shiplog.config.json`, refreshes the current GitHub login from the stable account ID, invokes `bin/backfill_github.ts`, and advances the account checkpoint after the historical run succeeds.
 
+`bin/repair.ts` is the provider-neutral dispatcher for explicit date or range repair. It validates `REPAIR_DATE` or `REPAIR_FROM`/`REPAIR_TO`, invokes the daily collector for those dates, and leaves the account checkpoint unchanged.
+
 ## Pending Mappings
 
 `profile_snapshots` are documented as a schema concept, but the daily GitHub collector does not populate them yet.

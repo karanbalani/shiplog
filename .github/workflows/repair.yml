@@ -1,7 +1,20 @@
-name: init
+name: repair
 
 on:
   workflow_dispatch:
+    inputs:
+      repair_date:
+        description: 'Optional YYYY-MM-DD date to repair exactly one day'
+        required: false
+        type: string
+      repair_from:
+        description: 'Optional YYYY-MM-DD range start for repair'
+        required: false
+        type: string
+      repair_to:
+        description: 'Optional YYYY-MM-DD range end for repair'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -11,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  init:
+  repair:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,17 +61,11 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
-      - name: Initialize accounts
-        run: bun run init
+      - name: Repair activity
+        run: bun run repair
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
-
-      - name: Print next steps
-        run: |
-          {
-            echo "## shiplog initialized"
-            echo ""
-            echo "Accounts are ready. Run the backfill workflow next to collect historical activity."
-            echo "The render workflow will publish the README after backfill, collect, or repair succeeds."
-          } >> "$GITHUB_STEP_SUMMARY"
+          REPAIR_DATE: ${{ github.event.inputs.repair_date }}
+          REPAIR_FROM: ${{ github.event.inputs.repair_from }}
+          REPAIR_TO: ${{ github.event.inputs.repair_to }}

@@ -5,6 +5,7 @@ on:
     workflows:
       - backfill
       - collect
+      - repair
     types:
       - completed
   workflow_dispatch:
