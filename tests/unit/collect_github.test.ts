@@ -22,6 +22,8 @@ afterEach(async () => {
 })
 
 test('run collects GitHub activity into generic schema tables', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
     user_id: user.id,
@@ -91,6 +93,15 @@ test('run collects GitHub activity into generic schema tables', async () => {
     issues_opened: 1,
     issues_closed: 1
   })
+  expect(logs.some((line) => line.includes('[collect] github/octocat: repository 1/1'))).toBe(true)
+  expect(
+    logs.some((line) => line.includes('  - repository 1/1 [public] octo-org/hello: commits'))
+  ).toBe(true)
+  expect(
+    logs.some((line) =>
+      line.includes('  - repository 1/1 [public] octo-org/hello: pull request reviews')
+    )
+  ).toBe(true)
 })
 
 test('run ignores repositories through stable repository and organization ids', async () => {
@@ -136,6 +147,8 @@ test('run ignores repositories through stable repository and organization ids', 
 })
 
 test('run uses organization token for organization-owned repositories', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
     user_id: user.id,
@@ -176,6 +189,8 @@ test('run uses organization token for organization-owned repositories', async ()
     owner_login: 'restricted-org'
   })
   expect(commits.rows[0]!.count).toBe(1)
+  expect(logs.join('\n')).toContain('[private] id:R_RESTRICTED_1')
+  expect(logs.join('\n')).not.toContain('restricted-org/secret')
 })
 
 test('run uses a same-day contribution window and half-open commit window', async () => {

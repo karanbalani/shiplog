@@ -55,15 +55,13 @@ export async function run(args: BackfillArgs): Promise<void> {
   const observedOn = dates.yesterdayUTC()
   const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>()
 
-  logger.info(
-    `[backfill] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)})`
-  )
+  const discoveryMessage = `[backfill] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)})`
+  logger.info(discoveryMessage)
 
   for (const [index, year] of years.entries()) {
     const { from, to } = dates.yearWindow(year)
-    logger.info(
-      `[backfill] github/${identity.externalLogin}: discovery ${index + 1}/${years.length} (${year})`
-    )
+    const discoveryProgressMessage = `[backfill] github/${identity.externalLogin}: discovery ${index + 1}/${years.length} (${year})`
+    logger.info(discoveryProgressMessage)
     const collection = await fetchContributionsCollection(graphQL, identity.externalLogin, from, to)
 
     collectActiveRepositories(
@@ -103,11 +101,9 @@ export async function run(args: BackfillArgs): Promise<void> {
   }
 
   const repositoryCount = repositoriesByExternalId.size
-  logger.info(
-    `[backfill] github/${identity.externalLogin}: discovered ${repositoryCount} repositories; estimated minimum GitHub Search pacing ${formatDuration(
-      estimatedSearchPacingMs(repositoryCount)
-    )}`
-  )
+  const estimatedSearchPacing = formatDuration(estimatedSearchPacingMs(repositoryCount))
+  const discoveryCompleteMessage = `[backfill] github/${identity.externalLogin}: discovered ${repositoryCount} repositories; estimated minimum GitHub Search pacing ${estimatedSearchPacing}`
+  logger.info(discoveryCompleteMessage)
 
   const repositoriesStartedAt = Date.now()
   let completedRepositories = 0
@@ -125,15 +121,15 @@ export async function run(args: BackfillArgs): Promise<void> {
     const name = requiredString(repositoryInput.name, 'repository name')
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
     const logLabel = repositoryLogLabel(repositoryNode, fullName)
-
-    logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel}`
-    )
+    const repositoryPosition = `${completedRepositories + 1}/${repositoryCount}`
+    const repositoryStartMessage = `[backfill] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel}`
+    logger.info(repositoryStartMessage)
 
     let repositoryStatus = 'complete'
     try {
       for (const year of years) {
         const { from, to } = dates.yearWindow(year)
+        logRepositoryStep(identity, repositoryPosition, visibility, logLabel, `commits for ${year}`)
         await ingestCommits(
           clients.graphQL,
           repository.id,
@@ -145,9 +141,19 @@ export async function run(args: BackfillArgs): Promise<void> {
         )
       }
 
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull requests')
       await ingestPullRequests(clients.rest, repository.id, fullName, identity)
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'issues')
       await ingestIssues(clients.rest, repository.id, fullName, identity)
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull request reviews')
       await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity)
+      logRepositoryStep(
+        identity,
+        repositoryPosition,
+        visibility,
+        logLabel,
+        'repository snapshot and languages'
+      )
       await upsertRepositoryLanguageSnapshot(
         clients.graphQL,
         repository.id,
@@ -171,21 +177,30 @@ export async function run(args: BackfillArgs): Promise<void> {
     }
 
     completedRepositories += 1
-    logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${logLabel} ${repositoryStatus} (${progressPercent(
-        completedRepositories,
-        repositoryCount
-      )}%, elapsed ${formatDuration(Date.now() - repositoriesStartedAt)}, eta ${formatDuration(
-        estimatedRemainingMs(repositoriesStartedAt, completedRepositories, repositoryCount)
-      )})`
+    const progress = progressPercent(completedRepositories, repositoryCount)
+    const elapsed = formatDuration(Date.now() - repositoriesStartedAt)
+    const eta = formatDuration(
+      estimatedRemainingMs(repositoriesStartedAt, completedRepositories, repositoryCount)
     )
+    const repositoryCompleteMessage = `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${logLabel} ${repositoryStatus} (${progress}%, elapsed ${elapsed}, eta ${eta})`
+    logger.info(repositoryCompleteMessage)
   }
 
   logger.info(`[backfill] github/${identity.externalLogin}: rolling up activity dates`)
   await rollupDistinctActivityDates(identity.accountId)
-  logger.info(
-    `[backfill] github/${identity.externalLogin}: complete in ${formatDuration(Date.now() - startedAt)}`
-  )
+  const completeMessage = `[backfill] github/${identity.externalLogin}: complete in ${formatDuration(Date.now() - startedAt)}`
+  logger.info(completeMessage)
+}
+
+function logRepositoryStep(
+  identity: VendorIdentity,
+  repositoryPosition: string,
+  visibility: string,
+  logLabel: string,
+  step: string
+): void {
+  const message = `[backfill] github/${identity.externalLogin}:   - repository ${repositoryPosition} [${visibility}] ${logLabel}: ${step}`
+  logger.info(message)
 }
 
 interface GitHubClients {
@@ -358,9 +373,8 @@ async function ingestCommits(
 
     for (const node of history.nodes) {
       if (!translate.commitIncludesIdentity(node, identity)) continue
-      await upserts.upsertCommit(
-        translate.commitFromGraphQLNode(node, identity, repositoryId, 'self_backfill')
-      )
+      const commit = translate.commitFromGraphQLNode(node, identity, repositoryId, 'self_backfill')
+      await upserts.upsertCommit(commit)
     }
 
     if (!history.pageInfo.hasNextPage) return
