@@ -119,6 +119,68 @@ test('run backfills GitHub history into generic schema tables', async () => {
   expect(logs.some((line) => line.includes('eta'))).toBe(true)
 })
 
+test('run paginates historical pull request search results', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+  const paginated = mockGitHubFetchWithPaginatedPullRequests()
+
+  await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: paginated.fetch
+  })
+
+  const pullRequests = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM pull_requests'
+  )
+
+  expect(paginated.searchPages).toEqual([1, 2])
+  expect(pullRequests.rows[0]!.count).toBe(101)
+})
+
+test('run paginates historical pull request review details', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+  const paginated = mockGitHubFetchWithPaginatedReviews()
+
+  await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: paginated.fetch
+  })
+
+  const reviews = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM pull_request_reviews'
+  )
+
+  expect(paginated.reviewPages).toEqual([1, 2])
+  expect(reviews.rows[0]!.count).toBe(101)
+})
+
 test('run skips repositories that already have successful backfill state', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
@@ -740,6 +802,137 @@ function mockGitHubFetch(): typeof fetch {
   }) as typeof fetch
 }
 
+function mockGitHubFetchWithPaginatedPullRequests(): {
+  fetch: typeof fetch
+  searchPages: number[]
+} {
+  const currentYear = new Date().getUTCFullYear()
+  const searchPages: number[] = []
+
+  return {
+    searchPages,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (url === 'https://api.github.com/graphql') {
+        const body = JSON.parse(String(init?.body)) as { query: string }
+
+        if (body.query.includes('query UserById')) {
+          return jsonResponse({
+            data: {
+              node: {
+                id: 'U_TEST_1',
+                login: 'octocat',
+                name: 'Octocat',
+                url: 'https://github.com/octocat',
+                createdAt: `${currentYear}-01-01T00:00:00Z`
+              }
+            }
+          })
+        }
+
+        if (body.query.includes('query Contributions')) {
+          return jsonResponse({
+            data: githubContributionsWithRepositoryActivity({
+              pullRequests: 101
+            })
+          })
+        }
+
+        if (body.query.includes('query RepositoryLanguages')) {
+          return repositoryLanguagesResponse()
+        }
+      }
+
+      const parsed = new URL(url)
+      const q = parsed.searchParams.get('q') ?? ''
+
+      if (parsed.pathname === '/user/repos') {
+        return jsonResponse([])
+      }
+
+      if (parsed.pathname === '/search/issues' && q.includes('type:pr author:')) {
+        const page = Number(parsed.searchParams.get('page') ?? '1')
+        searchPages.push(page)
+        return jsonResponse({
+          total_count: 101,
+          items: paginatedPullRequestItems(page)
+        })
+      }
+
+      if (parsed.pathname === '/search/issues') {
+        return jsonResponse({ total_count: 0, items: [] })
+      }
+
+      return new Response(`unexpected request: ${url}`, { status: 500 })
+    }) as typeof fetch
+  }
+}
+
+function mockGitHubFetchWithPaginatedReviews(): { fetch: typeof fetch; reviewPages: number[] } {
+  const currentYear = new Date().getUTCFullYear()
+  const reviewPages: number[] = []
+
+  return {
+    reviewPages,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (url === 'https://api.github.com/graphql') {
+        const body = JSON.parse(String(init?.body)) as { query: string }
+
+        if (body.query.includes('query UserById')) {
+          return jsonResponse({
+            data: {
+              node: {
+                id: 'U_TEST_1',
+                login: 'octocat',
+                name: 'Octocat',
+                url: 'https://github.com/octocat',
+                createdAt: `${currentYear}-01-01T00:00:00Z`
+              }
+            }
+          })
+        }
+
+        if (body.query.includes('query Contributions')) {
+          return jsonResponse({
+            data: githubContributionsWithRepositoryActivity({
+              pullRequestReviews: 1
+            })
+          })
+        }
+
+        if (body.query.includes('query RepositoryLanguages')) {
+          return repositoryLanguagesResponse()
+        }
+      }
+
+      const parsed = new URL(url)
+      const q = parsed.searchParams.get('q') ?? ''
+
+      if (parsed.pathname === '/user/repos') {
+        return jsonResponse([])
+      }
+
+      if (parsed.pathname === '/search/issues' && q.includes('reviewed-by:')) {
+        return jsonResponse({
+          total_count: 1,
+          items: [pullRequestItem(42)]
+        })
+      }
+
+      if (parsed.pathname === '/repos/octo-org/hello/pulls/42/reviews') {
+        const page = Number(parsed.searchParams.get('page') ?? '1')
+        reviewPages.push(page)
+        return jsonResponse(paginatedReviewItems(page))
+      }
+
+      if (parsed.pathname === '/search/issues') {
+        return jsonResponse({ total_count: 0, items: [] })
+      }
+
+      return new Response(`unexpected request: ${url}`, { status: 500 })
+    }) as typeof fetch
+  }
+}
+
 function mockGitHubFetchWithPrivateRepository(): typeof fetch {
   const currentYear = new Date().getUTCFullYear()
 
@@ -1144,6 +1337,105 @@ function publicRepositoryNode(): import('../../lib/providers/github/types.ts').G
     defaultBranchRef: { name: 'main' },
     url: 'https://github.com/octo-org/hello',
     description: 'Test repo'
+  }
+}
+
+function repositoryLanguagesResponse(): Response {
+  return jsonResponse({
+    data: {
+      repository: {
+        stargazerCount: 10,
+        forkCount: 2,
+        isArchived: false,
+        isPrivate: false,
+        languages: {
+          edges: [{ size: 100, node: { name: 'Go' } }]
+        }
+      }
+    }
+  })
+}
+
+function paginatedPullRequestItems(
+  page: number
+): import('../../lib/providers/github/types.ts').GitHubSearchPullRequestItem[] {
+  if (page === 1) {
+    return Array.from({ length: 100 }, (_value, index) => pullRequestItem(index + 1))
+  }
+  if (page === 2) return [pullRequestItem(101)]
+  return []
+}
+
+function pullRequestItem(
+  number: number
+): import('../../lib/providers/github/types.ts').GitHubSearchPullRequestItem {
+  return {
+    node_id: `PR_PAGE_${number}`,
+    number,
+    title: `Pull request ${number}`,
+    html_url: `https://github.com/octo-org/hello/pull/${number}`,
+    state: 'closed',
+    created_at: '2026-05-07T08:00:00Z',
+    closed_at: '2026-05-07T10:00:00Z',
+    pull_request: { merged_at: '2026-05-07T10:00:00Z' }
+  }
+}
+
+function paginatedReviewItems(
+  page: number
+): import('../../lib/providers/github/types.ts').GitHubReviewItem[] {
+  if (page === 1) {
+    return Array.from({ length: 100 }, (_value, index) => reviewItem(index + 1))
+  }
+  if (page === 2) return [reviewItem(101)]
+  return []
+}
+
+function reviewItem(
+  number: number
+): import('../../lib/providers/github/types.ts').GitHubReviewItem {
+  return {
+    node_id: `REVIEW_PAGE_${number}`,
+    user: { login: 'octocat' },
+    state: 'APPROVED',
+    submitted_at: '2026-05-07T09:00:00Z'
+  }
+}
+
+function githubContributionsWithRepositoryActivity({
+  pullRequests = 0,
+  pullRequestReviews = 0,
+  issues = 0
+}: {
+  pullRequests?: number
+  pullRequestReviews?: number
+  issues?: number
+}): {
+  user: {
+    contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
+  }
+} {
+  const repository = publicRepositoryNode()
+
+  return {
+    user: {
+      contributionsCollection: {
+        totalCommitContributions: 0,
+        totalIssueContributions: issues,
+        totalPullRequestContributions: pullRequests,
+        totalPullRequestReviewContributions: pullRequestReviews,
+        restrictedContributionsCount: 0,
+        commitContributionsByRepository: [],
+        pullRequestContributionsByRepository:
+          pullRequests > 0 ? [{ repository, contributions: { totalCount: pullRequests } }] : [],
+        pullRequestReviewContributionsByRepository:
+          pullRequestReviews > 0
+            ? [{ repository, contributions: { totalCount: pullRequestReviews } }]
+            : [],
+        issueContributionsByRepository:
+          issues > 0 ? [{ repository, contributions: { totalCount: issues } }] : []
+      }
+    }
   }
 }
 
