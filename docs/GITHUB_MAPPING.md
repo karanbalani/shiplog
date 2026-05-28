@@ -133,6 +133,8 @@ This document records that translation.
 
 The internal historical collect strategy starts from the account node's `createdAt`, walks each year through `contributionsCollection`, stores year-start `daily_user_summary` rows with `source = 'self_backfill'`, enumerates repositories from REST `GET /user/repos?visibility=all` for the default read token, resolves configured organization node IDs to current logins, and enumerates configured organization repositories from REST `GET /orgs/{organization}/repos?type=all` with organization-specific read tokens. It skips configured ignored repository and organization node IDs, then upserts organization rows, enriches discovered repositories, imports commits only for years with observed commit contributions unless a private repository needs a full scan, imports authored pull requests and issues when contribution discovery indicates work, imports submitted reviews, captures repository language snapshots, and derives `daily_repository_activity` for every distinct event date. Successful repository enrichment writes `repository_backfill_state`, so reruns can skip already-finished repositories without conflating daily repository snapshots with backfill completion.
 
+`bin/backfill.ts` is the provider-neutral dispatcher for this historical path. It resolves initialized accounts from `shiplog.config.json`, refreshes the current GitHub login from the stable account ID, invokes `bin/backfill_github.ts`, and advances the account checkpoint after the historical run succeeds.
+
 ## Pending Mappings
 
 `profile_snapshots` are documented as a schema concept, but the daily GitHub collector does not populate them yet.

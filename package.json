@@ -8,6 +8,7 @@
   "scripts": {
     "init": "bun bin/init.ts",
     "identity": "bun bin/identity.ts",
+    "backfill": "bun bin/backfill.ts",
     "collect": "bun bin/collect.ts",
     "render": "bun bin/render.ts",
     "publish": "bun bin/publish.ts",

@@ -163,7 +163,7 @@ If your config contains private repository names or other sensitive metadata, yo
 
 Run `init` first. It migrates the database, creates the configured accounts, runs collect, renders the README, and publishes it to `publish.targets`. Because new accounts have a null `last_successful_collect_on`, that first collect uses the complete historical path.
 
-After that, `collect` runs daily or manually. When `collect` succeeds, `render` updates and publishes the README.
+After that, `collect` runs daily or manually. The `backfill` workflow is also available as a manual historical lane; it runs the same historical collector without using the daily collect workflow as the entrypoint. When `collect` or `backfill` succeeds, `render` updates and publishes the README.
 
 ## What happens if daily collect fails for a few days?
 
@@ -226,8 +226,9 @@ If a token was already exhausted by another run or tool, shiplog may wait for th
 If `collect.yml` has a `push` trigger for `main`, merging a PR starts ingestion immediately. The intended setup is:
 
 - `ci.yml` runs on pull requests and pushes to `main`.
+- `backfill.yml` runs manually for historical collection.
 - `collect.yml` runs on a daily schedule or manually.
-- `render.yml` runs after a successful collect, or manually.
+- `render.yml` runs after a successful collect or backfill, or manually.
 
 ## Can I run only the renderer?
 
