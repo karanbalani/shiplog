@@ -163,7 +163,7 @@ If your config contains private repository names or other sensitive metadata, yo
 
 Run `init` first. It migrates the database and creates the configured accounts without collecting activity.
 
-After that, run `backfill` once to collect historical activity. Then `collect` runs daily or manually. Use `repair` for explicit one-off date or range repair. `maintenance` drains queued background repair work. When `collect`, `backfill`, `repair`, or `maintenance` succeeds, `render` updates and publishes the README.
+After that, run `backfill` once to collect historical activity. Then `collect` runs daily or manually. Use `repair` for explicit one-off date or range repair. `drift` checks stored summaries against provider totals and queues repairs. `maintenance` drains queued background repair work. When `collect`, `backfill`, `repair`, or `maintenance` succeeds, `render` updates and publishes the README.
 
 ## What happens if daily collect fails for a few days?
 
@@ -190,6 +190,8 @@ REPAIR_FROM=2026-05-01 REPAIR_TO=2026-05-07 bun run repair
 ```
 
 In GitHub Actions, the manual `repair` workflow has optional `repair_date`, `repair_from`, and `repair_to` inputs for the same purpose. The next normal collect run may safely reprocess those dates if they are still part of the checkpoint gap or rolling lookback window.
+
+For set-and-forget consistency, the scheduled `drift` workflow checks a bounded recent window outside daily collect. It does not rewrite activity directly. It enqueues `maintenance_tasks` repair ranges for missing or mismatched daily summaries, and the scheduled `maintenance` workflow processes that queue separately.
 
 ## Why is historical backfill slow?
 
@@ -229,6 +231,7 @@ If `collect.yml` has a `push` trigger for `main`, merging a PR starts ingestion 
 - `backfill.yml` runs manually for historical collection.
 - `collect.yml` runs on a daily schedule or manually.
 - `repair.yml` runs manually for explicit date or range repair.
+- `drift.yml` runs scheduled or manually to queue repairs for missing or mismatched daily summaries.
 - `maintenance.yml` runs scheduled or manually for queued background repair work.
 - `render.yml` runs after a successful collect, backfill, repair, or maintenance, or manually.
 
@@ -270,6 +273,7 @@ bun run migrate
 bun run init
 bun run backfill
 bun run collect
+bun run drift
 bun run maintenance
 bun run render
 bun run publish

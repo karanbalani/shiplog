@@ -27,11 +27,12 @@ Completed so far:
 - Internal GitHub historical collection strategy in `bin/backfill_github.ts`
 - Backfill dispatcher in `bin/backfill.ts` that runs historical collection outside the daily collect workflow
 - Repair dispatcher in `bin/repair.ts` that reruns specific daily windows without moving checkpoints
+- Drift dispatcher in `bin/drift.ts` that checks stored daily summaries and queues repair work
 - Maintenance dispatcher in `bin/maintenance.ts` that drains queued background repair work
 - Init dispatcher in `bin/init.ts` that creates and refreshes `users`/`accounts`
 - Collect dispatcher in `bin/collect.ts` that runs daily catch-up and rolling lookback only
 - README renderer in `bin/render.ts`
-- GitHub Actions workflows for one-time account init, historical backfill, daily collection, manual repair, and maintenance
+- GitHub Actions workflows for one-time account init, historical backfill, daily collection, manual repair, drift detection, and maintenance
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -154,7 +155,7 @@ For GitHub Actions, store the config as a repository variable named `SHIPLOG_CON
 base64 < shiplog.config.json | tr -d '\n'
 ```
 
-Then decode it inside the workflow before running `bun run init`, `bun run backfill`, `bun run collect`, `bun run repair`, `bun run maintenance`, or `bun run render`:
+Then decode it inside the workflow before running `bun run init`, `bun run backfill`, `bun run collect`, `bun run repair`, `bun run drift`, `bun run maintenance`, or `bun run render`:
 
 ```yaml
 - name: Write shiplog config
@@ -181,7 +182,7 @@ If an organization requires a separate read token, create another secret such as
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates and creates the configured account rows without collecting activity. Then run the separate `backfill` workflow to collect historical activity; during backfill, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `backfill` fails before completion, fix the error and rerun it; writes are upserted, completed repositories are skipped on the next run, and the account checkpoint advances only after backfill completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday, then rechecks the recent `collect.lookbackDays` window. Use the `repair` workflow for explicit one-off date or range repair without moving the checkpoint. The `maintenance` workflow drains queued background repair work separately from the daily lane. When `collect`, `backfill`, `repair`, or `maintenance` succeeds, the `render` workflow regenerates `rendered.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates and creates the configured account rows without collecting activity. Then run the separate `backfill` workflow to collect historical activity; during backfill, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `backfill` fails before completion, fix the error and rerun it; writes are upserted, completed repositories are skipped on the next run, and the account checkpoint advances only after backfill completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday, then rechecks the recent `collect.lookbackDays` window. Use the `repair` workflow for explicit one-off date or range repair without moving the checkpoint. The `drift` workflow compares stored daily summaries with provider totals and queues repairs when data changes or is missing. The `maintenance` workflow drains queued background repair work separately from the daily lane. When `collect`, `backfill`, `repair`, or `maintenance` succeeds, the `render` workflow regenerates `rendered.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
@@ -311,6 +312,14 @@ Repair a historical range without moving the checkpoint:
 REPAIR_FROM=2026-05-01 REPAIR_TO=2026-05-07 bun run repair
 ```
 
+Detect drift and queue repair work:
+
+```bash
+bun run drift
+```
+
+`drift` checks recent stored `daily_user_summary` rows against provider contribution totals and enqueues `maintenance_tasks` repair ranges for missing or mismatched dates. By default it checks the last 14 UTC days through yesterday. Set `DRIFT_LOOKBACK_DAYS=0` to disable the default window, or use `DRIFT_FROM=2026-05-01 DRIFT_TO=2026-05-07 bun run drift` for an explicit range.
+
 Run queued maintenance work:
 
 ```bash
@@ -333,12 +342,13 @@ bun run publish
 
 ## Implementation Notes
 
-The v1 architecture is nine Bun-executed TypeScript binaries:
+The v1 architecture is ten Bun-executed TypeScript binaries:
 
 - `bin/init.ts`
 - `bin/backfill.ts`
 - `bin/collect.ts`
 - `bin/repair.ts`
+- `bin/drift.ts`
 - `bin/maintenance.ts`
 - `bin/collect_github.ts`
 - `bin/backfill_github.ts`
@@ -360,6 +370,8 @@ The backfill dispatcher reads `shiplog.config.json`, resolves initialized `accou
 The collect dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, catches up every missing date through UTC yesterday, and rechecks the recent `collect.lookbackDays` window. It never runs historical backfill or manual repair; after each successful automatic date, it advances the account checkpoint.
 
 The repair dispatcher requires `REPAIR_DATE` or `REPAIR_FROM`/`REPAIR_TO`, reruns the daily provider collector for those dates, and leaves the account checkpoint unchanged.
+
+The drift dispatcher checks stored daily provider summary totals against current provider totals, then enqueues maintenance repair ranges for missing or mismatched dates without changing collected activity itself.
 
 The maintenance dispatcher reads due `maintenance_tasks`, runs supported background work such as queued repair ranges, and records success, retry, or permanent failure state.
 

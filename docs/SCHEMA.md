@@ -56,6 +56,7 @@ Collection checkpoint:
 - After a checkpoint exists, automatic collect runs process every date from `last_successful_collect_on + 1` through UTC yesterday, then reprocess the recent `collect.lookbackDays` window.
 - `last_successful_collect_on` is advanced after successful automatic collection.
 - Manual `REPAIR_DATE`, or `REPAIR_FROM` plus `REPAIR_TO`, reprocesses requested repair dates without advancing the checkpoint, and safely dedupes on rerun.
+- Drift detection compares stored daily summary totals with provider totals and enqueues `maintenance_tasks` repair ranges without advancing the checkpoint.
 
 ## profile_snapshots
 
@@ -178,7 +179,7 @@ Constraints and indexes:
 
 ## maintenance_tasks
 
-Queued background work that should run outside the daily collect lane.
+Queued background work that should run outside the daily collect lane. Drift detection and future consistency checks write repair work here; `bin/maintenance.ts` drains due tasks.
 
 | Column           | Type          | Notes                                                                                       |
 | ---------------- | ------------- | ------------------------------------------------------------------------------------------- |

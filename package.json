@@ -11,6 +11,7 @@
     "backfill": "bun bin/backfill.ts",
     "collect": "bun bin/collect.ts",
     "repair": "bun bin/repair.ts",
+    "drift": "bun bin/drift.ts",
     "maintenance": "bun bin/maintenance.ts",
     "render": "bun bin/render.ts",
     "publish": "bun bin/publish.ts",
