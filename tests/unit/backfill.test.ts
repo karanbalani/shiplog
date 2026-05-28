@@ -53,6 +53,44 @@ test('run backfills initialized accounts through yesterday and advances checkpoi
   expect(dateOnly(state.rows[0]!.backfill_through_on)).toBe('2026-05-07')
 })
 
+test('run with repository limit advances checkpoint only after all repositories complete', async () => {
+  await seedAccount()
+  const fetch = mockGitHubFetch({ includePrivateRepository: true })
+
+  await backfill.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
+    repositoryLimit: 1,
+    fetch
+  })
+
+  const partialAccounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  const partialState = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+  )
+
+  await backfill.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
+    repositoryLimit: 1,
+    fetch
+  })
+
+  const completeAccounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  const completeState = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+  )
+
+  expect(partialAccounts.rows[0]!.last_successful_collect_on).toBeNull()
+  expect(partialState.rows[0]!.count).toBe(1)
+  expect(dateOnly(completeAccounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
+  expect(completeState.rows[0]!.count).toBe(2)
+})
+
 test('run throws when account has not been initialized', async () => {
   await expect(
     backfill.run({
@@ -109,7 +147,7 @@ function shiplogConfig(): ShiplogConfig {
   }
 }
 
-function mockGitHubFetch(): typeof fetch {
+function mockGitHubFetch(options: { includePrivateRepository?: boolean } = {}): typeof fetch {
   return (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
       const body = JSON.parse(String(init?.body)) as {
@@ -137,6 +175,7 @@ function mockGitHubFetch(): typeof fetch {
 
       if (body.query.includes('query RepositoryCommits')) {
         expect(body.variables?.author).toEqual({ id: 'U_TEST_1' })
+        const name = body.variables?.name
         return jsonResponse({
           data: {
             repository: {
@@ -147,7 +186,7 @@ function mockGitHubFetch(): typeof fetch {
                     pageInfo: { hasNextPage: false, endCursor: null },
                     nodes: [
                       {
-                        oid: 'abc123',
+                        oid: name === 'secret' ? 'private-commit-1' : 'abc123',
                         committedDate: '2026-05-07T12:34:56Z',
                         additions: 10,
                         deletions: 2,
@@ -166,16 +205,17 @@ function mockGitHubFetch(): typeof fetch {
       }
 
       if (body.query.includes('query RepositoryLanguages')) {
+        const isPrivate = body.variables?.name === 'secret'
         return jsonResponse({
           data: {
             repository: {
-              stargazerCount: 10,
-              forkCount: 2,
+              stargazerCount: isPrivate ? 0 : 10,
+              forkCount: isPrivate ? 0 : 2,
               isArchived: false,
-              isPrivate: false,
+              isPrivate,
               languages: {
                 edges: [
-                  { size: 800, node: { name: 'Go' } },
+                  { size: 800, node: { name: isPrivate ? 'TypeScript' : 'Go' } },
                   { size: 200, node: { name: 'Shell' } }
                 ]
               }
@@ -189,7 +229,11 @@ function mockGitHubFetch(): typeof fetch {
     const q = parsed.searchParams.get('q') ?? ''
 
     if (parsed.pathname === '/user/repos') {
-      return jsonResponse([])
+      return jsonResponse(options.includePrivateRepository ? [privateRepositoryFixture()] : [])
+    }
+
+    if (q.includes('repo:octocat/secret')) {
+      return jsonResponse({ total_count: 0, items: [] })
     }
 
     if (parsed.pathname === '/search/issues' && q.includes('type:pr author:')) {
@@ -206,6 +250,31 @@ function mockGitHubFetch(): typeof fetch {
 
     return new Response(`unexpected request: ${url}`, { status: 500 })
   }) as typeof fetch
+}
+
+function privateRepositoryFixture(): import('../../lib/providers/github/types.ts').GitHubRestRepository {
+  return {
+    node_id: 'R_PRIVATE_1',
+    name: 'secret',
+    full_name: 'octocat/secret',
+    private: true,
+    fork: false,
+    archived: false,
+    language: 'TypeScript',
+    stargazers_count: 0,
+    forks_count: 0,
+    created_at: '2024-01-01T00:00:00Z',
+    pushed_at: '2026-05-07T12:00:00Z',
+    default_branch: 'main',
+    html_url: 'https://github.com/octocat/secret',
+    description: 'private test repository',
+    owner: {
+      login: 'octocat',
+      node_id: 'U_TEST_1',
+      type: 'User',
+      avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4'
+    }
+  }
 }
 
 function githubContributionsFixture(): {
