@@ -97,10 +97,8 @@ export async function run(args: CollectArgs): Promise<void> {
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
     const logLabel = repositoryLogLabel(repositoryNode, fullName)
     const repositoryPosition = `${completedRepositories + 1}/${repositoryCount}`
-
-    logger.info(
-      `[collect] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel}`
-    )
+    const repositoryStartMessage = `[collect] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel}`
+    logger.info(repositoryStartMessage)
 
     let repositoryStatus = 'complete'
     logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'repository snapshot')
@@ -138,9 +136,8 @@ export async function run(args: CollectArgs): Promise<void> {
     }
 
     completedRepositories += 1
-    logger.info(
-      `[collect] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${logLabel} ${repositoryStatus}`
-    )
+    const repositoryCompleteMessage = `[collect] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${logLabel} ${repositoryStatus}`
+    logger.info(repositoryCompleteMessage)
   }
 
   await upserts.upsertDailyUserSummary({
@@ -164,9 +161,8 @@ function logRepositoryStep(
   logLabel: string,
   step: string
 ): void {
-  logger.info(
-    `[collect] github/${identity.externalLogin}:   - repository ${repositoryPosition} [${visibility}] ${logLabel}: ${step}`
-  )
+  const message = `[collect] github/${identity.externalLogin}:   - repository ${repositoryPosition} [${visibility}] ${logLabel}: ${step}`
+  logger.info(message)
 }
 
 interface GitHubClients {
