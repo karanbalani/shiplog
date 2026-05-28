@@ -93,6 +93,48 @@ test('run collects GitHub activity into generic schema tables', async () => {
   })
 })
 
+test('run ignores repositories through stable repository and organization ids', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2011-01-25T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+
+  await collectGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    ignoreOrganizationIds: ['O_TEST_1'],
+    ignoreRepositoryIds: ['R_UNUSED_1'],
+    date: '2026-05-07',
+    fetch: mockGitHubFetch()
+  })
+
+  const repositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories'
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+  const activity = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM daily_repository_activity'
+  )
+  const summaries = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM daily_user_summary'
+  )
+
+  expect(repositories.rows[0]!.count).toBe(0)
+  expect(commits.rows[0]!.count).toBe(0)
+  expect(activity.rows[0]!.count).toBe(0)
+  expect(summaries.rows[0]!.count).toBe(1)
+})
+
 test('run uses organization token for organization-owned repositories', async () => {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
@@ -114,7 +156,8 @@ test('run uses organization token for organization-owned repositories', async ()
     token: 'default-token',
     organizationTokens: [
       {
-        organization: 'restricted-org',
+        externalId: 'O_RESTRICTED_1',
+        externalLogin: 'restricted-org',
         tokenEnv: 'GH_RO_RESTRICTED_ORG_TOKEN',
         token: 'org-token'
       }

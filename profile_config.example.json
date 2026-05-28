@@ -4,17 +4,24 @@
   "identities": [
     {
       "provider": "github",
-      "login": "your-github-login",
+      "externalId": "your-github-user-node-id",
+      "loginHint": "your-github-login",
       "tokenEnv": "GH_RO_CLASSIC_TOKEN",
       "organizationTokens": [],
       "ignoreOrganizations": [],
-      "ignoreRepositories": ["your-github-login/your-github-login"]
+      "ignoreRepositories": [
+        {
+          "externalId": "your-profile-repository-node-id",
+          "nameHint": "your-github-login/your-github-login"
+        }
+      ]
     }
   ],
   "publishTargets": [
     {
       "provider": "github",
-      "repositoryFullName": "your-github-login/your-github-login",
+      "repositoryId": "your-profile-repository-node-id",
+      "repositoryHint": "your-github-login/your-github-login",
       "branch": "main",
       "path": "README.md",
       "tokenEnv": "GH_RW_REPO_TOKEN"

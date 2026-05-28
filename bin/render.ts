@@ -349,16 +349,16 @@ function accountFilter(
   const params: unknown[] = []
   const clauses = profileConfig.identities.map((identity) => {
     const providerIndex = startIndex + params.length
-    const loginIndex = providerIndex + 1
-    params.push(identity.provider, identity.login)
-    return `(${tableAlias}.provider = $${providerIndex} AND ${tableAlias}.external_login = $${loginIndex})`
+    const externalIdIndex = providerIndex + 1
+    params.push(identity.provider, identity.externalId)
+    return `(${tableAlias}.provider = $${providerIndex} AND ${tableAlias}.external_id = $${externalIdIndex})`
   })
 
   return { sql: `(${clauses.join(' OR ')})`, params }
 }
 
 function displayName(profileConfig: ProfileConfig): string {
-  return profileConfig.displayName ?? profileConfig.identities[0]?.login ?? 'shiplog user'
+  return profileConfig.displayName ?? profileConfig.identities[0]?.loginHint ?? 'shiplog user'
 }
 
 function completedYearsSince(value: Date | string, now: Date): number {

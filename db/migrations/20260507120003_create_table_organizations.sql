@@ -12,8 +12,7 @@ CREATE TABLE organizations (
   last_seen_on DATE NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (provider, external_id),
-  UNIQUE (provider, external_login)
+  UNIQUE (provider, external_id)
 );
 
 -- migrate:down

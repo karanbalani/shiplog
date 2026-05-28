@@ -106,6 +106,95 @@ test('upsertRepository inserts then updates on provider and external id', async 
   expect(second.description).toBe('second')
 })
 
+test('upsertRepository handles repository renames by stable provider id', async () => {
+  const { account, repository } = await seedAccountAndRepository()
+  await upserts.upsertCommit({
+    account_id: account.id,
+    repository_id: repository.id,
+    oid: 'rename-safe-commit',
+    committed_on: '2026-05-07',
+    committed_at: '2026-05-07T12:00:00Z',
+    additions: 10,
+    deletions: 2,
+    changed_files: 1,
+    message_headline: 'before rename',
+    source: 'live'
+  })
+
+  const renamed = await upserts.upsertRepository({
+    provider: repository.provider,
+    external_id: repository.external_id,
+    organization_id: null,
+    owner_login: 'renamed-owner',
+    name: 'renamed-repo',
+    full_name: 'renamed-owner/renamed-repo',
+    web_url: 'https://github.com/renamed-owner/renamed-repo',
+    description: 'renamed repository',
+    visibility: 'public',
+    is_fork: false,
+    is_archived: false,
+    primary_language: 'TypeScript',
+    default_branch: 'main',
+    external_created_at: '2020-01-01T00:00:00Z',
+    external_pushed_at: '2026-05-08T12:00:00Z',
+    first_seen_on: '2026-05-08',
+    last_seen_on: '2026-05-08',
+    redacted: false
+  })
+
+  const repositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories WHERE external_id = $1',
+    [repository.external_id]
+  )
+  const commits = await db.query<{ repository_id: number }>(
+    'SELECT repository_id FROM commits WHERE oid = $1',
+    ['rename-safe-commit']
+  )
+
+  expect(renamed.id).toBe(repository.id)
+  expect(renamed.owner_login).toBe('renamed-owner')
+  expect(renamed.name).toBe('renamed-repo')
+  expect(renamed.full_name).toBe('renamed-owner/renamed-repo')
+  expect(repositories.rows[0]!.count).toBe(1)
+  expect(commits.rows[0]!.repository_id).toBe(repository.id)
+})
+
+test('upsertOrganization handles organization renames by stable provider id', async () => {
+  const first = await upserts.upsertOrganization({
+    provider: 'github',
+    external_id: 'O_RENAMED_1',
+    external_login: 'old-org',
+    display_name: 'Old Org',
+    description: 'before rename',
+    avatar_url: 'https://avatars.githubusercontent.com/u/1',
+    website_url: 'https://old.example.com',
+    first_seen_on: '2026-05-07',
+    last_seen_on: '2026-05-07'
+  })
+  const second = await upserts.upsertOrganization({
+    provider: 'github',
+    external_id: 'O_RENAMED_1',
+    external_login: 'new-org',
+    display_name: 'New Org',
+    description: 'after rename',
+    avatar_url: 'https://avatars.githubusercontent.com/u/1',
+    website_url: 'https://new.example.com',
+    first_seen_on: '2026-05-08',
+    last_seen_on: '2026-05-08'
+  })
+
+  const organizations = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM organizations WHERE external_id = $1',
+    ['O_RENAMED_1']
+  )
+
+  expect(second.id).toBe(first.id)
+  expect(second.external_login).toBe('new-org')
+  expect(second.display_name).toBe('New Org')
+  expect(second.description).toBe('after rename')
+  expect(organizations.rows[0]!.count).toBe(1)
+})
+
 test('upsertCommit dedupes on account and oid', async () => {
   const { account, repository } = await seedAccountAndRepository()
 

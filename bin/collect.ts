@@ -3,6 +3,11 @@ import * as config from '../lib/config.ts'
 import * as db from '../lib/db.ts'
 import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
+import { graphQLClient } from '../lib/providers/github/graphql.ts'
+import {
+  fetchGitHubAccountProfileById,
+  fetchGitHubOrganizationById
+} from '../lib/providers/github/identity.ts'
 import type {
   AccountRow,
   IdentityConfig,
@@ -30,23 +35,29 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
   const yesterday = dates.yesterdayUTC(options.now)
 
   for (const identityConfig of profileConfig.identities) {
-    const token = tokenForIdentity(identityConfig)
-    const organizationTokens = organizationTokensForIdentity(identityConfig)
     const account = await findAccount(identityConfig)
-    const identity = vendorIdentity(account)
+    const ignoreOrganizationIds = identityConfig.ignoreOrganizations.map((org) => org.externalId)
+    const ignoreRepositoryIds = identityConfig.ignoreRepositories.map((repo) => repo.externalId)
 
     if (!requestedDate && !account.last_successful_collect_on) {
+      const token = tokenForIdentity(identityConfig)
+      const organizationTokens = await organizationTokensForIdentity(identityConfig, options.fetch)
+      const refreshedAccount = await refreshAccount(identityConfig, account, token, options.fetch)
+      const identity = vendorIdentity(refreshedAccount)
+
       logger.info(
-        `[collect] ${identityConfig.provider}/${account.external_login}: no checkpoint found; collecting complete history through ${yesterday}`
+        `[collect] ${identityConfig.provider}/${refreshedAccount.external_login}: no checkpoint found; collecting complete history through ${yesterday}`
       )
       const historicalVendor = await importVendorHistoricalCollector(identityConfig.provider)
       await historicalVendor.run({
         identity,
         token,
         organizationTokens,
+        ignoreOrganizationIds,
+        ignoreRepositoryIds,
         fetch: options.fetch
       })
-      await upserts.markCollectSuccess(account.id, yesterday)
+      await upserts.markCollectSuccess(refreshedAccount.id, yesterday)
       continue
     }
 
@@ -60,23 +71,30 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
       continue
     }
 
+    const token = tokenForIdentity(identityConfig)
+    const organizationTokens = await organizationTokensForIdentity(identityConfig, options.fetch)
+    const refreshedAccount = await refreshAccount(identityConfig, account, token, options.fetch)
+    const identity = vendorIdentity(refreshedAccount)
+
     logger.info(
-      `[collect] ${identityConfig.provider}/${account.external_login}: ${collectDates.length} day(s) (${collectDates[0]} to ${collectDates.at(-1)})`
+      `[collect] ${identityConfig.provider}/${refreshedAccount.external_login}: ${collectDates.length} day(s) (${collectDates[0]} to ${collectDates.at(-1)})`
     )
 
     for (const [index, collectDate] of collectDates.entries()) {
       logger.info(
-        `[collect] ${identityConfig.provider}/${account.external_login}: ${index + 1}/${collectDates.length} ${collectDate}`
+        `[collect] ${identityConfig.provider}/${refreshedAccount.external_login}: ${index + 1}/${collectDates.length} ${collectDate}`
       )
       await vendor.run({
         identity,
         token,
         organizationTokens,
+        ignoreOrganizationIds,
+        ignoreRepositoryIds,
         date: collectDate,
         fetch: options.fetch
       })
       if (!requestedDate) {
-        await upserts.markCollectSuccess(account.id, collectDate)
+        await upserts.markCollectSuccess(refreshedAccount.id, collectDate)
       }
     }
   }
@@ -105,18 +123,43 @@ export async function findAccount(identityConfig: IdentityConfig): Promise<Accou
   const result = await db.query<AccountRow>(
     `SELECT *
      FROM accounts
-     WHERE provider = $1 AND external_login = $2
+     WHERE provider = $1 AND external_id = $2
      LIMIT 1`,
-    [identityConfig.provider, identityConfig.login]
+    [identityConfig.provider, identityConfig.externalId]
   )
 
   if (!result.rows[0]) {
     throw new Error(
-      `No account row for ${identityConfig.provider}/${identityConfig.login}; run bun run init first`
+      `No account row for ${identityConfig.provider}/${identityConfig.externalId}; run bun run init first`
     )
   }
 
   return result.rows[0]
+}
+
+async function refreshAccount(
+  identityConfig: IdentityConfig,
+  account: AccountRow,
+  token: string,
+  fetch?: Fetcher
+): Promise<AccountRow> {
+  if (identityConfig.provider !== 'github') {
+    throw new Error(`unsupported provider in v1: ${identityConfig.provider}`)
+  }
+
+  const profile = await fetchGitHubAccountProfileById(
+    graphQLClient({ token, fetch }),
+    account.external_id
+  )
+  return upserts.upsertAccount({
+    user_id: account.user_id,
+    provider: identityConfig.provider,
+    external_login: profile.externalLogin,
+    external_id: profile.externalId,
+    external_url: profile.externalUrl,
+    external_created_at: profile.externalCreatedAt,
+    first_seen_on: dateOnly(account.first_seen_on)
+  })
 }
 
 async function importVendorCollector(provider: string): Promise<VendorModule> {
@@ -136,16 +179,32 @@ function tokenForIdentity(identityConfig: IdentityConfig): string {
   return token
 }
 
-function organizationTokensForIdentity(identityConfig: IdentityConfig): VendorOrganizationToken[] {
-  return identityConfig.organizationTokens.map((orgToken) => {
+async function organizationTokensForIdentity(
+  identityConfig: IdentityConfig,
+  fetch?: Fetcher
+): Promise<VendorOrganizationToken[]> {
+  if (identityConfig.provider !== 'github') {
+    throw new Error(`unsupported provider in v1: ${identityConfig.provider}`)
+  }
+
+  const tokens: VendorOrganizationToken[] = []
+  for (const orgToken of identityConfig.organizationTokens) {
     const token = process.env[orgToken.tokenEnv]
     if (!token) throw new Error(`Missing ${orgToken.tokenEnv}`)
-    return {
-      organization: orgToken.organization,
+
+    const organization = await fetchGitHubOrganizationById(
+      graphQLClient({ token, fetch }),
+      orgToken.externalId
+    )
+    tokens.push({
+      externalId: organization.externalId,
+      externalLogin: organization.externalLogin,
       tokenEnv: orgToken.tokenEnv,
       token
-    }
-  })
+    })
+  }
+
+  return tokens
 }
 
 function readOnlyTokenEnvName(provider: string): string {

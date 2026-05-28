@@ -9,7 +9,7 @@ This document records that translation.
 | shiplog column        | GitHub source            | Notes                                         |
 | --------------------- | ------------------------ | --------------------------------------------- |
 | `provider`            | literal `github`         | Identifies the source provider.               |
-| `external_login`      | GraphQL `user.login`     | GitHub username.                              |
+| `external_login`      | GraphQL `user.login`     | Current GitHub username.                      |
 | `external_id`         | GraphQL `user.id`        | GitHub's global GraphQL node id for the user. |
 | `external_url`        | GraphQL `user.url`       | GitHub profile URL.                           |
 | `external_created_at` | GraphQL `user.createdAt` | GitHub account creation timestamp.            |
@@ -127,11 +127,11 @@ This document records that translation.
 
 ## Daily Collector Coverage
 
-`bin/collect_github.ts` maps one activity date at a time. It discovers active repositories from `contributionsCollection`, merges in private repositories from REST `GET /user/repos?visibility=private` for repositories the configured read tokens can read, upserts organization rows for repositories owned by GitHub organizations, upserts generic repository rows, captures repository snapshots when star/fork fields are present, ingests commit/PR/review/issue events, writes `daily_user_summary`, then derives `daily_repository_activity` from the event tables. Commit ingestion counts commits whose GitHub `authors` list includes the configured account, including `Co-authored-by` credits, and stores full commit line stats for those rows.
+`bin/collect_github.ts` maps one activity date at a time. It discovers active repositories from `contributionsCollection`, merges in private repositories from REST `GET /user/repos?visibility=private` for repositories the configured read tokens can read, skips configured ignored repository and organization node IDs, upserts organization rows for repositories owned by GitHub organizations, upserts generic repository rows, captures repository snapshots when star/fork fields are present, ingests commit/PR/review/issue events, writes `daily_user_summary`, then derives `daily_repository_activity` from the event tables. Commit ingestion counts commits whose GitHub `authors` list includes the configured account, including `Co-authored-by` credits, and stores full commit line stats for those rows.
 
 ## Historical Collect Coverage
 
-The internal historical collect strategy starts from GraphQL `user.createdAt`, walks each year through `contributionsCollection`, stores year-start `daily_user_summary` rows with `source = 'self_backfill'`, enumerates repositories from REST `GET /user/repos?visibility=all` for the default read token, and enumerates configured organization repositories from REST `GET /orgs/{organization}/repos?type=all` with organization-specific read tokens. It then upserts organization rows, enriches every discovered repository, imports commits by year, imports authored pull requests and issues, imports submitted reviews, captures repository language snapshots, and derives `daily_repository_activity` for every distinct event date.
+The internal historical collect strategy starts from the account node's `createdAt`, walks each year through `contributionsCollection`, stores year-start `daily_user_summary` rows with `source = 'self_backfill'`, enumerates repositories from REST `GET /user/repos?visibility=all` for the default read token, resolves configured organization node IDs to current logins, and enumerates configured organization repositories from REST `GET /orgs/{organization}/repos?type=all` with organization-specific read tokens. It skips configured ignored repository and organization node IDs, then upserts organization rows, enriches every discovered repository, imports commits by year, imports authored pull requests and issues, imports submitted reviews, captures repository language snapshots, and derives `daily_repository_activity` for every distinct event date.
 
 ## Pending Mappings
 

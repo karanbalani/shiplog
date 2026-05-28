@@ -2,21 +2,34 @@ import type { Provider } from '../domain/enums.ts'
 
 export interface IdentityConfig {
   provider: Provider
-  login: string
+  externalId: string
+  loginHint: string
   tokenEnv: string
   organizationTokens: OrganizationTokenConfig[]
-  ignoreOrganizations: string[]
-  ignoreRepositories: string[]
+  ignoreOrganizations: IgnoredOrganizationConfig[]
+  ignoreRepositories: IgnoredRepositoryConfig[]
 }
 
 export interface OrganizationTokenConfig {
-  organization: string
+  externalId: string
+  loginHint: string
   tokenEnv: string
+}
+
+export interface IgnoredOrganizationConfig {
+  externalId: string
+  loginHint: string
+}
+
+export interface IgnoredRepositoryConfig {
+  externalId: string
+  nameHint: string
 }
 
 export interface PublishTargetConfig {
   provider: Provider
-  repositoryFullName: string
+  repositoryId: string
+  repositoryHint: string
   branch: string
   path: string
   tokenEnv: string

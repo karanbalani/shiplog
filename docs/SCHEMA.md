@@ -34,7 +34,7 @@ One row per external forge account connected to a user, such as a GitHub account
 | `id`                         | `BIGSERIAL`   | Primary key.                                                                                                    |
 | `user_id`                    | `BIGINT`      | Required reference to `users.id`.                                                                               |
 | `provider`                   | `TEXT`        | Provider key. Must be one of `github`, `gitlab`, `bitbucket`, or `gitea`. v1 only implements GitHub collection. |
-| `external_login`             | `TEXT`        | Account login on the provider, for example a GitHub username.                                                   |
+| `external_login`             | `TEXT`        | Current account login on the provider, for example a GitHub username. Mutable; not used as the durable key.     |
 | `external_id`                | `TEXT`        | Stable provider-side account id. GitHub maps its GraphQL node id here.                                          |
 | `external_url`               | `TEXT`        | Optional profile URL on the provider.                                                                           |
 | `external_created_at`        | `TIMESTAMPTZ` | Provider-side account creation timestamp. Used for historical collection bounds and account age rendering.      |
@@ -48,7 +48,6 @@ Constraints and indexes:
 
 - `UNIQUE (user_id, provider)` allows one account per provider per user in v1.
 - `UNIQUE (provider, external_id)` deduplicates accounts by stable provider id.
-- `UNIQUE (provider, external_login)` deduplicates accounts by provider login.
 - `idx_accounts_user` speeds lookups by `user_id`.
 
 Collection checkpoint:
@@ -86,7 +85,7 @@ Provider organizations seen through repositories or provider metadata.
 | `id`             | `BIGSERIAL`   | Primary key.                                                                |
 | `provider`       | `TEXT`        | Provider key, such as `github`.                                             |
 | `external_id`    | `TEXT`        | Stable provider-side organization id. GitHub maps its GraphQL node id here. |
-| `external_login` | `TEXT`        | Organization login or slug on the provider.                                 |
+| `external_login` | `TEXT`        | Current organization login or slug on the provider. Mutable across renames. |
 | `display_name`   | `TEXT`        | Optional organization display name.                                         |
 | `description`    | `TEXT`        | Optional organization description.                                          |
 | `avatar_url`     | `TEXT`        | Optional avatar image URL.                                                  |
@@ -99,7 +98,6 @@ Provider organizations seen through repositories or provider metadata.
 Constraints:
 
 - `UNIQUE (provider, external_id)` deduplicates organizations by stable provider id.
-- `UNIQUE (provider, external_login)` deduplicates organizations by login.
 
 ## repositories
 

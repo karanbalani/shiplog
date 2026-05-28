@@ -3,6 +3,8 @@ import path from 'node:path'
 import * as config from '../lib/config.ts'
 import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
+import { graphQLClient } from '../lib/providers/github/graphql.ts'
+import { fetchGitHubRepositoryById } from '../lib/providers/github/identity.ts'
 import { publishGitHubFile, type GitHubPublishFileResult } from '../lib/providers/github/publish.ts'
 import type { ProfileConfig, PublishTargetConfig } from '../lib/types/index.ts'
 
@@ -30,7 +32,7 @@ export async function publish(options: PublishOptions = {}): Promise<GitHubPubli
   for (const target of profileConfig.publishTargets) {
     const result = await publishTarget(target, content, message, options.fetch)
     logger.info(
-      `[publish] ${target.provider}/${target.repositoryFullName}@${target.branch}:${target.path} updated (${result.commitSha ?? result.sha ?? 'unknown sha'})`
+      `[publish] ${target.provider}/${result.repositoryFullName}@${target.branch}:${target.path} updated (${result.commitSha ?? result.sha ?? 'unknown sha'})`
     )
     results.push(result)
   }
@@ -51,9 +53,13 @@ async function publishTarget(
     throw new Error(`unsupported publish target provider in v1: ${target.provider}`)
   }
 
+  const repository = await fetchGitHubRepositoryById(
+    graphQLClient({ token, fetch }),
+    target.repositoryId
+  )
   return publishGitHubFile({
     token,
-    repositoryFullName: target.repositoryFullName,
+    repositoryFullName: repository.nameWithOwner,
     branch: target.branch,
     path: target.path,
     content,

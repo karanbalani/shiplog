@@ -23,7 +23,15 @@ import * as dates from '../lib/utils/dates.ts'
 import type { CollectArgs, VendorIdentity, VendorOrganizationToken } from '../lib/types/index.ts'
 
 export async function run(args: CollectArgs): Promise<void> {
-  const { identity, token, organizationTokens = [], date, fetch } = args
+  const {
+    identity,
+    token,
+    organizationTokens = [],
+    ignoreOrganizationIds = [],
+    ignoreRepositoryIds = [],
+    date,
+    fetch
+  } = args
   if (!identity) throw new Error('collect_github: missing identity')
   if (!token) throw new Error('collect_github: missing token')
   if (!date) throw new Error('collect_github: missing date')
@@ -32,6 +40,8 @@ export async function run(args: CollectArgs): Promise<void> {
   const rest = restClient({ token, fetch })
   const defaultClients: GitHubClients = { graphQL, rest }
   const organizationClients = organizationClientMap(organizationTokens, fetch)
+  const ignoredRepositories = ignoreSet(ignoreRepositoryIds)
+  const ignoredOrganizations = ignoreSet(ignoreOrganizationIds)
   const commitWindow = dates.dayWindow(date)
   const contributionWindow = dates.contributionDayWindow(date)
 
@@ -47,10 +57,27 @@ export async function run(args: CollectArgs): Promise<void> {
   }
 
   const collection = data.user.contributionsCollection
-  const activeRepositories = collectActiveRepositories(collection)
-  await collectAccessiblePrivateRepositories(rest, activeRepositories)
-  for (const [organization, clients] of organizationClients) {
-    await collectOrganizationRepositories(clients.rest, organization, activeRepositories)
+  const activeRepositories = collectActiveRepositories(
+    collection,
+    ignoredRepositories,
+    ignoredOrganizations
+  )
+  await collectAccessiblePrivateRepositories(
+    rest,
+    activeRepositories,
+    ignoredRepositories,
+    ignoredOrganizations
+  )
+  for (const organization of organizationTokens) {
+    const clients = organizationClients.get(organization.externalId)
+    if (!clients) continue
+    await collectOrganizationRepositories(
+      clients.rest,
+      organization.externalLogin,
+      activeRepositories,
+      ignoredRepositories,
+      ignoredOrganizations
+    )
   }
 
   for (const repositoryNode of activeRepositories) {
@@ -121,7 +148,7 @@ function organizationClientMap(
 ): Map<string, GitHubClients> {
   return new Map(
     organizationTokens.map((orgToken) => [
-      orgToken.organization.toLowerCase(),
+      orgToken.externalId,
       {
         graphQL: graphQLClient({ token: orgToken.token, fetch }),
         rest: restClient({ token: orgToken.token, fetch })
@@ -135,7 +162,10 @@ function clientsForRepository(
   defaultClients: GitHubClients,
   organizationClients: Map<string, GitHubClients>
 ): GitHubClients {
-  return organizationClients.get(repositoryNode.owner.login.toLowerCase()) ?? defaultClients
+  return (
+    (repositoryNode.owner.id ? organizationClients.get(repositoryNode.owner.id) : undefined) ??
+    defaultClients
+  )
 }
 
 async function upsertOrganizationFromRepositoryOwner(
@@ -153,7 +183,9 @@ async function upsertOrganizationFromRepositoryOwner(
 }
 
 export function collectActiveRepositories(
-  collection: GitHubContributionsCollection
+  collection: GitHubContributionsCollection,
+  ignoredRepositories: Set<string> = new Set(),
+  ignoredOrganizations: Set<string> = new Set()
 ): GitHubRepositoryNode[] {
   const repositories = new Map<string, GitHubRepositoryNode>()
 
@@ -164,6 +196,11 @@ export function collectActiveRepositories(
     collection.issueContributionsByRepository
   ]) {
     for (const contribution of group) {
+      if (
+        shouldIgnoreRepository(contribution.repository, ignoredRepositories, ignoredOrganizations)
+      ) {
+        continue
+      }
       repositories.set(contribution.repository.id, contribution.repository)
     }
   }
@@ -173,7 +210,9 @@ export function collectActiveRepositories(
 
 async function collectAccessiblePrivateRepositories(
   rest: RestClient,
-  repositories: GitHubRepositoryNode[]
+  repositories: GitHubRepositoryNode[],
+  ignoredRepositories: Set<string>,
+  ignoredOrganizations: Set<string>
 ): Promise<void> {
   const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>(
     repositories.map((repository) => [repository.id, repository])
@@ -190,11 +229,11 @@ async function collectAccessiblePrivateRepositories(
     })
 
     for (const repository of privateRepositories) {
+      const repositoryNode = translate.repositoryFromRestRepository(repository)
+      if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
+        continue
       if (repositoriesByExternalId.has(repository.node_id)) continue
-      repositoriesByExternalId.set(
-        repository.node_id,
-        translate.repositoryFromRestRepository(repository)
-      )
+      repositoriesByExternalId.set(repository.node_id, repositoryNode)
     }
 
     if (privateRepositories.length < 100) break
@@ -206,7 +245,9 @@ async function collectAccessiblePrivateRepositories(
 async function collectOrganizationRepositories(
   rest: RestClient,
   organization: string,
-  repositories: GitHubRepositoryNode[]
+  repositories: GitHubRepositoryNode[],
+  ignoredRepositories: Set<string>,
+  ignoredOrganizations: Set<string>
 ): Promise<void> {
   const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>(
     repositories.map((repository) => [repository.id, repository])
@@ -225,11 +266,11 @@ async function collectOrganizationRepositories(
     )
 
     for (const repository of organizationRepositories) {
+      const repositoryNode = translate.repositoryFromRestRepository(repository)
+      if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
+        continue
       if (repositoriesByExternalId.has(repository.node_id)) continue
-      repositoriesByExternalId.set(
-        repository.node_id,
-        translate.repositoryFromRestRepository(repository)
-      )
+      repositoriesByExternalId.set(repository.node_id, repositoryNode)
     }
 
     if (organizationRepositories.length < 100) break
@@ -431,4 +472,18 @@ async function ingestIssues(
 function requiredString(value: string | null, label: string): string {
   if (!value) throw new Error(`collect_github: missing ${label}`)
   return value
+}
+
+function ignoreSet(values: string[]): Set<string> {
+  return new Set(values.map((value) => value.toLowerCase()))
+}
+
+function shouldIgnoreRepository(
+  repository: GitHubRepositoryNode,
+  ignoredRepositories: Set<string>,
+  ignoredOrganizations: Set<string>
+): boolean {
+  if (ignoredRepositories.has(repository.id.toLowerCase())) return true
+  const ownerId = repository.owner.id
+  return Boolean(ownerId && ignoredOrganizations.has(ownerId.toLowerCase()))
 }

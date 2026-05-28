@@ -116,14 +116,15 @@ If an organization blocks or requires separate authorization for the default cla
 {
   "organizationTokens": [
     {
-      "organization": "restricted-org",
+      "externalId": "O_kgDO...",
+      "loginHint": "restricted-org",
       "tokenEnv": "GH_RO_RESTRICTED_ORG_TOKEN"
     }
   ]
 }
 ```
 
-Repository metadata, commits, pull requests, issues, and reviews for that organization will use the organization-specific token.
+Find the stable organization id with `bun run identity github organization restricted-org`. Repository metadata, commits, pull requests, issues, and reviews for that organization will use the organization-specific token, even if the organization is later renamed.
 
 Private repository names are stored in the database when your token can read them, but they are not printed in workflow logs. Log lines use the provider repository id for private repositories, for example `id:R_abc123`, so a public Actions run does not leak private repository names.
 

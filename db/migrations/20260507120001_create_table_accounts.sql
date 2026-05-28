@@ -15,8 +15,7 @@ CREATE TABLE accounts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (user_id, provider),
-  UNIQUE (provider, external_id),
-  UNIQUE (provider, external_login)
+  UNIQUE (provider, external_id)
 );
 
 CREATE INDEX idx_accounts_user ON accounts (user_id);
