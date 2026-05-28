@@ -35,6 +35,7 @@ export async function run(args: BackfillArgs): Promise<void> {
     organizationTokens = [],
     ignoreOrganizationIds = [],
     ignoreRepositoryIds = [],
+    throughDate,
     fetch
   } = args
   if (!identity) throw new Error('backfill_github: missing identity')
@@ -48,12 +49,12 @@ export async function run(args: BackfillArgs): Promise<void> {
   const ignoredRepositories = ignoreSet(ignoreRepositoryIds)
   const ignoredOrganizations = ignoreSet(ignoreOrganizationIds)
   const user = await fetchGitHubAccountProfileById(graphQL, identity.externalId)
+  const observedOn = throughDate ?? dates.yesterdayUTC()
   const years = dates.yearRange(
     new Date(user.externalCreatedAt).getUTCFullYear(),
-    new Date().getUTCFullYear()
+    new Date(`${observedOn}T00:00:00Z`).getUTCFullYear()
   )
-  const observedOn = dates.yesterdayUTC()
-  const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>()
+  const repositoriesByExternalId = new Map<string, RepositoryBackfillPlan>()
 
   const discoveryMessage = `[backfill] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)})`
   logger.info(discoveryMessage)
@@ -66,6 +67,7 @@ export async function run(args: BackfillArgs): Promise<void> {
 
     collectActiveRepositories(
       collection,
+      year,
       repositoriesByExternalId,
       ignoredRepositories,
       ignoredOrganizations
@@ -101,14 +103,16 @@ export async function run(args: BackfillArgs): Promise<void> {
   }
 
   const repositoryCount = repositoriesByExternalId.size
-  const estimatedSearchPacing = formatDuration(estimatedSearchPacingMs(repositoryCount))
+  const plannedSearchCalls = countPlannedSearchRequests([...repositoriesByExternalId.values()])
+  const estimatedSearchPacing = formatDuration(estimatedSearchRequestPacingMs(plannedSearchCalls))
   const discoveryCompleteMessage = `[backfill] github/${identity.externalLogin}: discovered ${repositoryCount} repositories; estimated minimum GitHub Search pacing ${estimatedSearchPacing}`
   logger.info(discoveryCompleteMessage)
 
   const repositoriesStartedAt = Date.now()
   let completedRepositories = 0
 
-  for (const repositoryNode of repositoriesByExternalId.values()) {
+  for (const repositoryPlan of repositoriesByExternalId.values()) {
+    const repositoryNode = repositoryPlan.node
     const clients = clientsForRepository(repositoryNode, defaultClients, organizationClients)
     const organizationId = await upsertOrganizationFromRepositoryOwner(repositoryNode, observedOn)
     const repositoryInput = translate.repositoryFromGraphQLNode(
@@ -127,40 +131,62 @@ export async function run(args: BackfillArgs): Promise<void> {
 
     let repositoryStatus = 'complete'
     try {
-      for (const year of years) {
-        const { from, to } = dates.yearWindow(year)
-        logRepositoryStep(identity, repositoryPosition, visibility, logLabel, `commits for ${year}`)
-        await ingestCommits(
+      if (await repositoryBackfillComplete(repository.id, observedOn)) {
+        repositoryStatus = 'already complete'
+      } else {
+        for (const year of commitYearsForPlan(repositoryPlan, years)) {
+          const { from, to } = dates.yearWindow(year)
+          logRepositoryStep(
+            identity,
+            repositoryPosition,
+            visibility,
+            logLabel,
+            `commits for ${year}`
+          )
+          await ingestCommits(
+            clients.graphQL,
+            repository.id,
+            repositoryInput.owner_login,
+            name,
+            identity,
+            from,
+            to
+          )
+        }
+
+        if (shouldSearchPullRequests(repositoryPlan)) {
+          logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull requests')
+          await ingestPullRequests(clients.rest, repository.id, fullName, identity)
+        }
+        if (shouldSearchIssues(repositoryPlan)) {
+          logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'issues')
+          await ingestIssues(clients.rest, repository.id, fullName, identity)
+        }
+        if (shouldSearchPullRequestReviews(repositoryPlan)) {
+          logRepositoryStep(
+            identity,
+            repositoryPosition,
+            visibility,
+            logLabel,
+            'pull request reviews'
+          )
+          await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity)
+        }
+        logRepositoryStep(
+          identity,
+          repositoryPosition,
+          visibility,
+          logLabel,
+          'repository snapshot and languages'
+        )
+        await upsertRepositoryLanguageSnapshot(
           clients.graphQL,
           repository.id,
           repositoryInput.owner_login,
           name,
-          identity,
-          from,
-          to
+          observedOn
         )
       }
-
-      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull requests')
-      await ingestPullRequests(clients.rest, repository.id, fullName, identity)
-      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'issues')
-      await ingestIssues(clients.rest, repository.id, fullName, identity)
-      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull request reviews')
-      await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity)
-      logRepositoryStep(
-        identity,
-        repositoryPosition,
-        visibility,
-        logLabel,
-        'repository snapshot and languages'
-      )
-      await upsertRepositoryLanguageSnapshot(
-        clients.graphQL,
-        repository.id,
-        repositoryInput.owner_login,
-        name,
-        observedOn
-      )
     } catch (error) {
       if (!isGitHubRepositoryUnavailableError(error)) {
         if (repositoryNode.isPrivate) throw privateRepositoryFailure(repositoryNode)
@@ -206,6 +232,15 @@ function logRepositoryStep(
 interface GitHubClients {
   graphQL: GraphQLClient
   rest: RestClient
+}
+
+interface RepositoryBackfillPlan {
+  node: GitHubRepositoryNode
+  commitYears: Set<number>
+  pullRequests: boolean
+  pullRequestReviews: boolean
+  issues: boolean
+  fullScan: boolean
 }
 
 function organizationClientMap(
@@ -267,30 +302,77 @@ async function fetchContributionsCollection(
 
 function collectActiveRepositories(
   collection: GitHubContributionsCollection,
-  repositoriesByExternalId: Map<string, GitHubRepositoryNode>,
+  year: number,
+  repositoriesByExternalId: Map<string, RepositoryBackfillPlan>,
   ignoredRepositories: Set<string>,
   ignoredOrganizations: Set<string>
 ): void {
-  for (const group of [
-    collection.commitContributionsByRepository,
-    collection.pullRequestContributionsByRepository,
-    collection.pullRequestReviewContributionsByRepository,
-    collection.issueContributionsByRepository
-  ]) {
-    for (const contribution of group) {
-      if (
-        shouldIgnoreRepository(contribution.repository, ignoredRepositories, ignoredOrganizations)
-      ) {
-        continue
-      }
-      repositoriesByExternalId.set(contribution.repository.id, contribution.repository)
-    }
+  let mappedCommitContributions = 0
+  let mappedPullRequestContributions = 0
+  let mappedPullRequestReviewContributions = 0
+  let mappedIssueContributions = 0
+
+  for (const contribution of collection.commitContributionsByRepository) {
+    const plan = upsertRepositoryPlan(
+      repositoriesByExternalId,
+      contribution.repository,
+      ignoredRepositories,
+      ignoredOrganizations
+    )
+    mappedCommitContributions += contribution.contributions.totalCount
+    if (plan && contribution.contributions.totalCount > 0) plan.commitYears.add(year)
+  }
+
+  for (const contribution of collection.pullRequestContributionsByRepository) {
+    const plan = upsertRepositoryPlan(
+      repositoriesByExternalId,
+      contribution.repository,
+      ignoredRepositories,
+      ignoredOrganizations
+    )
+    mappedPullRequestContributions += contribution.contributions.totalCount
+    if (plan && contribution.contributions.totalCount > 0) plan.pullRequests = true
+  }
+
+  for (const contribution of collection.pullRequestReviewContributionsByRepository) {
+    const plan = upsertRepositoryPlan(
+      repositoriesByExternalId,
+      contribution.repository,
+      ignoredRepositories,
+      ignoredOrganizations
+    )
+    mappedPullRequestReviewContributions += contribution.contributions.totalCount
+    if (plan && contribution.contributions.totalCount > 0) plan.pullRequestReviews = true
+  }
+
+  for (const contribution of collection.issueContributionsByRepository) {
+    const plan = upsertRepositoryPlan(
+      repositoriesByExternalId,
+      contribution.repository,
+      ignoredRepositories,
+      ignoredOrganizations
+    )
+    mappedIssueContributions += contribution.contributions.totalCount
+    if (plan && contribution.contributions.totalCount > 0) plan.issues = true
+  }
+
+  if (collection.totalCommitContributions > mappedCommitContributions) {
+    for (const plan of repositoriesByExternalId.values()) plan.commitYears.add(year)
+  }
+  if (collection.totalPullRequestContributions > mappedPullRequestContributions) {
+    for (const plan of repositoriesByExternalId.values()) plan.pullRequests = true
+  }
+  if (collection.totalPullRequestReviewContributions > mappedPullRequestReviewContributions) {
+    for (const plan of repositoriesByExternalId.values()) plan.pullRequestReviews = true
+  }
+  if (collection.totalIssueContributions > mappedIssueContributions) {
+    for (const plan of repositoriesByExternalId.values()) plan.issues = true
   }
 }
 
 async function collectAccessibleRepositories(
   rest: RestClient,
-  repositoriesByExternalId: Map<string, GitHubRepositoryNode>,
+  repositoriesByExternalId: Map<string, RepositoryBackfillPlan>,
   ignoredRepositories: Set<string>,
   ignoredOrganizations: Set<string>
 ): Promise<void> {
@@ -308,8 +390,13 @@ async function collectAccessibleRepositories(
       const repositoryNode = translate.repositoryFromRestRepository(repository)
       if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
         continue
-      if (repositoriesByExternalId.has(repository.node_id)) continue
-      repositoriesByExternalId.set(repository.node_id, repositoryNode)
+      const plan = upsertRepositoryPlan(
+        repositoriesByExternalId,
+        repositoryNode,
+        ignoredRepositories,
+        ignoredOrganizations
+      )
+      if (plan && repository.private) plan.fullScan = true
     }
 
     if (repositories.length < 100) return
@@ -319,7 +406,7 @@ async function collectAccessibleRepositories(
 async function collectOrganizationRepositories(
   rest: RestClient,
   organization: string,
-  repositoriesByExternalId: Map<string, GitHubRepositoryNode>,
+  repositoriesByExternalId: Map<string, RepositoryBackfillPlan>,
   ignoredRepositories: Set<string>,
   ignoredOrganizations: Set<string>
 ): Promise<void> {
@@ -336,12 +423,73 @@ async function collectOrganizationRepositories(
       const repositoryNode = translate.repositoryFromRestRepository(repository)
       if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
         continue
-      if (repositoriesByExternalId.has(repository.node_id)) continue
-      repositoriesByExternalId.set(repository.node_id, repositoryNode)
+      const plan = upsertRepositoryPlan(
+        repositoriesByExternalId,
+        repositoryNode,
+        ignoredRepositories,
+        ignoredOrganizations
+      )
+      if (plan && repository.private) plan.fullScan = true
     }
 
     if (repositories.length < 100) return
   }
+}
+
+function upsertRepositoryPlan(
+  repositoriesByExternalId: Map<string, RepositoryBackfillPlan>,
+  repository: GitHubRepositoryNode,
+  ignoredRepositories: Set<string>,
+  ignoredOrganizations: Set<string>
+): RepositoryBackfillPlan | null {
+  if (shouldIgnoreRepository(repository, ignoredRepositories, ignoredOrganizations)) return null
+
+  const existing = repositoriesByExternalId.get(repository.id)
+  if (existing) return existing
+
+  const plan: RepositoryBackfillPlan = {
+    node: repository,
+    commitYears: new Set(),
+    pullRequests: false,
+    pullRequestReviews: false,
+    issues: false,
+    fullScan: false
+  }
+  repositoriesByExternalId.set(repository.id, plan)
+  return plan
+}
+
+function commitYearsForPlan(plan: RepositoryBackfillPlan, years: number[]): number[] {
+  if (plan.fullScan) return years
+  return years.filter((year) => plan.commitYears.has(year))
+}
+
+function shouldSearchPullRequests(plan: RepositoryBackfillPlan): boolean {
+  return plan.fullScan || plan.pullRequests
+}
+
+function shouldSearchPullRequestReviews(plan: RepositoryBackfillPlan): boolean {
+  return plan.fullScan || plan.pullRequestReviews
+}
+
+function shouldSearchIssues(plan: RepositoryBackfillPlan): boolean {
+  return plan.fullScan || plan.issues
+}
+
+async function repositoryBackfillComplete(
+  repositoryId: number,
+  capturedOn: string
+): Promise<boolean> {
+  const result = await db.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM repository_snapshots
+       WHERE repository_id = $1 AND captured_on = $2
+     ) AS exists`,
+    [repositoryId, capturedOn]
+  )
+
+  return result.rows[0]?.exists ?? false
 }
 
 async function ingestCommits(
@@ -363,7 +511,8 @@ async function ingestCommits(
         name,
         since,
         until,
-        cursor
+        cursor,
+        author: { id: identity.externalId }
       }
     )
 
@@ -567,9 +716,23 @@ function dateOnly(value: Date | string): string {
 
 export function estimatedSearchPacingMs(repositoryCount: number): number {
   const searchCallsPerRepository = 3
-  const searchCalls = repositoryCount * searchCallsPerRepository
+  return estimatedSearchRequestPacingMs(repositoryCount * searchCallsPerRepository)
+}
+
+function estimatedSearchRequestPacingMs(searchCalls: number): number {
   if (searchCalls <= 1) return 0
   return (searchCalls - 1) * GITHUB_SEARCH_REQUEST_INTERVAL_MS
+}
+
+function countPlannedSearchRequests(plans: RepositoryBackfillPlan[]): number {
+  return plans.reduce((sum, plan) => {
+    return (
+      sum +
+      Number(shouldSearchPullRequests(plan)) +
+      Number(shouldSearchIssues(plan)) +
+      Number(shouldSearchPullRequestReviews(plan))
+    )
+  }, 0)
 }
 
 export function estimatedRemainingMs(

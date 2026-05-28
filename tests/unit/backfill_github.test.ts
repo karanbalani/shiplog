@@ -115,6 +115,46 @@ test('run backfills GitHub history into generic schema tables', async () => {
   expect(logs.some((line) => line.includes('eta'))).toBe(true)
 })
 
+test('run skips repositories that already have a backfill completion snapshot', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+  const fetch = mockGitHubFetch()
+  let commitRequests = 0
+  const countingFetch: typeof fetch = (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (body.query.includes('query RepositoryCommits')) commitRequests += 1
+    }
+    return fetch(url, init)
+  }) as typeof fetch
+
+  const args = {
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: countingFetch
+  }
+
+  await backfillGitHub.run(args)
+  await backfillGitHub.run(args)
+
+  expect(commitRequests).toBe(1)
+  expect(logs.some((line) => line.includes('already complete'))).toBe(true)
+})
+
 test('run backfills accessible private repositories outside contribution groups', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
@@ -212,7 +252,10 @@ function mockGitHubFetch(): typeof fetch {
 
   return (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
-      const body = JSON.parse(String(init?.body)) as { query: string }
+      const body = JSON.parse(String(init?.body)) as {
+        query: string
+        variables?: Record<string, unknown>
+      }
 
       if (body.query.includes('query UserById')) {
         return jsonResponse({
@@ -233,6 +276,7 @@ function mockGitHubFetch(): typeof fetch {
       }
 
       if (body.query.includes('query RepositoryCommits')) {
+        expect(body.variables?.author).toEqual({ id: 'U_TEST_1' })
         return jsonResponse({
           data: {
             repository: {
@@ -553,13 +597,24 @@ function githubContributionsFixture(): {
     contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
   }
 } {
-  return JSON.parse(
+  const fixture = JSON.parse(
     fs.readFileSync(path.join(FIXTURES, 'github_contributions_collection.json'), 'utf8')
   ) as {
     user: {
       contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
     }
   }
+  const collection = fixture.user.contributionsCollection
+  const repository = collection.commitContributionsByRepository[0]!.repository
+  const contribution = { repository, contributions: { totalCount: 1 } }
+
+  collection.totalIssueContributions = 1
+  collection.totalPullRequestReviewContributions = 1
+  collection.pullRequestContributionsByRepository = [contribution]
+  collection.issueContributionsByRepository = [contribution]
+  collection.pullRequestReviewContributionsByRepository = [contribution]
+
+  return fixture
 }
 
 function githubContributionsWithRepository(

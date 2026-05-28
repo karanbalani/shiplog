@@ -55,6 +55,7 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
         organizationTokens: organizationPatTokens,
         ignoreOrganizationIds,
         ignoreRepositoryIds,
+        throughDate: yesterday,
         fetch: options.fetch
       })
       await upserts.markCollectSuccess(refreshedAccount.id, yesterday)

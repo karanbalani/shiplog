@@ -48,6 +48,37 @@ test('fetchJson retries on 5xx and succeeds', async () => {
   expect(attempts).toBe(3)
 })
 
+test('fetchJson honors retry-after on retryable HTTP errors', async () => {
+  let attempts = 0
+  const sleeps: number[] = []
+  const mockFetch: Fetcher = async () => {
+    attempts += 1
+    if (attempts === 1) {
+      return new Response('service unavailable', {
+        status: 503,
+        headers: { 'retry-after': '2' }
+      })
+    }
+    return new Response('{"ok":true}', { status: 200 })
+  }
+
+  const result = await http.fetchJson(
+    'https://example.com',
+    {},
+    {
+      fetch: mockFetch,
+      retries: 2,
+      retryDelayMs: 1,
+      sleep: async (ms) => {
+        sleeps.push(ms)
+      }
+    }
+  )
+
+  expect(result).toEqual({ ok: true })
+  expect(sleeps).toEqual([2000])
+})
+
 test('fetchJson retries network errors and succeeds', async () => {
   let attempts = 0
   const mockFetch: Fetcher = async () => {

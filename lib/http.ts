@@ -4,6 +4,9 @@ export interface FetchJsonOptions {
   fetch?: Fetcher
   retries?: number
   retryDelayMs?: number
+  maxRetryDelayMs?: number
+  retryStatuses?: number[]
+  sleep?: (ms: number) => Promise<void>
   timeoutMs?: number
 }
 
@@ -29,6 +32,9 @@ export async function fetchJson<T = unknown>(
   const fetcher = opts.fetch ?? globalThis.fetch
   const retries = opts.retries ?? 3
   const retryDelayMs = opts.retryDelayMs ?? 500
+  const maxRetryDelayMs = opts.maxRetryDelayMs ?? 30_000
+  const retryStatuses = new Set(opts.retryStatuses ?? [408, 500, 502, 503, 504])
+  const sleepFn = opts.sleep ?? sleep
 
   let lastError: unknown
 
@@ -40,16 +46,18 @@ export async function fetchJson<T = unknown>(
       }
 
       const body = await response.text()
-      if (response.status >= 500 && attempt < retries) {
-        await sleep(retryDelayMs * 2 ** attempt)
+      const error = new HttpError(url, response.status, body, new Headers(response.headers))
+      if (attempt < retries && retryStatuses.has(response.status)) {
+        await sleepFn(retryDelayMsForAttempt(error.headers, attempt, retryDelayMs, maxRetryDelayMs))
         continue
       }
 
-      throw new HttpError(url, response.status, body, new Headers(response.headers))
+      throw error
     } catch (err) {
       lastError = err
       if (attempt < retries && isRetryableError(err)) {
-        await sleep(retryDelayMs * 2 ** attempt)
+        const headers = err instanceof HttpError ? err.headers : undefined
+        await sleepFn(retryDelayMsForAttempt(headers, attempt, retryDelayMs, maxRetryDelayMs))
         continue
       }
 
@@ -98,4 +106,28 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 
 function isRetryableError(err: unknown): boolean {
   return !(err instanceof HttpError)
+}
+
+function retryDelayMsForAttempt(
+  headers: Headers | undefined,
+  attempt: number,
+  retryDelayMs: number,
+  maxRetryDelayMs: number
+): number {
+  const retryAfter = retryAfterDelayMs(headers?.get('retry-after') ?? null)
+  if (retryAfter !== null) return Math.min(retryAfter, maxRetryDelayMs)
+
+  return Math.min(retryDelayMs * 2 ** attempt, maxRetryDelayMs)
+}
+
+function retryAfterDelayMs(value: string | null): number | null {
+  if (!value) return null
+
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+
+  const dateMs = Date.parse(value)
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now())
+
+  return null
 }

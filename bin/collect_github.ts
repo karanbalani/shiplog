@@ -345,7 +345,8 @@ async function ingestCommits(
         name,
         since,
         until,
-        cursor
+        cursor,
+        author: { id: identity.externalId }
       }
     )
 
