@@ -48,7 +48,7 @@
                 "minLength": 1,
                 "default": "GH_RO_CLASSIC_TOKEN"
               },
-              "organizationTokens": {
+              "organizationPatTokens": {
                 "type": "array",
                 "default": [],
                 "items": {

@@ -6,7 +6,7 @@ import type { Pool } from 'pg'
 import * as collect from '../../bin/collect.ts'
 import * as db from '../../lib/db.ts'
 import * as logger from '../../lib/logger.ts'
-import type { ProfileConfig } from '../../lib/types/index.ts'
+import type { ShiplogConfig } from '../../lib/types/index.ts'
 import * as upserts from '../../lib/upserts.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
@@ -32,7 +32,7 @@ test('run dispatches daily collection for configured account', async () => {
   await seedAccount()
 
   await collect.run({
-    profileConfig: profileConfig(),
+    config: shiplogConfig(),
     date: '2026-05-07',
     fetch: mockGitHubFetch()
   })
@@ -54,7 +54,7 @@ test('run catches up missing collect dates and advances checkpoint', async () =>
   await seedAccount({ lastSuccessfulCollectOn: '2026-05-05' })
 
   await collect.run({
-    profileConfig: profileConfig(),
+    config: shiplogConfig(),
     now: new Date('2026-05-08T00:00:00Z'),
     fetch: mockGitHubFetch()
   })
@@ -77,7 +77,7 @@ test('run skips automatic collect when account is already current', async () => 
   await seedAccount({ lastSuccessfulCollectOn: '2026-05-07' })
 
   await collect.run({
-    profileConfig: profileConfig(),
+    config: shiplogConfig(),
     now: new Date('2026-05-08T00:00:00Z'),
     fetch: async () => {
       throw new Error('fetch should not be called')
@@ -96,7 +96,7 @@ test('run uses COLLECT_DATE when date option is omitted', async () => {
   process.env.COLLECT_DATE = '2026-05-07'
 
   await collect.run({
-    profileConfig: profileConfig(),
+    config: shiplogConfig(),
     now: new Date('2026-05-08T00:00:00Z'),
     fetch: mockGitHubFetch()
   })
@@ -116,7 +116,7 @@ test('run refreshes renamed account login by stable external id', async () => {
   await seedAccount({ externalLogin: 'old-octocat' })
 
   await collect.run({
-    profileConfig: profileConfig(),
+    config: shiplogConfig(),
     date: '2026-05-07',
     fetch: mockGitHubFetch()
   })
@@ -135,7 +135,7 @@ test('run rejects future COLLECT_DATE', async () => {
 
   await expect(
     collect.run({
-      profileConfig: profileConfig(),
+      config: shiplogConfig(),
       now: new Date('2026-05-08T00:00:00Z'),
       fetch: mockGitHubFetch()
     })
@@ -145,7 +145,7 @@ test('run rejects future COLLECT_DATE', async () => {
 test('run throws when account has not been initialized', async () => {
   await expect(
     collect.run({
-      profileConfig: profileConfig(),
+      config: shiplogConfig(),
       date: '2026-05-07',
       fetch: mockGitHubFetch()
     })
@@ -171,32 +171,34 @@ async function seedAccount(
   }
 }
 
-function profileConfig(): ProfileConfig {
+function shiplogConfig(): ShiplogConfig {
   return {
-    displayName: 'Example User',
-    identities: [
-      {
-        provider: 'github',
-        externalId: 'U_TEST_1',
-        tokenEnv: 'GH_RO_CLASSIC_TOKEN',
-        organizationTokens: [],
-        ignoreOrganizations: [],
-        ignoreRepositories: []
-      }
-    ],
-    publishTargets: [
-      {
-        provider: 'github',
-        repositoryId: 'R_PROFILE_1',
-        branch: 'main',
-        path: 'README.md',
-        tokenEnv: 'GH_RW_REPO_TOKEN'
-      }
-    ],
-    render: {
-      topLanguagesCount: 7,
-      topPublicProjectsCount: 6,
-      lastYearWindowDays: 365
+    version: 1,
+    profile: { displayName: 'Example User' },
+    collect: {
+      accounts: [
+        {
+          provider: 'github',
+          accountId: 'U_TEST_1',
+          tokenEnv: 'GH_RO_CLASSIC_TOKEN',
+          organizationPatTokens: [],
+          ignore: {
+            organizations: [],
+            repositories: []
+          }
+        }
+      ]
+    },
+    publish: {
+      targets: [
+        {
+          provider: 'github',
+          repositoryId: 'R_PROFILE_1',
+          branch: 'main',
+          path: 'README.md',
+          tokenEnv: 'GH_RW_REPO_TOKEN'
+        }
+      ]
     }
   }
 }

@@ -8,52 +8,43 @@ const ROOT = path.join(import.meta.dir, '..', '..')
 test('load returns parsed valid config', () => {
   const c = config.load(path.join(FIXTURES, 'shiplog_config_valid.json'))
 
-  expect(c.displayName).toBe('Example User')
-  expect(c.identities).toHaveLength(1)
-  expect(c.identities[0]!.provider).toBe('github')
-  expect(c.identities[0]!.externalId).toBe('U_TEST_1')
-  expect(c.identities[0]!.tokenEnv).toBe('GH_RO_CLASSIC_TOKEN')
-  expect(c.identities[0]!.organizationTokens).toEqual([
+  expect(c.profile.displayName).toBe('Example User')
+  expect(c.collect.accounts).toHaveLength(1)
+  expect(c.collect.accounts[0]!.provider).toBe('github')
+  expect(c.collect.accounts[0]!.accountId).toBe('U_TEST_1')
+  expect(c.collect.accounts[0]!.tokenEnv).toBe('GH_RO_CLASSIC_TOKEN')
+  expect(c.collect.accounts[0]!.organizationPatTokens).toEqual([
     {
-      externalId: 'O_RESTRICTED_1',
+      organizationId: 'O_RESTRICTED_1',
       tokenEnv: 'GH_RO_RESTRICTED_ORG_TOKEN'
     }
   ])
-  expect(c.identities[0]!.ignoreOrganizations).toEqual(['O_NOISY_1'])
-  expect(c.identities[0]!.ignoreRepositories).toEqual(['R_PROFILE_1'])
-  expect(c.publishTargets).toHaveLength(1)
-  expect(c.publishTargets[0]!.repositoryId).toBe('R_PROFILE_1')
-  expect(c.publishTargets[0]!.branch).toBe('main')
-  expect(c.publishTargets[0]!.path).toBe('README.md')
-  expect(c.publishTargets[0]!.tokenEnv).toBe('GH_RW_REPO_TOKEN')
-})
-
-test('load accepts the legacy profile config shape', () => {
-  const c = config.load(path.join(FIXTURES, 'profile_config_valid.json'))
-
-  expect(c.identities[0]!.externalId).toBe('U_TEST_1')
-  expect(c.identities[0]!.ignoreOrganizations).toEqual(['O_NOISY_1'])
-  expect(c.identities[0]!.ignoreRepositories).toEqual(['R_PROFILE_1'])
+  expect(c.collect.accounts[0]!.ignore.organizations).toEqual(['O_NOISY_1'])
+  expect(c.collect.accounts[0]!.ignore.repositories).toEqual(['R_PROFILE_1'])
+  expect(c.publish.targets).toHaveLength(1)
+  expect(c.publish.targets[0]!.repositoryId).toBe('R_PROFILE_1')
+  expect(c.publish.targets[0]!.branch).toBe('main')
+  expect(c.publish.targets[0]!.path).toBe('README.md')
+  expect(c.publish.targets[0]!.tokenEnv).toBe('GH_RW_REPO_TOKEN')
 })
 
 test('load accepts the shipped example config', () => {
   const c = config.load(path.join(ROOT, 'shiplog.config.example.json'))
 
-  expect(c.identities[0]!.externalId).toBe('your-github-user-node-id')
-  expect(c.publishTargets[0]!.repositoryId).toBe('your-profile-repository-node-id')
+  expect(c.collect.accounts[0]!.accountId).toBe('your-github-user-node-id')
+  expect(c.publish.targets[0]!.repositoryId).toBe('your-profile-repository-node-id')
 })
 
 test('load defaults optional config fields when omitted', () => {
   const c = config.load(path.join(FIXTURES, 'shiplog_config_defaults.json'))
 
-  expect(c.render).toEqual(config.DEFAULT_RENDER)
-  expect(c.identities[0]!.ignoreOrganizations).toEqual([])
-  expect(c.identities[0]!.ignoreRepositories).toEqual([])
-  expect(c.identities[0]!.tokenEnv).toBe('GH_RO_CLASSIC_TOKEN')
-  expect(c.identities[0]!.organizationTokens).toEqual([])
-  expect(c.publishTargets[0]!.branch).toBe('main')
-  expect(c.publishTargets[0]!.path).toBe('README.md')
-  expect(c.publishTargets[0]!.tokenEnv).toBe('GH_RW_REPO_TOKEN')
+  expect(c.profile).toEqual({})
+  expect(c.collect.accounts[0]!.ignore).toEqual({ organizations: [], repositories: [] })
+  expect(c.collect.accounts[0]!.tokenEnv).toBe('GH_RO_CLASSIC_TOKEN')
+  expect(c.collect.accounts[0]!.organizationPatTokens).toEqual([])
+  expect(c.publish.targets[0]!.branch).toBe('main')
+  expect(c.publish.targets[0]!.path).toBe('README.md')
+  expect(c.publish.targets[0]!.tokenEnv).toBe('GH_RW_REPO_TOKEN')
 })
 
 test('validate allows schema hint without returning it', () => {
@@ -70,12 +61,6 @@ test('validate allows schema hint without returning it', () => {
 test('load rejects empty collect accounts', () => {
   expect(() => config.load(path.join(FIXTURES, 'shiplog_config_invalid_no_account.json'))).toThrow(
     /at least one collect account/i
-  )
-})
-
-test('load rejects legacy empty identities', () => {
-  expect(() => config.load(path.join(FIXTURES, 'profile_config_invalid_no_identity.json'))).toThrow(
-    /at least one identity/i
   )
 })
 

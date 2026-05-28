@@ -9,8 +9,8 @@ import {
 } from '../lib/providers/github/identity.ts'
 import type {
   AccountRow,
-  IdentityConfig,
-  ProfileConfig,
+  ShiplogCollectAccountConfig,
+  ShiplogConfig,
   VendorOrganizationToken,
   VendorIdentity,
   VendorModule
@@ -20,36 +20,39 @@ import * as dates from '../lib/utils/dates.ts'
 
 export interface CollectRunOptions {
   configPath?: string
-  profileConfig?: ProfileConfig
+  config?: ShiplogConfig
   date?: string
   fetch?: Fetcher
   now?: Date
 }
 
 export async function run(options: CollectRunOptions = {}): Promise<void> {
-  const profileConfig = options.profileConfig ?? config.load(options.configPath)
+  const shiplogConfig = options.config ?? config.load(options.configPath)
   const requestedDate = options.date ?? process.env.COLLECT_DATE
   const yesterday = dates.yesterdayUTC(options.now)
 
-  for (const identityConfig of profileConfig.identities) {
-    const account = await findAccount(identityConfig)
-    const ignoreOrganizationIds = identityConfig.ignoreOrganizations
-    const ignoreRepositoryIds = identityConfig.ignoreRepositories
+  for (const accountConfig of shiplogConfig.collect.accounts) {
+    const account = await findAccount(accountConfig)
+    const ignoreOrganizationIds = accountConfig.ignore.organizations
+    const ignoreRepositoryIds = accountConfig.ignore.repositories
 
     if (!requestedDate && !account.last_successful_collect_on) {
-      const token = tokenForIdentity(identityConfig)
-      const organizationTokens = await organizationTokensForIdentity(identityConfig, options.fetch)
-      const refreshedAccount = await refreshAccount(identityConfig, account, token, options.fetch)
+      const token = tokenForAccount(accountConfig)
+      const organizationPatTokens = await organizationPatTokensForAccount(
+        accountConfig,
+        options.fetch
+      )
+      const refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
       const identity = vendorIdentity(refreshedAccount)
 
       logger.info(
-        `[collect] ${identityConfig.provider}/${refreshedAccount.external_login}: no checkpoint found; collecting complete history through ${yesterday}`
+        `[collect] ${accountConfig.provider}/${refreshedAccount.external_login}: no checkpoint found; collecting complete history through ${yesterday}`
       )
-      const historicalVendor = await importVendorHistoricalCollector(identityConfig.provider)
+      const historicalVendor = await importVendorHistoricalCollector(accountConfig.provider)
       await historicalVendor.run({
         identity,
         token,
-        organizationTokens,
+        organizationTokens: organizationPatTokens,
         ignoreOrganizationIds,
         ignoreRepositoryIds,
         fetch: options.fetch
@@ -58,33 +61,36 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
       continue
     }
 
-    const vendor = await importVendorCollector(identityConfig.provider)
+    const vendor = await importVendorCollector(accountConfig.provider)
     const collectDates = collectDatesForAccount(account, yesterday, requestedDate)
 
     if (collectDates.length === 0) {
       logger.info(
-        `[collect] ${identityConfig.provider}/${account.external_login}: already collected through ${yesterday}`
+        `[collect] ${accountConfig.provider}/${account.external_login}: already collected through ${yesterday}`
       )
       continue
     }
 
-    const token = tokenForIdentity(identityConfig)
-    const organizationTokens = await organizationTokensForIdentity(identityConfig, options.fetch)
-    const refreshedAccount = await refreshAccount(identityConfig, account, token, options.fetch)
+    const token = tokenForAccount(accountConfig)
+    const organizationPatTokens = await organizationPatTokensForAccount(
+      accountConfig,
+      options.fetch
+    )
+    const refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
     const identity = vendorIdentity(refreshedAccount)
 
     logger.info(
-      `[collect] ${identityConfig.provider}/${refreshedAccount.external_login}: ${collectDates.length} day(s) (${collectDates[0]} to ${collectDates.at(-1)})`
+      `[collect] ${accountConfig.provider}/${refreshedAccount.external_login}: ${collectDates.length} day(s) (${collectDates[0]} to ${collectDates.at(-1)})`
     )
 
     for (const [index, collectDate] of collectDates.entries()) {
       logger.info(
-        `[collect] ${identityConfig.provider}/${refreshedAccount.external_login}: ${index + 1}/${collectDates.length} ${collectDate}`
+        `[collect] ${accountConfig.provider}/${refreshedAccount.external_login}: ${index + 1}/${collectDates.length} ${collectDate}`
       )
       await vendor.run({
         identity,
         token,
-        organizationTokens,
+        organizationTokens: organizationPatTokens,
         ignoreOrganizationIds,
         ignoreRepositoryIds,
         date: collectDate,
@@ -116,18 +122,18 @@ export function collectDatesForAccount(
   return dateRange(start, yesterday)
 }
 
-export async function findAccount(identityConfig: IdentityConfig): Promise<AccountRow> {
+export async function findAccount(accountConfig: ShiplogCollectAccountConfig): Promise<AccountRow> {
   const result = await db.query<AccountRow>(
     `SELECT *
      FROM accounts
      WHERE provider = $1 AND external_id = $2
      LIMIT 1`,
-    [identityConfig.provider, identityConfig.externalId]
+    [accountConfig.provider, accountConfig.accountId]
   )
 
   if (!result.rows[0]) {
     throw new Error(
-      `No account row for ${identityConfig.provider}/${identityConfig.externalId}; run bun run init first`
+      `No account row for ${accountConfig.provider}/${accountConfig.accountId}; run bun run init first`
     )
   }
 
@@ -135,13 +141,13 @@ export async function findAccount(identityConfig: IdentityConfig): Promise<Accou
 }
 
 async function refreshAccount(
-  identityConfig: IdentityConfig,
+  accountConfig: ShiplogCollectAccountConfig,
   account: AccountRow,
   token: string,
   fetch?: Fetcher
 ): Promise<AccountRow> {
-  if (identityConfig.provider !== 'github') {
-    throw new Error(`unsupported provider in v1: ${identityConfig.provider}`)
+  if (accountConfig.provider !== 'github') {
+    throw new Error(`unsupported provider in v1: ${accountConfig.provider}`)
   }
 
   const profile = await fetchGitHubAccountProfileById(
@@ -150,7 +156,7 @@ async function refreshAccount(
   )
   return upserts.upsertAccount({
     user_id: account.user_id,
-    provider: identityConfig.provider,
+    provider: accountConfig.provider,
     external_login: profile.externalLogin,
     external_id: profile.externalId,
     external_url: profile.externalUrl,
@@ -169,29 +175,29 @@ async function importVendorHistoricalCollector(provider: string): Promise<Vendor
   return (await import('./backfill_github.ts')) as VendorModule
 }
 
-function tokenForIdentity(identityConfig: IdentityConfig): string {
-  const envName = identityConfig.tokenEnv || readOnlyTokenEnvName(identityConfig.provider)
+function tokenForAccount(accountConfig: ShiplogCollectAccountConfig): string {
+  const envName = accountConfig.tokenEnv || readOnlyTokenEnvName(accountConfig.provider)
   const token = process.env[envName]
   if (!token) throw new Error(`Missing ${envName}`)
   return token
 }
 
-async function organizationTokensForIdentity(
-  identityConfig: IdentityConfig,
+async function organizationPatTokensForAccount(
+  accountConfig: ShiplogCollectAccountConfig,
   fetch?: Fetcher
 ): Promise<VendorOrganizationToken[]> {
-  if (identityConfig.provider !== 'github') {
-    throw new Error(`unsupported provider in v1: ${identityConfig.provider}`)
+  if (accountConfig.provider !== 'github') {
+    throw new Error(`unsupported provider in v1: ${accountConfig.provider}`)
   }
 
   const tokens: VendorOrganizationToken[] = []
-  for (const orgToken of identityConfig.organizationTokens) {
+  for (const orgToken of accountConfig.organizationPatTokens) {
     const token = process.env[orgToken.tokenEnv]
     if (!token) throw new Error(`Missing ${orgToken.tokenEnv}`)
 
     const organization = await fetchGitHubOrganizationById(
       graphQLClient({ token, fetch }),
-      orgToken.externalId
+      orgToken.organizationId
     )
     tokens.push({
       externalId: organization.externalId,

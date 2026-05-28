@@ -135,11 +135,11 @@ Then edit `shiplog.config.json`:
 - Set `profile.displayName`.
 - Run `bun run identity github <your-github-login>` and paste the returned account object into `collect.accounts[0]`.
 - Set `collect.accounts[0].tokenEnv` to the read token env var, usually `GH_RO_CLASSIC_TOKEN`.
-- Optionally run `bun run identity github organization-token <org-login>` and add the returned object to `collect.accounts[0].organizationTokens[]` for organizations that need a separately authorized read token.
+- Optionally run `bun run identity github organization-pat-token <org-login>` and add the returned object to `collect.accounts[0].organizationPatTokens[]` for organizations that need a separately authorized PAT.
 - Run `bun run identity github publish-target <owner/repo>` and paste the returned object into `publish.targets[0]`.
 - Set `publish.targets[0].tokenEnv` to `GH_RW_REPO_TOKEN`.
 
-Config uses stable provider IDs for collect accounts, organization tokens, ignored organizations, ignored repositories, and publish targets. shiplog resolves the current provider names at runtime so GitHub username, organization, and repository renames do not split history.
+Config uses stable provider IDs for collect accounts, organization PAT tokens, ignored organizations, ignored repositories, and publish targets. shiplog resolves the current provider names at runtime so GitHub username, organization, and repository renames do not split history.
 
 For ignore entries, use `bun run identity github organization <org-login>` for `collect.accounts[0].ignore.organizations[]` and `bun run identity github repository <owner/repo>` for `collect.accounts[0].ignore.repositories[]`. These helper lookups work without a token for public users, organizations, and repositories. Set `GH_RO_CLASSIC_TOKEN` only when the lookup needs authenticated access, such as a private repository.
 
@@ -174,7 +174,7 @@ Token responsibilities:
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org` so private repository activity is available.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits for configured publish targets.
 
-If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_TOKEN`, add the stable organization token entry to `collect.accounts[0].organizationTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
+If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_TOKEN`, add the stable organization PAT token entry to `collect.accounts[0].organizationPatTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
 

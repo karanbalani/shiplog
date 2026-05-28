@@ -10,7 +10,7 @@
         "provider": "github",
         "accountId": "your-github-user-node-id",
         "tokenEnv": "GH_RO_CLASSIC_TOKEN",
-        "organizationTokens": [
+        "organizationPatTokens": [
           {
             "organizationId": "restricted-org-node-id",
             "tokenEnv": "GH_RO_RESTRICTED_ORG_TOKEN"

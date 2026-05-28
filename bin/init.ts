@@ -4,41 +4,41 @@ import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
 import { graphQLClient } from '../lib/providers/github/graphql.ts'
 import { fetchGitHubAccountProfileById } from '../lib/providers/github/identity.ts'
-import type { IdentityConfig, ProfileConfig, UserRow } from '../lib/types/index.ts'
+import type { ShiplogCollectAccountConfig, ShiplogConfig, UserRow } from '../lib/types/index.ts'
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
 
 export interface InitRunOptions {
   configPath?: string
-  profileConfig?: ProfileConfig
+  config?: ShiplogConfig
   fetch?: Fetcher
   now?: Date
 }
 
 export async function run(options: InitRunOptions = {}): Promise<void> {
-  const profileConfig = options.profileConfig ?? config.load(options.configPath)
-  const user = await ensureUser(profileConfig.displayName ?? null)
+  const shiplogConfig = options.config ?? config.load(options.configPath)
+  const user = await ensureUser(shiplogConfig.profile.displayName ?? null)
   const firstSeenOn = dates.yesterdayUTC(options.now)
 
-  for (const identityConfig of profileConfig.identities) {
-    const token = tokenForIdentity(identityConfig)
-    const accountProfile = await fetchAccountProfile(identityConfig, token, options.fetch)
+  for (const accountConfig of shiplogConfig.collect.accounts) {
+    const token = tokenForAccount(accountConfig)
+    const accountProfile = await fetchAccountProfile(accountConfig, token, options.fetch)
     const account = await upserts.upsertAccount({
       user_id: user.id,
-      provider: identityConfig.provider,
+      provider: accountConfig.provider,
       external_login: accountProfile.externalLogin,
       external_id: accountProfile.externalId,
       external_url: accountProfile.externalUrl,
       external_created_at: accountProfile.externalCreatedAt,
       first_seen_on: firstSeenOn
     })
-    logger.info(`[init] ${identityConfig.provider}/${account.external_login}: account ready`)
+    logger.info(`[init] ${accountConfig.provider}/${account.external_login}: account ready`)
   }
 
   logger.info('[init] collecting missing activity')
   const collect = await import('./collect.ts')
   await collect.run({
-    profileConfig,
+    config: shiplogConfig,
     fetch: options.fetch,
     now: options.now
   })
@@ -52,20 +52,20 @@ export async function ensureUser(displayName: string | null): Promise<UserRow> {
 }
 
 export async function fetchAccountProfile(
-  identityConfig: IdentityConfig,
+  accountConfig: ShiplogCollectAccountConfig,
   token: string,
   fetch?: Fetcher
 ): ReturnType<typeof fetchGitHubAccountProfileById> {
-  if (identityConfig.provider !== 'github') {
-    throw new Error(`unsupported provider in v1: ${identityConfig.provider}`)
+  if (accountConfig.provider !== 'github') {
+    throw new Error(`unsupported provider in v1: ${accountConfig.provider}`)
   }
 
   const graphQL = graphQLClient({ token, fetch })
-  return fetchGitHubAccountProfileById(graphQL, identityConfig.externalId)
+  return fetchGitHubAccountProfileById(graphQL, accountConfig.accountId)
 }
 
-function tokenForIdentity(identityConfig: IdentityConfig): string {
-  const envName = identityConfig.tokenEnv || readOnlyTokenEnvName(identityConfig.provider)
+function tokenForAccount(accountConfig: ShiplogCollectAccountConfig): string {
+  const envName = accountConfig.tokenEnv || readOnlyTokenEnvName(accountConfig.provider)
   const token = process.env[envName]
   if (!token) throw new Error(`Missing ${envName}`)
   return token
