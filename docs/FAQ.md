@@ -214,7 +214,7 @@ Historical backfill is designed to be resumable:
 - `accounts.last_successful_collect_on` stays null until the complete historical collect succeeds.
 - Most writes use database upserts or uniqueness constraints.
 - Repeated rows are deduplicated on rerun.
-- Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_REPOSITORY_LIMIT` or the backfill workflow's `repository_limit` input to process large accounts in smaller chunks.
+- Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_REPOSITORY_LIMIT`, `BACKFILL_MAX_MINUTES`, or the backfill workflow's matching inputs to process large accounts in smaller chunks.
 
 Partial progress from the failed run is useful and should normally be kept.
 

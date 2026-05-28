@@ -42,6 +42,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     ignoreRepositoryIds = [],
     throughDate,
     repositoryLimit,
+    maxRuntimeMs,
     fetch
   } = args
   if (!identity) throw new Error('backfill_github: missing identity')
@@ -118,6 +119,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
   let visitedRepositories = 0
   let processedRepositories = 0
   let deferredRepositories = 0
+  let pausedByTimeBudget = false
 
   for (const repositoryPlan of repositoriesByExternalId.values()) {
     const repositoryNode = repositoryPlan.node
@@ -141,6 +143,17 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     try {
       if (await repositoryBackfillComplete(identity.accountId, repository.id, observedOn)) {
         repositoryStatus = 'already complete'
+      } else if (
+        !pausedByTimeBudget &&
+        processedRepositories > 0 &&
+        backfillTimeBudgetExceeded(startedAt, maxRuntimeMs)
+      ) {
+        pausedByTimeBudget = true
+        repositoryStatus = 'deferred by time budget'
+        deferredRepositories += 1
+      } else if (pausedByTimeBudget) {
+        repositoryStatus = 'deferred by time budget'
+        deferredRepositories += 1
       } else if (repositoryLimit !== undefined && processedRepositories >= repositoryLimit) {
         repositoryStatus = 'deferred by budget'
         deferredRepositories += 1
@@ -250,6 +263,10 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
   }
 
   return result
+}
+
+function backfillTimeBudgetExceeded(startedAt: number, maxRuntimeMs: number | undefined): boolean {
+  return maxRuntimeMs !== undefined && Date.now() - startedAt >= maxRuntimeMs
 }
 
 function formatRepositoryCount(count: number): string {

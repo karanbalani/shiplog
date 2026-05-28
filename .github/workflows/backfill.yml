@@ -7,6 +7,10 @@ on:
         description: 'Optional maximum unfinished repositories to process in this run'
         required: false
         type: string
+      max_minutes:
+        description: 'Optional maximum run time before pausing between repositories'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -59,3 +63,4 @@ jobs:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
           BACKFILL_REPOSITORY_LIMIT: ${{ github.event.inputs.repository_limit }}
+          BACKFILL_MAX_MINUTES: ${{ github.event.inputs.max_minutes }}

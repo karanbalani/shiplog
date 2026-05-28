@@ -26,12 +26,14 @@ export interface BackfillRunOptions {
   fetch?: Fetcher
   now?: Date
   repositoryLimit?: number
+  maxRuntimeMinutes?: number
 }
 
 export async function run(options: BackfillRunOptions = {}): Promise<void> {
   const shiplogConfig = options.config ?? config.load(options.configPath)
   const throughDate = dates.yesterdayUTC(options.now)
   const repositoryLimit = backfillRepositoryLimit(options)
+  const maxRuntimeMs = backfillMaxRuntimeMs(options)
 
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await findAccount(accountConfig)
@@ -53,6 +55,7 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
       ignoreRepositoryIds: accountConfig.ignore.repositories,
       throughDate,
       repositoryLimit,
+      maxRuntimeMs,
       fetch: options.fetch
     } satisfies BackfillArgs)
 
@@ -77,12 +80,35 @@ function backfillRepositoryLimit(options: BackfillRunOptions): number | undefine
   return assertPositiveInteger(Number(envValue), 'BACKFILL_REPOSITORY_LIMIT')
 }
 
+function backfillMaxRuntimeMs(options: BackfillRunOptions): number | undefined {
+  if (options.maxRuntimeMinutes !== undefined) {
+    return minutesToMs(assertPositiveNumber(options.maxRuntimeMinutes, 'maxRuntimeMinutes'))
+  }
+
+  const envValue = process.env.BACKFILL_MAX_MINUTES?.trim()
+  if (!envValue) return undefined
+
+  return minutesToMs(assertPositiveNumber(Number(envValue), 'BACKFILL_MAX_MINUTES'))
+}
+
 function assertPositiveInteger(value: number, label: string): number {
   if (!Number.isInteger(value) || value <= 0) {
     throw new Error(`${label} must be a positive integer; got ${value}`)
   }
 
   return value
+}
+
+function assertPositiveNumber(value: number, label: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${label} must be a positive number; got ${value}`)
+  }
+
+  return value
+}
+
+function minutesToMs(minutes: number): number {
+  return Math.round(minutes * 60 * 1000)
 }
 
 function backfillComplete(
