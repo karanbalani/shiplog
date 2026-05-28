@@ -19,7 +19,7 @@ Completed so far:
 - Shared TypeScript schema, config, and vendor contracts in `lib/types/`
 - Postgres pool, query, transaction, and close helpers in `lib/db.ts`
 - UTC date helpers in `lib/utils/dates.ts`
-- JSON Schema-backed profile config loader in `lib/config.ts`
+- JSON Schema-backed shiplog config loader in `lib/config.ts`
 - Fetch JSON helper with retry and timeout support in `lib/http.ts`
 - GitHub provider API helpers in `lib/providers/github/`
 - Schema-aware database upsert helpers and daily repository rollups in `lib/upserts.ts`
@@ -124,38 +124,38 @@ SHIPLOG_LOG_LEVEL=info # debug, info, warn, error, silent
 NO_COLOR=1             # disable ANSI colors
 ```
 
-Create your profile config from the template:
+Create your shiplog config from the template:
 
 ```bash
-cp profile_config.example.json profile_config.json
+cp shiplog.config.example.json shiplog.config.json
 ```
 
-Then edit `profile_config.json`:
+Then edit `shiplog.config.json`:
 
-- Set `displayName`.
-- Run `bun run identity github <your-github-login>` and paste the returned identity object into `identities[0]`.
-- Set `identities[0].tokenEnv` to the read token env var, usually `GH_RO_CLASSIC_TOKEN`.
-- Optionally run `bun run identity github organization <org-login>` and add the returned object to `identities[0].organizationTokens[]` for organizations that need a separately authorized read token.
-- Run `bun run identity github publish-target <owner/repo>` and paste the returned object into `publishTargets[0]`.
-- Set `publishTargets[0].tokenEnv` to `GH_RW_REPO_TOKEN`.
+- Set `profile.displayName`.
+- Run `bun run identity github <your-github-login>` and paste the returned account object into `collect.accounts[0]`.
+- Set `collect.accounts[0].tokenEnv` to the read token env var, usually `GH_RO_CLASSIC_TOKEN`.
+- Optionally run `bun run identity github organization-token <org-login>` and add the returned object to `collect.accounts[0].organizationTokens[]` for organizations that need a separately authorized read token.
+- Run `bun run identity github publish-target <owner/repo>` and paste the returned object into `publish.targets[0]`.
+- Set `publish.targets[0].tokenEnv` to `GH_RW_REPO_TOKEN`.
 
-Config uses stable provider IDs for identities, organization tokens, ignored organizations, ignored repositories, and publish targets. Hint fields such as `loginHint`, `nameHint`, and `repositoryHint` are for humans; shiplog resolves the current provider names at runtime so GitHub username, organization, and repository renames do not split history.
+Config uses stable provider IDs for collect accounts, organization tokens, ignored organizations, ignored repositories, and publish targets. shiplog resolves the current provider names at runtime so GitHub username, organization, and repository renames do not split history.
 
-For ignore entries, use `bun run identity github organization <org-login>` for `ignoreOrganizations[]` and `bun run identity github repository <owner/repo>` for `ignoreRepositories[]`. These helper lookups work without a token for public users, organizations, and repositories. Set `GH_RO_CLASSIC_TOKEN` only when the lookup needs authenticated access, such as a private repository.
+For ignore entries, use `bun run identity github organization <org-login>` for `collect.accounts[0].ignore.organizations[]` and `bun run identity github repository <owner/repo>` for `collect.accounts[0].ignore.repositories[]`. These helper lookups work without a token for public users, organizations, and repositories. Set `GH_RO_CLASSIC_TOKEN` only when the lookup needs authenticated access, such as a private repository.
 
-The upstream org/template repo commits `profile_config.example.json`, not a real `profile_config.json`. `profile_config.json` is gitignored so local config does not accidentally get committed.
+The upstream org/template repo commits `shiplog.config.example.json`, not a real `shiplog.config.json`. `shiplog.config.json` is gitignored so local config does not accidentally get committed.
 
 For GitHub Actions, store the config as a repository variable named `SHIPLOG_CONFIG_BASE64`. Generate the value from your local config:
 
 ```bash
-base64 < profile_config.json | tr -d '\n'
+base64 < shiplog.config.json | tr -d '\n'
 ```
 
 Then decode it inside the workflow before running `bun run init`, `bun run collect`, or `bun run render`:
 
 ```yaml
-- name: Write profile config
-  run: printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > profile_config.json
+- name: Write shiplog config
+  run: printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > shiplog.config.json
   env:
     SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
 ```
@@ -174,11 +174,11 @@ Token responsibilities:
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org` so private repository activity is available.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits for configured publish targets.
 
-If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_TOKEN`, add the stable organization token entry to `identities[0].organizationTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
+If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_TOKEN`, add the stable organization token entry to `collect.accounts[0].organizationTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders `rendered.md`, and publishes the initial README to `publishTargets`. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates `rendered.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders `rendered.md`, and publishes the initial README to `publish.targets`. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates `rendered.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
@@ -266,7 +266,7 @@ bun run migration:new create_table_some_table
 
 This wraps `dbmate new create_table_some_table` and creates a timestamped SQL file under `db/migrations/`. Migration names should follow `<up_action>_<object_type>_<object_name>`, for example `create_table_users`, `create_view_monthly_repository_activity`, or `alter_table_accounts_add_timezone`. Keep schema migrations small: one table or view per migration, with table-specific indexes in the same file.
 
-Initialize accounts and run the first collection after configuring `profile_config.json` and migrating the database:
+Initialize accounts and run the first collection after configuring `shiplog.config.json` and migrating the database:
 
 ```bash
 bun run init
@@ -317,9 +317,9 @@ The GitHub daily collector currently resolves configured stable IDs to current G
 
 The internal GitHub historical strategy resolves the stable account ID, uses the account creation year to walk contribution history by year, enumerates authenticated repositories the configured read tokens can read, applies ignored repository/organization IDs, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
 
-The init dispatcher reads `profile_config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, then invokes collect. A null `last_successful_collect_on` makes collect run the historical path.
+The init dispatcher reads `shiplog.config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, then invokes collect. A null `last_successful_collect_on` makes collect run the historical path.
 
-The collect dispatcher reads `profile_config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE`, or catches up every missing date through UTC yesterday. After a successful automatic run, it advances the account checkpoint.
+The collect dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE`, or catches up every missing date through UTC yesterday. After a successful automatic run, it advances the account checkpoint.
 
 The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `rendered.md`. It does not overwrite this repository's own `README.md`.
 

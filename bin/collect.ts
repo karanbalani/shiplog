@@ -1,4 +1,3 @@
-import path from 'node:path'
 import * as config from '../lib/config.ts'
 import * as db from '../lib/db.ts'
 import type { Fetcher } from '../lib/http.ts'
@@ -28,9 +27,7 @@ export interface CollectRunOptions {
 }
 
 export async function run(options: CollectRunOptions = {}): Promise<void> {
-  const profileConfig =
-    options.profileConfig ??
-    config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
+  const profileConfig = options.profileConfig ?? config.load(options.configPath)
   const requestedDate = options.date ?? process.env.COLLECT_DATE
   const yesterday = dates.yesterdayUTC(options.now)
 

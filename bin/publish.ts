@@ -20,9 +20,7 @@ export interface PublishOptions {
 }
 
 export async function publish(options: PublishOptions = {}): Promise<GitHubPublishFileResult[]> {
-  const profileConfig =
-    options.profileConfig ??
-    config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
+  const profileConfig = options.profileConfig ?? config.load(options.configPath)
   const content =
     options.content ??
     fs.readFileSync(options.inputPath ?? path.resolve(process.cwd(), DEFAULT_INPUT_PATH), 'utf8')

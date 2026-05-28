@@ -1,4 +1,3 @@
-import path from 'node:path'
 import * as config from '../lib/config.ts'
 import * as db from '../lib/db.ts'
 import type { Fetcher } from '../lib/http.ts'
@@ -17,9 +16,7 @@ export interface InitRunOptions {
 }
 
 export async function run(options: InitRunOptions = {}): Promise<void> {
-  const profileConfig =
-    options.profileConfig ??
-    config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
+  const profileConfig = options.profileConfig ?? config.load(options.configPath)
   const user = await ensureUser(profileConfig.displayName ?? null)
   const firstSeenOn = dates.yesterdayUTC(options.now)
 

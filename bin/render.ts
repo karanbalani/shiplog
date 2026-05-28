@@ -83,9 +83,7 @@ interface AccountFilter {
 }
 
 export async function render(options: RenderOptions = {}): Promise<string> {
-  const profileConfig =
-    options.profileConfig ??
-    config.load(options.configPath ?? path.resolve(process.cwd(), 'profile_config.json'))
+  const profileConfig = options.profileConfig ?? config.load(options.configPath)
   const template =
     options.template ??
     fs.readFileSync(options.templatePath ?? path.resolve(process.cwd(), 'TEMPLATE.md'), 'utf8')

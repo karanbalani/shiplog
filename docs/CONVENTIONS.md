@@ -59,7 +59,7 @@ This document captures project conventions that should stay consistent across im
 - An `event` is point-in-time activity such as a commit, pull request, review, or issue.
 - A `rollup` or `fact` is derived aggregate data such as `daily_repository_activity`.
 - A `row` type is a database-read shape and should use snake_case column names.
-- A `config` type describes `profile_config.json` or another user-authored config file.
+- A `config` type describes `shiplog.config.json` or another user-authored config file.
 
 ## TypeScript Types
 
@@ -77,10 +77,10 @@ This document captures project conventions that should stay consistent across im
 
 - User-authored JSON config is validated with JSON Schema.
 - JSON schemas live under `schemas/`.
-- Keep `schemas/profile_config.schema.json` as the source of truth for `profile_config.json` validation.
-- The upstream org/template repo should commit `profile_config.example.json`, not a real `profile_config.json`.
-- `profile_config.json` is gitignored and should stay local.
-- GitHub Actions should create `profile_config.json` by decoding the `SHIPLOG_CONFIG_BASE64` repository variable before running shiplog commands.
+- Keep `schemas/shiplog.config.schema.json` as the source of truth for `shiplog.config.json` validation.
+- The upstream org/template repo should commit `shiplog.config.example.json`, not a real `shiplog.config.json`.
+- `shiplog.config.json` is gitignored and should stay local.
+- GitHub Actions should create `shiplog.config.json` by decoding the `SHIPLOG_CONFIG_BASE64` repository variable before running shiplog commands.
 - Config must not contain secrets; database URLs and provider tokens belong in secrets.
 - Keep `lib/types/config/` aligned with the schema return shape.
 - Keep `lib/config.ts` focused on loading, schema validation, default application, and typed return values.
