@@ -203,10 +203,10 @@ function mockGitHubFetch(): typeof fetch {
     if (url === 'https://api.github.com/graphql') {
       const body = JSON.parse(String(init?.body)) as { query: string }
 
-      if (body.query.includes('query ViewerAndUser')) {
+      if (body.query.includes('query UserById')) {
         return jsonResponse({
           data: {
-            user: {
+            node: {
               id: 'U_TEST_1',
               login: 'octocat',
               name: 'Octocat',
@@ -355,10 +355,10 @@ function mockGitHubFetchWithPrivateRepository(): typeof fetch {
         variables?: Record<string, string>
       }
 
-      if (body.query.includes('query ViewerAndUser')) {
+      if (body.query.includes('query UserById')) {
         return jsonResponse({
           data: {
-            user: {
+            node: {
               id: 'U_TEST_1',
               login: 'octocat',
               name: 'Octocat',
@@ -480,10 +480,10 @@ function mockGitHubFetchWithUnavailableRepository(): typeof fetch {
     if (url === 'https://api.github.com/graphql') {
       const body = JSON.parse(String(init?.body)) as { query: string }
 
-      if (body.query.includes('query ViewerAndUser')) {
+      if (body.query.includes('query UserById')) {
         return jsonResponse({
           data: {
-            user: {
+            node: {
               id: 'U_TEST_1',
               login: 'octocat',
               name: 'Octocat',

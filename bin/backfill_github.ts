@@ -13,6 +13,7 @@ import {
   restClient,
   type RestClient
 } from '../lib/providers/github/rest.ts'
+import { fetchGitHubAccountProfileById } from '../lib/providers/github/identity.ts'
 import * as translate from '../lib/providers/github/translate.ts'
 import type {
   GitHubCommitHistory,
@@ -21,15 +22,21 @@ import type {
   GitHubRestRepository,
   GitHubReviewItem,
   GitHubSearchPullRequestItem,
-  GitHubSearchResult,
-  GitHubUserCore
+  GitHubSearchResult
 } from '../lib/providers/github/types.ts'
 import type { BackfillArgs, VendorIdentity, VendorOrganizationToken } from '../lib/types/index.ts'
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
 
 export async function run(args: BackfillArgs): Promise<void> {
-  const { identity, token, organizationTokens = [], fetch } = args
+  const {
+    identity,
+    token,
+    organizationTokens = [],
+    ignoreOrganizationIds = [],
+    ignoreRepositoryIds = [],
+    fetch
+  } = args
   if (!identity) throw new Error('backfill_github: missing identity')
   if (!token) throw new Error('backfill_github: missing token')
 
@@ -38,9 +45,11 @@ export async function run(args: BackfillArgs): Promise<void> {
   const rest = restClient({ token, fetch })
   const defaultClients: GitHubClients = { graphQL, rest }
   const organizationClients = organizationClientMap(organizationTokens, fetch)
-  const user = await fetchGitHubUser(graphQL, identity.externalLogin)
+  const ignoredRepositories = ignoreSet(ignoreRepositoryIds)
+  const ignoredOrganizations = ignoreSet(ignoreOrganizationIds)
+  const user = await fetchGitHubAccountProfileById(graphQL, identity.externalId)
   const years = dates.yearRange(
-    new Date(user.createdAt).getUTCFullYear(),
+    new Date(user.externalCreatedAt).getUTCFullYear(),
     new Date().getUTCFullYear()
   )
   const observedOn = dates.yesterdayUTC()
@@ -57,7 +66,12 @@ export async function run(args: BackfillArgs): Promise<void> {
     )
     const collection = await fetchContributionsCollection(graphQL, identity.externalLogin, from, to)
 
-    collectActiveRepositories(collection, repositoriesByExternalId)
+    collectActiveRepositories(
+      collection,
+      repositoriesByExternalId,
+      ignoredRepositories,
+      ignoredOrganizations
+    )
     await upserts.upsertDailyUserSummary({
       account_id: identity.accountId,
       activity_on: `${year}-01-01`,
@@ -70,9 +84,22 @@ export async function run(args: BackfillArgs): Promise<void> {
     })
   }
 
-  await collectAccessibleRepositories(rest, repositoriesByExternalId)
-  for (const [organization, clients] of organizationClients) {
-    await collectOrganizationRepositories(clients.rest, organization, repositoriesByExternalId)
+  await collectAccessibleRepositories(
+    rest,
+    repositoriesByExternalId,
+    ignoredRepositories,
+    ignoredOrganizations
+  )
+  for (const organization of organizationTokens) {
+    const clients = organizationClients.get(organization.externalId)
+    if (!clients) continue
+    await collectOrganizationRepositories(
+      clients.rest,
+      organization.externalLogin,
+      repositoriesByExternalId,
+      ignoredRepositories,
+      ignoredOrganizations
+    )
   }
 
   const repositoryCount = repositoriesByExternalId.size
@@ -172,7 +199,7 @@ function organizationClientMap(
 ): Map<string, GitHubClients> {
   return new Map(
     organizationTokens.map((orgToken) => [
-      orgToken.organization.toLowerCase(),
+      orgToken.externalId,
       {
         graphQL: graphQLClient({ token: orgToken.token, fetch }),
         rest: restClient({ token: orgToken.token, fetch })
@@ -186,7 +213,10 @@ function clientsForRepository(
   defaultClients: GitHubClients,
   organizationClients: Map<string, GitHubClients>
 ): GitHubClients {
-  return organizationClients.get(repositoryNode.owner.login.toLowerCase()) ?? defaultClients
+  return (
+    (repositoryNode.owner.id ? organizationClients.get(repositoryNode.owner.id) : undefined) ??
+    defaultClients
+  )
 }
 
 async function upsertOrganizationFromRepositoryOwner(
@@ -201,12 +231,6 @@ async function upsertOrganizationFromRepositoryOwner(
 
   const organization = await upserts.upsertOrganization(organizationInput)
   return organization.id
-}
-
-async function fetchGitHubUser(graphQL: GraphQLClient, login: string): Promise<GitHubUserCore> {
-  const data = await graphQL<{ user: GitHubUserCore | null }>(queries.VIEWER_AND_USER, { login })
-  if (!data.user) throw new Error(`backfill_github: GitHub user not found: ${login}`)
-  return data.user
 }
 
 async function fetchContributionsCollection(
@@ -228,7 +252,9 @@ async function fetchContributionsCollection(
 
 function collectActiveRepositories(
   collection: GitHubContributionsCollection,
-  repositoriesByExternalId: Map<string, GitHubRepositoryNode>
+  repositoriesByExternalId: Map<string, GitHubRepositoryNode>,
+  ignoredRepositories: Set<string>,
+  ignoredOrganizations: Set<string>
 ): void {
   for (const group of [
     collection.commitContributionsByRepository,
@@ -237,6 +263,11 @@ function collectActiveRepositories(
     collection.issueContributionsByRepository
   ]) {
     for (const contribution of group) {
+      if (
+        shouldIgnoreRepository(contribution.repository, ignoredRepositories, ignoredOrganizations)
+      ) {
+        continue
+      }
       repositoriesByExternalId.set(contribution.repository.id, contribution.repository)
     }
   }
@@ -244,7 +275,9 @@ function collectActiveRepositories(
 
 async function collectAccessibleRepositories(
   rest: RestClient,
-  repositoriesByExternalId: Map<string, GitHubRepositoryNode>
+  repositoriesByExternalId: Map<string, GitHubRepositoryNode>,
+  ignoredRepositories: Set<string>,
+  ignoredOrganizations: Set<string>
 ): Promise<void> {
   for (let page = 1; ; page += 1) {
     const repositories = await rest<GitHubRestRepository[]>('/user/repos', {
@@ -257,11 +290,11 @@ async function collectAccessibleRepositories(
     })
 
     for (const repository of repositories) {
+      const repositoryNode = translate.repositoryFromRestRepository(repository)
+      if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
+        continue
       if (repositoriesByExternalId.has(repository.node_id)) continue
-      repositoriesByExternalId.set(
-        repository.node_id,
-        translate.repositoryFromRestRepository(repository)
-      )
+      repositoriesByExternalId.set(repository.node_id, repositoryNode)
     }
 
     if (repositories.length < 100) return
@@ -271,7 +304,9 @@ async function collectAccessibleRepositories(
 async function collectOrganizationRepositories(
   rest: RestClient,
   organization: string,
-  repositoriesByExternalId: Map<string, GitHubRepositoryNode>
+  repositoriesByExternalId: Map<string, GitHubRepositoryNode>,
+  ignoredRepositories: Set<string>,
+  ignoredOrganizations: Set<string>
 ): Promise<void> {
   for (let page = 1; ; page += 1) {
     const repositories = await rest<GitHubRestRepository[]>(`/orgs/${organization}/repos`, {
@@ -283,11 +318,11 @@ async function collectOrganizationRepositories(
     })
 
     for (const repository of repositories) {
+      const repositoryNode = translate.repositoryFromRestRepository(repository)
+      if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
+        continue
       if (repositoriesByExternalId.has(repository.node_id)) continue
-      repositoriesByExternalId.set(
-        repository.node_id,
-        translate.repositoryFromRestRepository(repository)
-      )
+      repositoriesByExternalId.set(repository.node_id, repositoryNode)
     }
 
     if (repositories.length < 100) return
@@ -554,4 +589,18 @@ function progressPercent(completed: number, total: number): number {
 function requiredString(value: string | null, label: string): string {
   if (!value) throw new Error(`backfill_github: missing ${label}`)
   return value
+}
+
+function ignoreSet(values: string[]): Set<string> {
+  return new Set(values.map((value) => value.toLowerCase()))
+}
+
+function shouldIgnoreRepository(
+  repository: GitHubRepositoryNode,
+  ignoredRepositories: Set<string>,
+  ignoredOrganizations: Set<string>
+): boolean {
+  if (ignoredRepositories.has(repository.id.toLowerCase())) return true
+  const ownerId = repository.owner.id
+  return Boolean(ownerId && ignoredOrganizations.has(ownerId.toLowerCase()))
 }

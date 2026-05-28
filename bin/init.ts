@@ -3,9 +3,8 @@ import * as config from '../lib/config.ts'
 import * as db from '../lib/db.ts'
 import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
-import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
-import * as queries from '../lib/providers/github/queries.ts'
-import type { GitHubUserCore } from '../lib/providers/github/types.ts'
+import { graphQLClient } from '../lib/providers/github/graphql.ts'
+import { fetchGitHubAccountProfileById } from '../lib/providers/github/identity.ts'
 import type { IdentityConfig, ProfileConfig, UserRow } from '../lib/types/index.ts'
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
@@ -15,13 +14,6 @@ export interface InitRunOptions {
   profileConfig?: ProfileConfig
   fetch?: Fetcher
   now?: Date
-}
-
-interface GitHubAccountProfile {
-  externalLogin: string
-  externalId: string
-  externalUrl: string
-  externalCreatedAt: string
 }
 
 export async function run(options: InitRunOptions = {}): Promise<void> {
@@ -66,28 +58,13 @@ export async function fetchAccountProfile(
   identityConfig: IdentityConfig,
   token: string,
   fetch?: Fetcher
-): Promise<GitHubAccountProfile> {
+): ReturnType<typeof fetchGitHubAccountProfileById> {
   if (identityConfig.provider !== 'github') {
     throw new Error(`unsupported provider in v1: ${identityConfig.provider}`)
   }
 
   const graphQL = graphQLClient({ token, fetch })
-  return fetchGitHubAccountProfile(graphQL, identityConfig.login)
-}
-
-async function fetchGitHubAccountProfile(
-  graphQL: GraphQLClient,
-  login: string
-): Promise<GitHubAccountProfile> {
-  const data = await graphQL<{ user: GitHubUserCore | null }>(queries.VIEWER_AND_USER, { login })
-  if (!data.user) throw new Error(`GitHub user not found: ${login}`)
-
-  return {
-    externalLogin: data.user.login,
-    externalId: data.user.id,
-    externalUrl: data.user.url,
-    externalCreatedAt: data.user.createdAt
-  }
+  return fetchGitHubAccountProfileById(graphQL, identityConfig.externalId)
 }
 
 function tokenForIdentity(identityConfig: IdentityConfig): string {

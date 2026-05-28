@@ -4,7 +4,8 @@
   "publishTargets": [
     {
       "provider": "github",
-      "repositoryFullName": "nobody/nobody",
+      "repositoryId": "R_NOBODY_1",
+      "repositoryHint": "nobody/nobody",
       "branch": "main",
       "path": "README.md",
       "tokenEnv": "GH_RW_REPO_TOKEN"

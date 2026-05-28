@@ -7,6 +7,52 @@ query ViewerAndUser($login: String!) {
 }
 `
 
+export const USER_BY_ID = `
+query UserById($id: ID!) {
+  node(id: $id) {
+    ... on User {
+      id login name url createdAt
+    }
+  }
+}
+`
+
+export const ORGANIZATION_BY_ID = `
+query OrganizationById($id: ID!) {
+  node(id: $id) {
+    ... on Organization {
+      id login name url
+    }
+  }
+}
+`
+
+export const ORGANIZATION_BY_LOGIN = `
+query OrganizationByLogin($login: String!) {
+  organization(login: $login) {
+    id login name url
+  }
+}
+`
+
+export const REPOSITORY_BY_ID = `
+query RepositoryById($id: ID!) {
+  node(id: $id) {
+    ... on Repository {
+      id nameWithOwner url
+    }
+  }
+}
+`
+
+export const REPOSITORY_BY_FULL_NAME = `
+query RepositoryByFullName($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    id nameWithOwner url
+  }
+}
+`
+
 export const CONTRIBUTIONS_COLLECTION = `
 query Contributions($login: String!, $from: DateTime!, $to: DateTime!) {
   user(login: $login) {

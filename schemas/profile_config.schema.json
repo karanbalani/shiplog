@@ -19,12 +19,16 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["provider", "login"],
+        "required": ["provider", "externalId", "loginHint"],
         "properties": {
           "provider": {
             "const": "github"
           },
-          "login": {
+          "externalId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "loginHint": {
             "type": "string",
             "minLength": 1
           },
@@ -39,9 +43,13 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["organization", "tokenEnv"],
+              "required": ["externalId", "loginHint", "tokenEnv"],
               "properties": {
-                "organization": {
+                "externalId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "loginHint": {
                   "type": "string",
                   "minLength": 1
                 },
@@ -56,16 +64,38 @@
             "type": "array",
             "default": [],
             "items": {
-              "type": "string",
-              "minLength": 1
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["externalId", "loginHint"],
+              "properties": {
+                "externalId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "loginHint": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
             }
           },
           "ignoreRepositories": {
             "type": "array",
             "default": [],
             "items": {
-              "type": "string",
-              "minLength": 1
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["externalId", "nameHint"],
+              "properties": {
+                "externalId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "nameHint": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
             }
           }
         }
@@ -77,12 +107,16 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["provider", "repositoryFullName", "branch", "path", "tokenEnv"],
+        "required": ["provider", "repositoryId", "repositoryHint", "branch", "path", "tokenEnv"],
         "properties": {
           "provider": {
             "const": "github"
           },
-          "repositoryFullName": {
+          "repositoryId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repositoryHint": {
             "type": "string",
             "pattern": "^[^/\\s]+/[^/\\s]+$"
           },

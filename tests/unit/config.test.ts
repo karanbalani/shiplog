@@ -11,22 +11,33 @@ test('load returns parsed valid config', () => {
   expect(c.displayName).toBe('Example User')
   expect(c.identities).toHaveLength(1)
   expect(c.identities[0]!.provider).toBe('github')
-  expect(c.identities[0]!.login).toBe('octocat')
+  expect(c.identities[0]!.externalId).toBe('U_TEST_1')
+  expect(c.identities[0]!.loginHint).toBe('octocat')
   expect(c.identities[0]!.tokenEnv).toBe('GH_RO_CLASSIC_TOKEN')
   expect(c.identities[0]!.organizationTokens).toEqual([
-    { organization: 'restricted-org', tokenEnv: 'GH_RO_RESTRICTED_ORG_TOKEN' }
+    {
+      externalId: 'O_RESTRICTED_1',
+      loginHint: 'restricted-org',
+      tokenEnv: 'GH_RO_RESTRICTED_ORG_TOKEN'
+    }
   ])
-  expect(c.identities[0]!.ignoreOrganizations).toEqual(['some-noisy-org'])
-  expect(c.identities[0]!.ignoreRepositories).toContain('octocat/octocat')
+  expect(c.identities[0]!.ignoreOrganizations).toEqual([
+    { externalId: 'O_NOISY_1', loginHint: 'some-noisy-org' }
+  ])
+  expect(c.identities[0]!.ignoreRepositories).toContainEqual({
+    externalId: 'R_PROFILE_1',
+    nameHint: 'octocat/octocat'
+  })
   expect(c.publishTargets).toHaveLength(1)
-  expect(c.publishTargets[0]!.repositoryFullName).toBe('octocat/octocat')
+  expect(c.publishTargets[0]!.repositoryId).toBe('R_PROFILE_1')
+  expect(c.publishTargets[0]!.repositoryHint).toBe('octocat/octocat')
 })
 
 test('load accepts the shipped example config', () => {
   const c = config.load(path.join(ROOT, 'profile_config.example.json'))
 
-  expect(c.identities[0]!.login).toBe('your-github-login')
-  expect(c.publishTargets[0]!.repositoryFullName).toBe('your-github-login/your-github-login')
+  expect(c.identities[0]!.loginHint).toBe('your-github-login')
+  expect(c.publishTargets[0]!.repositoryHint).toBe('your-github-login/your-github-login')
 })
 
 test('load defaults render knobs when omitted', () => {
@@ -42,11 +53,12 @@ test('load defaults render knobs when omitted', () => {
 test('validate allows schema hint without returning it', () => {
   const c = config.validate({
     $schema: '../schemas/profile_config.schema.json',
-    identities: [{ provider: 'github', login: 'octocat' }],
+    identities: [{ provider: 'github', externalId: 'U_TEST_1', loginHint: 'octocat' }],
     publishTargets: [
       {
         provider: 'github',
-        repositoryFullName: 'octocat/octocat',
+        repositoryId: 'R_PROFILE_1',
+        repositoryHint: 'octocat/octocat',
         branch: 'main',
         path: 'README.md',
         tokenEnv: 'GH_RW_REPO_TOKEN'

@@ -3,13 +3,15 @@
   "identities": [
     {
       "provider": "gitlab",
-      "login": "x"
+      "externalId": "U_X_1",
+      "loginHint": "x"
     }
   ],
   "publishTargets": [
     {
       "provider": "github",
-      "repositoryFullName": "x/x",
+      "repositoryId": "R_X_1",
+      "repositoryHint": "x/x",
       "branch": "main",
       "path": "README.md",
       "tokenEnv": "GH_RW_REPO_TOKEN"

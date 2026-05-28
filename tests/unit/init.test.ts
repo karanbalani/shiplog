@@ -75,7 +75,8 @@ function profileConfig(): ProfileConfig {
     identities: [
       {
         provider: 'github',
-        login: 'octocat',
+        externalId: 'U_TEST_1',
+        loginHint: 'octocat',
         tokenEnv: 'GH_RO_CLASSIC_TOKEN',
         organizationTokens: [],
         ignoreOrganizations: [],
@@ -85,7 +86,8 @@ function profileConfig(): ProfileConfig {
     publishTargets: [
       {
         provider: 'github',
-        repositoryFullName: 'octocat/octocat',
+        repositoryId: 'R_PROFILE_1',
+        repositoryHint: 'octocat/octocat',
         branch: 'main',
         path: 'README.md',
         tokenEnv: 'GH_RW_REPO_TOKEN'
@@ -106,10 +108,10 @@ function mockGitHubFetch(): typeof fetch {
     if (url === 'https://api.github.com/graphql') {
       const body = JSON.parse(String(init?.body)) as { query: string }
 
-      if (body.query.includes('query ViewerAndUser')) {
+      if (body.query.includes('query UserById')) {
         return jsonResponse({
           data: {
-            user: {
+            node: {
               id: 'U_TEST_1',
               login: 'octocat',
               name: 'Octocat',

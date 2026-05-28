@@ -133,11 +133,15 @@ cp profile_config.example.json profile_config.json
 Then edit `profile_config.json`:
 
 - Set `displayName`.
-- Set `identities[0].login` to your GitHub username.
+- Run `bun run identity github <your-github-login>` and paste the returned identity object into `identities[0]`.
 - Set `identities[0].tokenEnv` to the read token env var, usually `GH_RO_CLASSIC_TOKEN`.
-- Optionally add `identities[0].organizationTokens[]` for organizations that need a separately authorized read token.
-- Set `publishTargets[0].repositoryFullName` to the repository that should receive the rendered README, usually `your-github-login/your-github-login` for a GitHub profile README.
+- Optionally run `bun run identity github organization <org-login>` and add the returned object to `identities[0].organizationTokens[]` for organizations that need a separately authorized read token.
+- Run `bun run identity github publish-target <owner/repo>` and paste the returned object into `publishTargets[0]`.
 - Set `publishTargets[0].tokenEnv` to `GH_RW_REPO_TOKEN`.
+
+Config uses stable provider IDs for identities, organization tokens, ignored organizations, ignored repositories, and publish targets. Hint fields such as `loginHint`, `nameHint`, and `repositoryHint` are for humans; shiplog resolves the current provider names at runtime so GitHub username, organization, and repository renames do not split history.
+
+For ignore entries, use `bun run identity github organization <org-login>` for `ignoreOrganizations[]` and `bun run identity github repository <owner/repo>` for `ignoreRepositories[]`. These helper lookups work without a token for public users, organizations, and repositories. Set `GH_RO_CLASSIC_TOKEN` only when the lookup needs authenticated access, such as a private repository.
 
 The upstream org/template repo commits `profile_config.example.json`, not a real `profile_config.json`. `profile_config.json` is gitignored so local config does not accidentally get committed.
 
@@ -170,7 +174,7 @@ Token responsibilities:
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org` so private repository activity is available.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits for configured publish targets.
 
-If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_TOKEN`, add it to `identities[0].organizationTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
+If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_TOKEN`, add the stable organization token entry to `identities[0].organizationTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
 
@@ -309,16 +313,16 @@ Shared code lives under `lib/`, GitHub-specific helpers under `lib/providers/git
 
 Project conventions live in `docs/CONVENTIONS.md`. Frequently asked setup and operations questions live in `docs/FAQ.md`. Schema documentation lives in `docs/SCHEMA.md`. Provider-specific field mappings live in `docs/GITHUB_MAPPING.md`. Agent-facing guidance lives in `.agents/README.md`.
 
-The GitHub daily collector currently ingests active repositories from GitHub contribution data, merges in authenticated private repositories the configured read tokens can read, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups. Commit ingestion counts commits where the configured GitHub account appears in the commit authors list, including `Co-authored-by` credits.
+The GitHub daily collector currently resolves configured stable IDs to current GitHub logins/names, ingests active repositories from GitHub contribution data, merges in authenticated private repositories the configured read tokens can read, applies ignored repository/organization IDs, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups. Commit ingestion counts commits where the configured GitHub account appears in the commit authors list, including `Co-authored-by` credits.
 
-The internal GitHub historical strategy uses the account creation year to walk contribution history by year, enumerates authenticated repositories the configured read tokens can read, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
+The internal GitHub historical strategy resolves the stable account ID, uses the account creation year to walk contribution history by year, enumerates authenticated repositories the configured read tokens can read, applies ignored repository/organization IDs, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date.
 
 The init dispatcher reads `profile_config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, then invokes collect. A null `last_successful_collect_on` makes collect run the historical path.
 
-The collect dispatcher reads `profile_config.json`, resolves initialized `accounts`, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE`, or catches up every missing date through UTC yesterday. After a successful automatic run, it advances the account checkpoint.
+The collect dispatcher reads `profile_config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE`, or catches up every missing date through UTC yesterday. After a successful automatic run, it advances the account checkpoint.
 
 The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `rendered.md`. It does not overwrite this repository's own `README.md`.
 
-The publisher reads `rendered.md` and writes it to each configured `publishTargets[]` entry. GitHub targets use the Contents API with the target's `tokenEnv`, `repositoryFullName`, `branch`, and `path`.
+The publisher reads `rendered.md`, resolves each configured stable `repositoryId` to its current GitHub `owner/repo`, and writes to the configured `branch` and `path` with the target's `tokenEnv`.
 
 CLI logs use `lib/logger.ts`, write to stderr, include ISO timestamps, support log levels, and colorize levels unless `NO_COLOR` is set.

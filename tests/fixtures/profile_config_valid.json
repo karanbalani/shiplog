@@ -3,22 +3,35 @@
   "identities": [
     {
       "provider": "github",
-      "login": "octocat",
+      "externalId": "U_TEST_1",
+      "loginHint": "octocat",
       "tokenEnv": "GH_RO_CLASSIC_TOKEN",
       "organizationTokens": [
         {
-          "organization": "restricted-org",
+          "externalId": "O_RESTRICTED_1",
+          "loginHint": "restricted-org",
           "tokenEnv": "GH_RO_RESTRICTED_ORG_TOKEN"
         }
       ],
-      "ignoreOrganizations": ["some-noisy-org"],
-      "ignoreRepositories": ["octocat/octocat"]
+      "ignoreOrganizations": [
+        {
+          "externalId": "O_NOISY_1",
+          "loginHint": "some-noisy-org"
+        }
+      ],
+      "ignoreRepositories": [
+        {
+          "externalId": "R_PROFILE_1",
+          "nameHint": "octocat/octocat"
+        }
+      ]
     }
   ],
   "publishTargets": [
     {
       "provider": "github",
-      "repositoryFullName": "octocat/octocat",
+      "repositoryId": "R_PROFILE_1",
+      "repositoryHint": "octocat/octocat",
       "branch": "main",
       "path": "README.md",
       "tokenEnv": "GH_RW_REPO_TOKEN"

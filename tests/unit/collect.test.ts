@@ -112,6 +112,23 @@ test('run uses COLLECT_DATE when date option is omitted', async () => {
   expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-05')
 })
 
+test('run refreshes renamed account login by stable external id', async () => {
+  await seedAccount({ externalLogin: 'old-octocat' })
+
+  await collect.run({
+    profileConfig: profileConfig(),
+    date: '2026-05-07',
+    fetch: mockGitHubFetch()
+  })
+
+  const accounts = await db.query<{ external_login: string }>(
+    'SELECT external_login FROM accounts WHERE external_id = $1',
+    ['U_TEST_1']
+  )
+
+  expect(accounts.rows[0]!.external_login).toBe('octocat')
+})
+
 test('run rejects future COLLECT_DATE', async () => {
   await seedAccount()
   process.env.COLLECT_DATE = '2026-05-08'
@@ -135,12 +152,14 @@ test('run throws when account has not been initialized', async () => {
   ).rejects.toThrow(/run bun run init first/i)
 })
 
-async function seedAccount(options: { lastSuccessfulCollectOn?: string } = {}): Promise<void> {
+async function seedAccount(
+  options: { externalLogin?: string; lastSuccessfulCollectOn?: string } = {}
+): Promise<void> {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
     user_id: user.id,
     provider: 'github',
-    external_login: 'octocat',
+    external_login: options.externalLogin ?? 'octocat',
     external_id: 'U_TEST_1',
     external_url: 'https://github.com/octocat',
     external_created_at: '2026-01-01T00:00:00Z',
@@ -158,7 +177,8 @@ function profileConfig(): ProfileConfig {
     identities: [
       {
         provider: 'github',
-        login: 'octocat',
+        externalId: 'U_TEST_1',
+        loginHint: 'octocat',
         tokenEnv: 'GH_RO_CLASSIC_TOKEN',
         organizationTokens: [],
         ignoreOrganizations: [],
@@ -168,7 +188,8 @@ function profileConfig(): ProfileConfig {
     publishTargets: [
       {
         provider: 'github',
-        repositoryFullName: 'octocat/octocat',
+        repositoryId: 'R_PROFILE_1',
+        repositoryHint: 'octocat/octocat',
         branch: 'main',
         path: 'README.md',
         tokenEnv: 'GH_RW_REPO_TOKEN'
@@ -186,6 +207,20 @@ function mockGitHubFetch(): typeof fetch {
   return (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
       const body = JSON.parse(String(init?.body)) as { query: string }
+
+      if (body.query.includes('query UserById')) {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'U_TEST_1',
+              login: 'octocat',
+              name: 'Octocat',
+              url: 'https://github.com/octocat',
+              createdAt: '2026-01-01T00:00:00Z'
+            }
+          }
+        })
+      }
 
       if (body.query.includes('query Contributions')) {
         return jsonResponse({ data: githubContributionsFixture() })

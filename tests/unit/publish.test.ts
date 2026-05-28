@@ -115,6 +115,18 @@ test('publish uses configured publish targets and token env vars', async () => {
 
   const fetch: Fetcher = async (url, init) => {
     calls.push({ url, init })
+    if (url === 'https://api.github.com/graphql') {
+      return jsonResponse({
+        data: {
+          node: {
+            id: 'R_PROFILE_1',
+            nameWithOwner: 'octocat/octocat',
+            url: 'https://github.com/octocat/octocat'
+          }
+        }
+      })
+    }
+
     if (init?.method === 'PUT') {
       return jsonResponse({
         content: { sha: 'file-sha' },
@@ -132,7 +144,7 @@ test('publish uses configured publish targets and token env vars', async () => {
   })
 
   expect(results).toHaveLength(1)
-  expect(calls[1]!.init?.headers).toMatchObject({
+  expect(calls[2]!.init?.headers).toMatchObject({
     Authorization: 'Bearer target-write-token'
   })
   expect(
@@ -149,6 +161,18 @@ test('publish reads rendered.md by default', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = []
   const fetch: Fetcher = async (url, init) => {
     calls.push({ url, init })
+    if (url === 'https://api.github.com/graphql') {
+      return jsonResponse({
+        data: {
+          node: {
+            id: 'R_PROFILE_1',
+            nameWithOwner: 'octocat/octocat',
+            url: 'https://github.com/octocat/octocat'
+          }
+        }
+      })
+    }
+
     if (init?.method === 'PUT') {
       return jsonResponse({
         content: { sha: 'file-sha' },
@@ -169,7 +193,7 @@ test('publish reads rendered.md by default', async () => {
     process.chdir(previousCwd)
   }
 
-  const body = JSON.parse(String(calls[1]!.init?.body)) as { content: string }
+  const body = JSON.parse(String(calls[2]!.init?.body)) as { content: string }
   expect(body.content).toBe(Buffer.from('# rendered from file\n', 'utf8').toString('base64'))
 })
 
@@ -189,7 +213,8 @@ function profileConfig(): ProfileConfig {
     identities: [
       {
         provider: 'github',
-        login: 'octocat',
+        externalId: 'U_TEST_1',
+        loginHint: 'octocat',
         tokenEnv: 'GH_RO_CLASSIC_TOKEN',
         organizationTokens: [],
         ignoreOrganizations: [],
@@ -199,7 +224,8 @@ function profileConfig(): ProfileConfig {
     publishTargets: [
       {
         provider: 'github',
-        repositoryFullName: 'octocat/octocat',
+        repositoryId: 'R_PROFILE_1',
+        repositoryHint: 'octocat/octocat',
         branch: 'main',
         path: 'README.md',
         tokenEnv: 'GH_RW_REPO_TOKEN'
