@@ -80,6 +80,9 @@ export async function run(args: CollectArgs): Promise<void> {
     )
   }
 
+  const repositoryCount = activeRepositories.length
+  let completedRepositories = 0
+
   for (const repositoryNode of activeRepositories) {
     const clients = clientsForRepository(repositoryNode, defaultClients, organizationClients)
     const organizationId = await upsertOrganizationFromRepositoryOwner(repositoryNode, date)
@@ -93,9 +96,17 @@ export async function run(args: CollectArgs): Promise<void> {
     const name = requiredString(repositoryInput.name, 'repository name')
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
     const logLabel = repositoryLogLabel(repositoryNode, fullName)
+    const repositoryPosition = `${completedRepositories + 1}/${repositoryCount}`
 
+    logger.info(
+      `[collect] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel}`
+    )
+
+    let repositoryStatus = 'complete'
+    logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'repository snapshot')
     await upsertRepositorySnapshot(repository.id, repositoryNode, date)
     try {
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'commits')
       await ingestCommits(
         clients.graphQL,
         repository.id,
@@ -105,8 +116,11 @@ export async function run(args: CollectArgs): Promise<void> {
         commitWindow.from,
         commitWindow.to
       )
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull requests')
       await ingestPullRequests(clients.rest, repository.id, fullName, identity, date)
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull request reviews')
       await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity, date)
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'issues')
       await ingestIssues(clients.rest, repository.id, fullName, identity, date)
     } catch (error) {
       if (!isGitHubRepositoryUnavailableError(error)) {
@@ -114,6 +128,7 @@ export async function run(args: CollectArgs): Promise<void> {
         throw error
       }
 
+      repositoryStatus = 'skipped'
       logger.warn(
         `[collect] github/${identity.externalLogin}: repository [${visibility}] ${logLabel} is unavailable; skipping enrichment (${repositoryErrorSummary(
           repositoryNode,
@@ -121,6 +136,11 @@ export async function run(args: CollectArgs): Promise<void> {
         )})`
       )
     }
+
+    completedRepositories += 1
+    logger.info(
+      `[collect] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${logLabel} ${repositoryStatus}`
+    )
   }
 
   await upserts.upsertDailyUserSummary({
@@ -135,6 +155,18 @@ export async function run(args: CollectArgs): Promise<void> {
   })
 
   await upserts.rollupDailyRepositoryActivity(identity.accountId, date)
+}
+
+function logRepositoryStep(
+  identity: VendorIdentity,
+  repositoryPosition: string,
+  visibility: string,
+  logLabel: string,
+  step: string
+): void {
+  logger.info(
+    `[collect] github/${identity.externalLogin}:   - repository ${repositoryPosition} [${visibility}] ${logLabel}: ${step}`
+  )
 }
 
 interface GitHubClients {

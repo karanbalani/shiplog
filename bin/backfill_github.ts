@@ -125,15 +125,17 @@ export async function run(args: BackfillArgs): Promise<void> {
     const name = requiredString(repositoryInput.name, 'repository name')
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
     const logLabel = repositoryLogLabel(repositoryNode, fullName)
+    const repositoryPosition = `${completedRepositories + 1}/${repositoryCount}`
 
     logger.info(
-      `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel}`
+      `[backfill] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel}`
     )
 
     let repositoryStatus = 'complete'
     try {
       for (const year of years) {
         const { from, to } = dates.yearWindow(year)
+        logRepositoryStep(identity, repositoryPosition, visibility, logLabel, `commits for ${year}`)
         await ingestCommits(
           clients.graphQL,
           repository.id,
@@ -145,9 +147,19 @@ export async function run(args: BackfillArgs): Promise<void> {
         )
       }
 
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull requests')
       await ingestPullRequests(clients.rest, repository.id, fullName, identity)
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'issues')
       await ingestIssues(clients.rest, repository.id, fullName, identity)
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull request reviews')
       await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity)
+      logRepositoryStep(
+        identity,
+        repositoryPosition,
+        visibility,
+        logLabel,
+        'repository snapshot and languages'
+      )
       await upsertRepositoryLanguageSnapshot(
         clients.graphQL,
         repository.id,
@@ -185,6 +197,18 @@ export async function run(args: BackfillArgs): Promise<void> {
   await rollupDistinctActivityDates(identity.accountId)
   logger.info(
     `[backfill] github/${identity.externalLogin}: complete in ${formatDuration(Date.now() - startedAt)}`
+  )
+}
+
+function logRepositoryStep(
+  identity: VendorIdentity,
+  repositoryPosition: string,
+  visibility: string,
+  logLabel: string,
+  step: string
+): void {
+  logger.info(
+    `[backfill] github/${identity.externalLogin}:   - repository ${repositoryPosition} [${visibility}] ${logLabel}: ${step}`
   )
 }
 

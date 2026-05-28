@@ -100,6 +100,17 @@ test('run backfills GitHub history into generic schema tables', async () => {
     source: 'self_backfill'
   })
   expect(logs.some((line) => line.includes('[public] octo-org/hello'))).toBe(true)
+  expect(
+    logs.some((line) => line.includes('  - repository 1/1 [public] octo-org/hello: commits for'))
+  ).toBe(true)
+  expect(
+    logs.some((line) => line.includes('  - repository 1/1 [public] octo-org/hello: pull requests'))
+  ).toBe(true)
+  expect(
+    logs.some((line) =>
+      line.includes('  - repository 1/1 [public] octo-org/hello: repository snapshot and languages')
+    )
+  ).toBe(true)
   expect(logs.some((line) => line.includes('estimated minimum GitHub Search pacing'))).toBe(true)
   expect(logs.some((line) => line.includes('eta'))).toBe(true)
 })
