@@ -191,7 +191,7 @@ REPAIR_FROM=2026-05-01 REPAIR_TO=2026-05-07 bun run repair
 
 In GitHub Actions, the manual `repair` workflow has optional `repair_date`, `repair_from`, and `repair_to` inputs for the same purpose. The next normal collect run may safely reprocess those dates if they are still part of the checkpoint gap or rolling lookback window.
 
-For set-and-forget consistency, the scheduled `drift` workflow checks a bounded recent window outside daily collect. It does not rewrite activity directly. It enqueues `maintenance_tasks` repair ranges for missing or mismatched daily summaries, and the scheduled `maintenance` workflow processes that queue separately.
+For set-and-forget consistency, the scheduled `drift` workflow checks a bounded recent window outside daily collect. It does not rewrite activity directly. It enqueues `maintenance_tasks` repair ranges for missing or mismatched daily summaries, and the scheduled `maintenance` workflow processes that queue separately. If a maintenance run dies after claiming a task, a later maintenance run recovers stale locks after `MAINTENANCE_STALE_LOCK_MINUTES`, which defaults to `120`.
 
 ## Why is historical backfill slow?
 

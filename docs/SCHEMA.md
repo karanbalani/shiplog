@@ -194,7 +194,7 @@ Queued background work that should run outside the daily collect lane. Drift det
 | `attempts`       | `INT`         | Number of times the task has started.                                                       |
 | `max_attempts`   | `INT`         | Attempts allowed before permanent failure. Defaults to `3`.                                 |
 | `next_run_at`    | `TIMESTAMPTZ` | Earliest time the task may run.                                                             |
-| `locked_at`      | `TIMESTAMPTZ` | When the current worker claimed the task, when running.                                     |
+| `locked_at`      | `TIMESTAMPTZ` | When the current worker claimed the task, when running. Stale locks are retried later.      |
 | `started_at`     | `TIMESTAMPTZ` | Most recent task start timestamp.                                                           |
 | `completed_at`   | `TIMESTAMPTZ` | Successful completion timestamp, when available.                                            |
 | `last_error`     | `TEXT`        | Last failure message, when available.                                                       |
@@ -205,6 +205,7 @@ Constraints and indexes:
 
 - `UNIQUE (account_id, task_type, target_from_on, target_to_on)` deduplicates queued repair work for an account and range.
 - `idx_maintenance_tasks_status_due` speeds due-task scans by status, run time, priority, and id.
+- Maintenance workers claim only pending or retry-wait tasks that are due. Running tasks whose lock exceeds `MAINTENANCE_STALE_LOCK_MINUTES` are recovered on a later maintenance run.
 
 ## repository_languages
 

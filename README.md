@@ -326,7 +326,7 @@ Run queued maintenance work:
 bun run maintenance
 ```
 
-`maintenance` drains due `maintenance_tasks` rows, currently starting with queued `repair_range` tasks. It reruns the same daily provider collector used by `repair`, leaves account checkpoints unchanged, records task attempts, and retries failed tasks later until `max_attempts` is reached.
+`maintenance` drains due `maintenance_tasks` rows, currently starting with queued `repair_range` tasks. It reruns the same daily provider collector used by `repair`, leaves account checkpoints unchanged, records task attempts, and retries failed tasks later until `max_attempts` is reached. It also recovers stale `running` tasks whose worker lock is older than `MAINTENANCE_STALE_LOCK_MINUTES`, which defaults to `120`.
 
 Render only:
 
@@ -373,7 +373,7 @@ The repair dispatcher requires `REPAIR_DATE` or `REPAIR_FROM`/`REPAIR_TO`, rerun
 
 The drift dispatcher checks stored daily provider summary totals against current provider totals, then enqueues maintenance repair ranges for missing or mismatched dates without changing collected activity itself.
 
-The maintenance dispatcher reads due `maintenance_tasks`, runs supported background work such as queued repair ranges, and records success, retry, or permanent failure state.
+The maintenance dispatcher reads due `maintenance_tasks`, atomically claims supported background work such as queued repair ranges, recovers stale running locks, and records success, retry, or permanent failure state.
 
 The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `rendered.md`. It does not overwrite this repository's own `README.md`.
 

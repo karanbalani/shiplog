@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '30 0 * * *'
   workflow_dispatch:
+    inputs:
+      stale_lock_minutes:
+        description: 'Optional minutes before a running maintenance task is considered stale'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -55,3 +60,4 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          MAINTENANCE_STALE_LOCK_MINUTES: ${{ github.event.inputs.stale_lock_minutes }}

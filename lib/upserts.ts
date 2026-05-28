@@ -381,20 +381,49 @@ export async function dueMaintenanceTasks(
   return result.rows
 }
 
-export async function markMaintenanceTaskRunning(id: number): Promise<MaintenanceTaskRow> {
+export async function recoverStaleMaintenanceTasks(
+  staleBefore: Date | string,
+  nextRunAt: Date | string,
+  error: string
+): Promise<MaintenanceTaskRow[]> {
+  const result = await db.query<MaintenanceTaskRow>(
+    `UPDATE maintenance_tasks
+     SET status = CASE
+           WHEN attempts >= max_attempts THEN 'failed_permanent'
+           ELSE 'retry_wait'
+         END,
+         locked_at = NULL,
+         next_run_at = $2::timestamptz,
+         last_error = $3,
+         updated_at = now()
+     WHERE status = 'running'
+       AND locked_at <= $1::timestamptz
+     RETURNING *`,
+    [staleBefore, nextRunAt, error]
+  )
+
+  return result.rows
+}
+
+export async function markMaintenanceTaskRunning(
+  id: number,
+  now: Date | string = new Date()
+): Promise<MaintenanceTaskRow | null> {
   const result = await db.query<MaintenanceTaskRow>(
     `UPDATE maintenance_tasks
      SET status = 'running',
          attempts = attempts + 1,
-         locked_at = now(),
-         started_at = now(),
+         locked_at = $2::timestamptz,
+         started_at = $2::timestamptz,
          updated_at = now()
      WHERE id = $1
+       AND status IN ('pending', 'retry_wait')
+       AND next_run_at <= $2::timestamptz
      RETURNING *`,
-    [id]
+    [id, now]
   )
 
-  return result.rows[0]!
+  return result.rows[0] ?? null
 }
 
 export async function markMaintenanceTaskSucceeded(id: number): Promise<MaintenanceTaskRow> {

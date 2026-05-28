@@ -11,22 +11,21 @@ import * as upserts from '../../lib/upserts.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
 const originalGitHubToken = process.env.GH_RO_CLASSIC_TOKEN
+const originalMaintenanceStaleLockMinutes = process.env.MAINTENANCE_STALE_LOCK_MINUTES
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
   logger.configureLogger({ level: 'silent', write: () => undefined })
   process.env.GH_RO_CLASSIC_TOKEN = 'test-token'
+  delete process.env.MAINTENANCE_STALE_LOCK_MINUTES
 })
 
 afterEach(async () => {
   await db.close()
   logger.resetLogger()
 
-  if (originalGitHubToken === undefined) {
-    delete process.env.GH_RO_CLASSIC_TOKEN
-  } else {
-    process.env.GH_RO_CLASSIC_TOKEN = originalGitHubToken
-  }
+  restoreEnv('GH_RO_CLASSIC_TOKEN', originalGitHubToken)
+  restoreEnv('MAINTENANCE_STALE_LOCK_MINUTES', originalMaintenanceStaleLockMinutes)
 })
 
 test('run executes due repair tasks without moving the collect checkpoint', async () => {
@@ -62,6 +61,85 @@ test('run executes due repair tasks without moving the collect checkpoint', asyn
     attempts: 1,
     last_error: null
   })
+})
+
+test('run recovers stale running tasks before claiming due work', async () => {
+  const account = await seedAccount({ lastSuccessfulCollectOn: '2026-05-01' })
+  const task = await upserts.enqueueMaintenanceRepairTask({
+    account_id: account.id,
+    target_from_on: '2026-05-07',
+    target_to_on: '2026-05-07',
+    reason: 'drift',
+    next_run_at: '2026-05-08T00:00:00Z'
+  })
+  await upserts.markMaintenanceTaskRunning(task.id, '2026-05-08T00:00:00Z')
+
+  await maintenance.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-08T03:00:00Z'),
+    staleLockMinutes: 60,
+    fetch: mockGitHubFetch()
+  })
+
+  const tasks = await db.query<{ status: string; attempts: number; last_error: string | null }>(
+    'SELECT status, attempts, last_error FROM maintenance_tasks'
+  )
+
+  expect(tasks.rows[0]).toMatchObject({
+    status: 'succeeded',
+    attempts: 2,
+    last_error: null
+  })
+})
+
+test('run leaves fresh running tasks locked', async () => {
+  const account = await seedAccount({ lastSuccessfulCollectOn: '2026-05-01' })
+  const task = await upserts.enqueueMaintenanceRepairTask({
+    account_id: account.id,
+    target_from_on: '2026-05-07',
+    target_to_on: '2026-05-07',
+    reason: 'drift',
+    next_run_at: '2026-05-08T00:00:00Z'
+  })
+  await upserts.markMaintenanceTaskRunning(task.id, '2026-05-08T02:30:00Z')
+
+  await maintenance.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-08T03:00:00Z'),
+    staleLockMinutes: 60,
+    fetch: async () => {
+      throw new Error('fetch should not be called')
+    }
+  })
+
+  const tasks = await db.query<{
+    status: string
+    attempts: number
+    locked_at: Date | string | null
+  }>('SELECT status, attempts, locked_at FROM maintenance_tasks')
+
+  expect(tasks.rows[0]).toMatchObject({
+    status: 'running',
+    attempts: 1
+  })
+  expect(dateOnly(tasks.rows[0]!.locked_at!)).toBe('2026-05-08')
+})
+
+test('markMaintenanceTaskRunning claims due work once', async () => {
+  const account = await seedAccount()
+  const task = await upserts.enqueueMaintenanceRepairTask({
+    account_id: account.id,
+    target_from_on: '2026-05-05',
+    target_to_on: '2026-05-07',
+    reason: 'drift',
+    next_run_at: '2026-05-08T00:00:00Z'
+  })
+
+  const claimed = await upserts.markMaintenanceTaskRunning(task.id, '2026-05-08T00:00:00Z')
+  const claimedAgain = await upserts.markMaintenanceTaskRunning(task.id, '2026-05-08T00:00:00Z')
+
+  expect(claimed).toMatchObject({ id: task.id, status: 'running', attempts: 1 })
+  expect(claimedAgain).toBeNull()
 })
 
 test('enqueueMaintenanceRepairTask deduplicates pending repair work', async () => {
@@ -320,6 +398,14 @@ function loadMigration(filename: string): string {
     .readFileSync(path.join(MIGRATIONS, filename), 'utf8')
     .split(/-- migrate:down/)[0]!
     .replace(/^-- migrate:up\s*/m, '')
+}
+
+function restoreEnv(name: string, originalValue: string | undefined): void {
+  if (originalValue === undefined) {
+    delete process.env[name]
+  } else {
+    process.env[name] = originalValue
+  }
 }
 
 function dateOnly(value: Date | string): string {
