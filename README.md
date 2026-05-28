@@ -178,7 +178,7 @@ If an organization requires a separate read token, create another secret such as
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders `rendered.md`, and publishes the initial README to `publish.targets`. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates `rendered.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, typechecking, and tests on pull requests and pushes to `main`.
+After setting those values, run the `init` workflow once from GitHub Actions. It migrates, creates account rows, runs collect, renders `rendered.md`, and publishes the initial README to `publish.targets`. The first collect can be slow because `last_successful_collect_on` is null, so shiplog performs a complete historical collection and deliberately throttles GitHub REST Search calls. During historical collect, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `init` fails before completion, fix the error and rerun it; writes are upserted and the account checkpoint advances only after the historical collect completes. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday. When `collect` succeeds, the `render` workflow regenerates `rendered.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
 
 ## Development Commands
 
@@ -192,6 +192,12 @@ Check formatting for docs, JSON, TypeScript, and SQL migrations:
 
 ```bash
 bun run format:check
+```
+
+Run the linter:
+
+```bash
+bun run lint
 ```
 
 Format everything:
