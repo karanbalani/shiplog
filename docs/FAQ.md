@@ -189,7 +189,13 @@ If you want to repair a historical range without moving the checkpoint, run with
 COLLECT_FROM=2026-05-01 COLLECT_TO=2026-05-07 bun run collect
 ```
 
-In GitHub Actions, the manual `collect` workflow has optional `collect_date`, `collect_from`, and `collect_to` inputs for the same purpose. The next normal collect run may safely reprocess those dates if they are still part of the checkpoint gap or rolling lookback window.
+If you want to check older data for drift before repairing it, run with `DRIFT_CHECK_FROM` and `DRIFT_CHECK_TO` together. This compares stored daily account-level contribution totals with fresh provider totals, then re-collects only missing or mismatched days without moving the checkpoint:
+
+```bash
+DRIFT_CHECK_FROM=2026-05-01 DRIFT_CHECK_TO=2026-05-31 bun run collect
+```
+
+In GitHub Actions, the manual `collect` workflow has optional `collect_date`, `collect_from`, `collect_to`, `drift_check_from`, and `drift_check_to` inputs for the same purpose. The next normal collect run may safely reprocess those dates if they are still part of the checkpoint gap or rolling lookback window.
 
 ## Why is the first collect slow?
 

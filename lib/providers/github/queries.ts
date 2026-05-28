@@ -102,6 +102,20 @@ query Contributions($login: String!, $from: DateTime!, $to: DateTime!) {
 }
 `
 
+export const CONTRIBUTIONS_TOTALS = `
+query ContributionsTotals($login: String!, $from: DateTime!, $to: DateTime!) {
+  user(login: $login) {
+    contributionsCollection(from: $from, to: $to) {
+      totalCommitContributions
+      totalIssueContributions
+      totalPullRequestContributions
+      totalPullRequestReviewContributions
+      restrictedContributionsCount
+    }
+  }
+}
+`
+
 export const REPOSITORY_COMMITS_IN_WINDOW = `
 query RepositoryCommits($owner: String!, $name: String!, $since: GitTimestamp!, $until: GitTimestamp!, $cursor: String, $author: CommitAuthor) {
   repository(owner: $owner, name: $name) {

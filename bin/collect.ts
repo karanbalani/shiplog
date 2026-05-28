@@ -2,13 +2,16 @@ import * as config from '../lib/config.ts'
 import * as db from '../lib/db.ts'
 import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
-import { graphQLClient } from '../lib/providers/github/graphql.ts'
+import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
 import {
   fetchGitHubAccountProfileById,
   fetchGitHubOrganizationById
 } from '../lib/providers/github/identity.ts'
+import * as queries from '../lib/providers/github/queries.ts'
+import type { GitHubContributionsCollection } from '../lib/providers/github/types.ts'
 import type {
   AccountRow,
+  DailyUserSummaryRow,
   ShiplogCollectAccountConfig,
   ShiplogConfig,
   VendorOrganizationToken,
@@ -24,6 +27,8 @@ export interface CollectRunOptions {
   date?: string
   fromDate?: string
   toDate?: string
+  driftFromDate?: string
+  driftToDate?: string
   fetch?: Fetcher
   now?: Date
 }
@@ -34,18 +39,38 @@ export interface CollectDateRequest {
   to?: string
 }
 
+export interface DriftCheckRequest {
+  from?: string
+  to?: string
+}
+
+type GitHubContributionTotals = Pick<
+  GitHubContributionsCollection,
+  | 'totalCommitContributions'
+  | 'totalIssueContributions'
+  | 'totalPullRequestContributions'
+  | 'totalPullRequestReviewContributions'
+  | 'restrictedContributionsCount'
+>
+
 export async function run(options: CollectRunOptions = {}): Promise<void> {
   const shiplogConfig = options.config ?? config.load(options.configPath)
   const dateRequest = collectDateRequest(options)
+  const driftRequest = driftCheckRequest(options)
   const yesterday = dates.yesterdayUTC(options.now)
   const lookbackDays = shiplogConfig.collect.lookbackDays ?? config.DEFAULT_COLLECT_LOOKBACK_DAYS
+  assertCompatibleExplicitRequests(dateRequest, driftRequest)
 
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await findAccount(accountConfig)
     const ignoreOrganizationIds = accountConfig.ignore.organizations
     const ignoreRepositoryIds = accountConfig.ignore.repositories
 
-    if (!hasExplicitCollectRequest(dateRequest) && !account.last_successful_collect_on) {
+    if (
+      !hasExplicitCollectRequest(dateRequest) &&
+      !hasDriftCheckRequest(driftRequest) &&
+      !account.last_successful_collect_on
+    ) {
       const token = tokenForAccount(accountConfig)
       const organizationPatTokens = await organizationPatTokensForAccount(
         accountConfig,
@@ -71,10 +96,11 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
       continue
     }
 
-    const vendor = await importVendorCollector(accountConfig.provider)
-    const collectDates = collectDatesForAccount(account, yesterday, dateRequest, lookbackDays)
+    const automaticCollectDates = hasDriftCheckRequest(driftRequest)
+      ? null
+      : collectDatesForAccount(account, yesterday, dateRequest, lookbackDays)
 
-    if (collectDates.length === 0) {
+    if (automaticCollectDates?.length === 0) {
       logger.info(
         `[collect] ${accountConfig.provider}/${account.external_login}: already collected through ${yesterday}`
       )
@@ -82,12 +108,30 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
     }
 
     const token = tokenForAccount(accountConfig)
+    const refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
+    const identity = vendorIdentity(refreshedAccount)
+    const collectDates = hasDriftCheckRequest(driftRequest)
+      ? await driftedCollectDates(
+          graphQLClient({ token, fetch: options.fetch }),
+          refreshedAccount,
+          identity.externalLogin,
+          driftRequest,
+          yesterday
+        )
+      : automaticCollectDates!
+
+    if (collectDates.length === 0) {
+      logger.info(
+        `[collect] ${accountConfig.provider}/${refreshedAccount.external_login}: no drift detected`
+      )
+      continue
+    }
+
     const organizationPatTokens = await organizationPatTokensForAccount(
       accountConfig,
       options.fetch
     )
-    const refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
-    const identity = vendorIdentity(refreshedAccount)
+    const vendor = await importVendorCollector(accountConfig.provider)
 
     logger.info(
       `[collect] ${accountConfig.provider}/${refreshedAccount.external_login}: ${collectDates.length} day(s) (${collectDates[0]} to ${collectDates.at(-1)})`
@@ -106,7 +150,7 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
         date: collectDate,
         fetch: options.fetch
       })
-      if (!hasExplicitCollectRequest(dateRequest)) {
+      if (!hasExplicitCollectRequest(dateRequest) && !hasDriftCheckRequest(driftRequest)) {
         await upserts.markCollectSuccess(refreshedAccount.id, collectDate)
       }
     }
@@ -134,7 +178,7 @@ export function collectDatesForAccount(
     }
     assertCollectDate(request.from, 'COLLECT_FROM')
     assertCollectDate(request.to, 'COLLECT_TO')
-    assertDateRangeOrder(request.from, request.to)
+    assertDateRangeOrder(request.from, request.to, 'COLLECT_FROM', 'COLLECT_TO')
     assertNotFutureCollectDate(request.to, yesterday, 'COLLECT_TO')
     return dateRange(request.from, request.to)
   }
@@ -147,6 +191,102 @@ export function collectDatesForAccount(
   const lookbackDates = lookbackDatesForAccount(lastSuccessfulCollectOn, yesterday, lookbackDays)
 
   return dedupeDates([...missingDates, ...lookbackDates])
+}
+
+async function driftedCollectDates(
+  graphQL: GraphQLClient,
+  account: AccountRow,
+  login: string,
+  request: DriftCheckRequest,
+  yesterday: string
+): Promise<string[]> {
+  const driftDates = driftCheckDates(request, yesterday)
+  const storedByDate = await dailyUserSummariesForRange(
+    account.id,
+    driftDates[0]!,
+    driftDates.at(-1)!
+  )
+  const out: string[] = []
+
+  logger.info(`[collect] github/${login}: drift check ${driftDates.length} day(s)`)
+
+  for (const date of driftDates) {
+    const stored = storedByDate.get(date)
+    if (!stored) {
+      logger.warn(`[collect] github/${login}: missing summary for ${date}; re-collecting`)
+      out.push(date)
+      continue
+    }
+
+    const current = await fetchContributionsCollectionForDate(graphQL, login, date)
+
+    if (dailySummaryDrifted(stored, current)) {
+      logger.warn(`[collect] github/${login}: drift detected for ${date}; re-collecting`)
+      out.push(date)
+    }
+  }
+
+  return out
+}
+
+function driftCheckDates(request: DriftCheckRequest, yesterday: string): string[] {
+  if (!request.from || !request.to) {
+    throw new Error('DRIFT_CHECK_FROM and DRIFT_CHECK_TO must be set together')
+  }
+  assertCollectDate(request.from, 'DRIFT_CHECK_FROM')
+  assertCollectDate(request.to, 'DRIFT_CHECK_TO')
+  assertDateRangeOrder(request.from, request.to, 'DRIFT_CHECK_FROM', 'DRIFT_CHECK_TO')
+  assertNotFutureCollectDate(request.to, yesterday, 'DRIFT_CHECK_TO')
+
+  return dateRange(request.from, request.to)
+}
+
+async function dailyUserSummariesForRange(
+  accountId: number,
+  from: string,
+  to: string
+): Promise<Map<string, DailyUserSummaryRow>> {
+  const result = await db.query<DailyUserSummaryRow>(
+    `SELECT *
+     FROM daily_user_summary
+     WHERE account_id = $1
+       AND activity_on BETWEEN $2::date AND $3::date`,
+    [accountId, from, to]
+  )
+
+  return new Map(result.rows.map((row) => [dateOnly(row.activity_on), row]))
+}
+
+async function fetchContributionsCollectionForDate(
+  graphQL: GraphQLClient,
+  login: string,
+  date: string
+): Promise<GitHubContributionTotals> {
+  const window = dates.contributionDayWindow(date)
+  const data = await graphQL<{
+    user: { contributionsCollection: GitHubContributionTotals } | null
+  }>(queries.CONTRIBUTIONS_TOTALS, {
+    login,
+    from: window.from,
+    to: window.to
+  })
+
+  if (!data.user) throw new Error(`collect: GitHub user not found: ${login}`)
+  return data.user.contributionsCollection
+}
+
+function dailySummaryDrifted(
+  stored: DailyUserSummaryRow,
+  current: GitHubContributionTotals
+): boolean {
+  return (
+    stored.total_commit_contributions !== current.totalCommitContributions ||
+    stored.total_pull_request_contributions !== current.totalPullRequestContributions ||
+    stored.total_pull_request_review_contributions !==
+      current.totalPullRequestReviewContributions ||
+    stored.total_issue_contributions !== current.totalIssueContributions ||
+    stored.restricted_contributions_count !== current.restrictedContributionsCount
+  )
 }
 
 export async function findAccount(accountConfig: ShiplogCollectAccountConfig): Promise<AccountRow> {
@@ -258,6 +398,13 @@ function collectDateRequest(options: CollectRunOptions): CollectDateRequest {
   }
 }
 
+function driftCheckRequest(options: CollectRunOptions): DriftCheckRequest {
+  return {
+    from: optionalDate(options.driftFromDate ?? process.env.DRIFT_CHECK_FROM),
+    to: optionalDate(options.driftToDate ?? process.env.DRIFT_CHECK_TO)
+  }
+}
+
 function optionalDate(value: string | undefined): string | undefined {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
@@ -265,6 +412,21 @@ function optionalDate(value: string | undefined): string | undefined {
 
 function hasExplicitCollectRequest(request: CollectDateRequest): boolean {
   return Boolean(request.date || request.from || request.to)
+}
+
+function hasDriftCheckRequest(request: DriftCheckRequest): boolean {
+  return Boolean(request.from || request.to)
+}
+
+function assertCompatibleExplicitRequests(
+  collectRequest: CollectDateRequest,
+  driftRequest: DriftCheckRequest
+): void {
+  if (hasExplicitCollectRequest(collectRequest) && hasDriftCheckRequest(driftRequest)) {
+    throw new Error(
+      'drift checks cannot be combined with COLLECT_DATE, COLLECT_FROM, or COLLECT_TO'
+    )
+  }
 }
 
 function assertCollectDate(collectDate: string, label: string): void {
@@ -278,9 +440,9 @@ function assertCollectDate(collectDate: string, label: string): void {
   }
 }
 
-function assertDateRangeOrder(from: string, to: string): void {
+function assertDateRangeOrder(from: string, to: string, fromLabel: string, toLabel: string): void {
   if (from > to) {
-    throw new Error(`COLLECT_FROM must be on or before COLLECT_TO; got ${from} to ${to}`)
+    throw new Error(`${fromLabel} must be on or before ${toLabel}; got ${from} to ${to}`)
   }
 }
 

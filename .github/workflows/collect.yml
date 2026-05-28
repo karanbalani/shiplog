@@ -17,6 +17,14 @@ on:
         description: 'Optional YYYY-MM-DD range end for repair collection'
         required: false
         type: string
+      drift_check_from:
+        description: 'Optional YYYY-MM-DD range start for drift detection'
+        required: false
+        type: string
+      drift_check_to:
+        description: 'Optional YYYY-MM-DD range end for drift detection'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -71,3 +79,5 @@ jobs:
           COLLECT_DATE: ${{ github.event.inputs.collect_date }}
           COLLECT_FROM: ${{ github.event.inputs.collect_from }}
           COLLECT_TO: ${{ github.event.inputs.collect_to }}
+          DRIFT_CHECK_FROM: ${{ github.event.inputs.drift_check_from }}
+          DRIFT_CHECK_TO: ${{ github.event.inputs.drift_check_to }}

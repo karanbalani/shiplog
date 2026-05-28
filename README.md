@@ -298,6 +298,12 @@ To repair a historical range without moving the checkpoint, use `COLLECT_FROM` a
 COLLECT_FROM=2026-05-01 COLLECT_TO=2026-05-07 bun run collect
 ```
 
+To detect and repair historical drift without collecting already-matching days, use `DRIFT_CHECK_FROM` and `DRIFT_CHECK_TO` together:
+
+```bash
+DRIFT_CHECK_FROM=2026-05-01 DRIFT_CHECK_TO=2026-05-31 bun run collect
+```
+
 Render only:
 
 ```bash
@@ -331,7 +337,7 @@ The internal GitHub historical strategy resolves the stable account ID, uses the
 
 The init dispatcher reads `shiplog.config.json`, ensures the human `users` row exists, fetches provider account profile data, writes `accounts`, then invokes collect. A null `last_successful_collect_on` makes collect run the historical path.
 
-The collect dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE` or repair range, or catches up every missing date through UTC yesterday before rechecking the recent `collect.lookbackDays` window. After a successful automatic run, it advances the account checkpoint.
+The collect dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, chooses complete history when the checkpoint is null, chooses an explicit `COLLECT_DATE`, repair range, or drift-check range, or catches up every missing date through UTC yesterday before rechecking the recent `collect.lookbackDays` window. After a successful automatic run, it advances the account checkpoint.
 
 The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `rendered.md`. It does not overwrite this repository's own `README.md`.
 

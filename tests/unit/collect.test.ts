@@ -14,6 +14,8 @@ const originalGitHubToken = process.env.GH_RO_CLASSIC_TOKEN
 const originalCollectDate = process.env.COLLECT_DATE
 const originalCollectFrom = process.env.COLLECT_FROM
 const originalCollectTo = process.env.COLLECT_TO
+const originalDriftCheckFrom = process.env.DRIFT_CHECK_FROM
+const originalDriftCheckTo = process.env.DRIFT_CHECK_TO
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
@@ -22,6 +24,8 @@ beforeEach(() => {
   delete process.env.COLLECT_DATE
   delete process.env.COLLECT_FROM
   delete process.env.COLLECT_TO
+  delete process.env.DRIFT_CHECK_FROM
+  delete process.env.DRIFT_CHECK_TO
 })
 
 afterEach(async () => {
@@ -32,6 +36,8 @@ afterEach(async () => {
   restoreEnv('COLLECT_DATE', originalCollectDate)
   restoreEnv('COLLECT_FROM', originalCollectFrom)
   restoreEnv('COLLECT_TO', originalCollectTo)
+  restoreEnv('DRIFT_CHECK_FROM', originalDriftCheckFrom)
+  restoreEnv('DRIFT_CHECK_TO', originalDriftCheckTo)
 })
 
 test('run dispatches daily collection for configured account', async () => {
@@ -176,6 +182,85 @@ test('run uses COLLECT_FROM and COLLECT_TO without moving the checkpoint', async
   expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-01')
 })
 
+test('run drift-checks a range and re-collects mismatched summaries only', async () => {
+  const account = await seedAccount({ lastSuccessfulCollectOn: '2026-05-07' })
+  await seedDailySummary(account.id, '2026-05-05', { commits: 3, pullRequests: 1 })
+  await seedDailySummary(account.id, '2026-05-06', { commits: 0, pullRequests: 0 })
+  process.env.DRIFT_CHECK_FROM = '2026-05-05'
+  process.env.DRIFT_CHECK_TO = '2026-05-06'
+
+  const calls = { commitRequests: 0 }
+  await collect.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
+    fetch: countingGitHubFetch(calls)
+  })
+
+  const summaries = await db.query<{
+    activity_on: Date | string
+    total_commit_contributions: number
+    total_pull_request_contributions: number
+  }>(
+    'SELECT activity_on, total_commit_contributions, total_pull_request_contributions FROM daily_user_summary ORDER BY activity_on'
+  )
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+
+  expect(calls.commitRequests).toBe(1)
+  expect(summaries.rows.map((row) => dateOnly(row.activity_on))).toEqual([
+    '2026-05-05',
+    '2026-05-06'
+  ])
+  expect(summaries.rows[1]).toMatchObject({
+    total_commit_contributions: 3,
+    total_pull_request_contributions: 1
+  })
+  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
+})
+
+test('run drift-checks a clean range without re-collecting', async () => {
+  const account = await seedAccount({ lastSuccessfulCollectOn: '2026-05-07' })
+  await seedDailySummary(account.id, '2026-05-05', { commits: 3, pullRequests: 1 })
+  process.env.DRIFT_CHECK_FROM = '2026-05-05'
+  process.env.DRIFT_CHECK_TO = '2026-05-05'
+
+  const calls = { commitRequests: 0 }
+  await collect.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
+    fetch: countingGitHubFetch(calls)
+  })
+
+  expect(calls.commitRequests).toBe(0)
+})
+
+test('run drift-checks missing summaries and re-collects them', async () => {
+  await seedAccount({ lastSuccessfulCollectOn: '2026-05-07' })
+  process.env.DRIFT_CHECK_FROM = '2026-05-05'
+  process.env.DRIFT_CHECK_TO = '2026-05-05'
+
+  const calls = { commitRequests: 0 }
+  await collect.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
+    fetch: countingGitHubFetch(calls)
+  })
+
+  const summaries = await db.query<{
+    activity_on: Date | string
+    total_commit_contributions: number
+  }>('SELECT activity_on, total_commit_contributions FROM daily_user_summary')
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+
+  expect(calls.commitRequests).toBe(1)
+  expect(dateOnly(summaries.rows[0]!.activity_on)).toBe('2026-05-05')
+  expect(summaries.rows[0]!.total_commit_contributions).toBe(3)
+  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
+})
+
 test('run refreshes renamed account login by stable external id', async () => {
   await seedAccount({ externalLogin: 'old-octocat' })
 
@@ -248,6 +333,34 @@ test('run rejects invalid collect range dates', async () => {
   ).rejects.toThrow(/COLLECT_FROM must be on or before COLLECT_TO/)
 })
 
+test('run rejects incomplete drift check ranges', async () => {
+  await seedAccount()
+  process.env.DRIFT_CHECK_FROM = '2026-05-05'
+
+  await expect(
+    collect.run({
+      config: shiplogConfig(),
+      now: new Date('2026-05-08T00:00:00Z'),
+      fetch: mockGitHubFetch()
+    })
+  ).rejects.toThrow(/DRIFT_CHECK_FROM and DRIFT_CHECK_TO/)
+})
+
+test('run rejects drift checks mixed with collect requests', async () => {
+  await seedAccount()
+  process.env.COLLECT_DATE = '2026-05-07'
+  process.env.DRIFT_CHECK_FROM = '2026-05-05'
+  process.env.DRIFT_CHECK_TO = '2026-05-07'
+
+  await expect(
+    collect.run({
+      config: shiplogConfig(),
+      now: new Date('2026-05-08T00:00:00Z'),
+      fetch: mockGitHubFetch()
+    })
+  ).rejects.toThrow(/drift checks cannot be combined/)
+})
+
 test('run throws when account has not been initialized', async () => {
   await expect(
     collect.run({
@@ -260,7 +373,7 @@ test('run throws when account has not been initialized', async () => {
 
 async function seedAccount(
   options: { externalLogin?: string; lastSuccessfulCollectOn?: string } = {}
-): Promise<void> {
+): Promise<AccountRow> {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
     user_id: user.id,
@@ -275,6 +388,25 @@ async function seedAccount(
   if (options.lastSuccessfulCollectOn) {
     await upserts.markCollectSuccess(account.id, options.lastSuccessfulCollectOn)
   }
+
+  return account
+}
+
+async function seedDailySummary(
+  accountId: number,
+  date: string,
+  totals: { commits: number; pullRequests: number }
+): Promise<void> {
+  await upserts.upsertDailyUserSummary({
+    account_id: accountId,
+    activity_on: date,
+    total_commit_contributions: totals.commits,
+    total_pull_request_contributions: totals.pullRequests,
+    total_pull_request_review_contributions: 0,
+    total_issue_contributions: 0,
+    restricted_contributions_count: 0,
+    source: 'live'
+  })
 }
 
 function shiplogConfig(options: { lookbackDays?: number } = {}): ShiplogConfig {
@@ -400,6 +532,18 @@ function mockGitHubFetch(): typeof fetch {
     }
 
     return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
+function countingGitHubFetch(calls: { commitRequests: number }): typeof fetch {
+  const baseFetch = mockGitHubFetch()
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (body.query.includes('query RepositoryCommits')) calls.commitRequests += 1
+    }
+
+    return baseFetch(url, init)
   }) as typeof fetch
 }
 

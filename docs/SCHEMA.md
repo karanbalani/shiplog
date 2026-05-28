@@ -56,6 +56,7 @@ Collection checkpoint:
 - After the first complete collection, automatic collect runs process every date from `last_successful_collect_on + 1` through UTC yesterday, then reprocess the recent `collect.lookbackDays` window.
 - `last_successful_collect_on` is advanced after successful automatic collection.
 - Manual `COLLECT_DATE`, or `COLLECT_FROM` plus `COLLECT_TO`, reprocesses requested repair dates without advancing the checkpoint, and safely dedupes on rerun.
+- Manual `DRIFT_CHECK_FROM` plus `DRIFT_CHECK_TO` compares stored daily account-level contribution totals with fresh provider totals, then reprocesses only missing or mismatched dates without advancing the checkpoint.
 
 ## profile_snapshots
 
