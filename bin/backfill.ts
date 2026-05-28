@@ -10,6 +10,7 @@ import {
 import type {
   AccountRow,
   BackfillArgs,
+  BackfillResult,
   ShiplogCollectAccountConfig,
   ShiplogConfig,
   VendorIdentity,
@@ -24,11 +25,13 @@ export interface BackfillRunOptions {
   config?: ShiplogConfig
   fetch?: Fetcher
   now?: Date
+  repositoryLimit?: number
 }
 
 export async function run(options: BackfillRunOptions = {}): Promise<void> {
   const shiplogConfig = options.config ?? config.load(options.configPath)
   const throughDate = dates.yesterdayUTC(options.now)
+  const repositoryLimit = backfillRepositoryLimit(options)
 
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await findAccount(accountConfig)
@@ -42,18 +45,54 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
       `[backfill] ${accountConfig.provider}/${refreshedAccount.external_login}: collecting complete history through ${throughDate}`
     )
 
-    await vendor.run({
+    const result = await vendor.run({
       identity,
       token,
       organizationTokens,
       ignoreOrganizationIds: accountConfig.ignore.organizations,
       ignoreRepositoryIds: accountConfig.ignore.repositories,
       throughDate,
+      repositoryLimit,
       fetch: options.fetch
     } satisfies BackfillArgs)
 
-    await upserts.markCollectSuccess(refreshedAccount.id, throughDate)
+    if (backfillComplete(result)) {
+      await upserts.markCollectSuccess(refreshedAccount.id, throughDate)
+    } else {
+      logger.info(
+        `[backfill] ${accountConfig.provider}/${refreshedAccount.external_login}: paused with ${formatRepositoryCount(result.repositoriesDeferred)} remaining; rerun backfill to continue`
+      )
+    }
   }
+}
+
+function backfillRepositoryLimit(options: BackfillRunOptions): number | undefined {
+  if (options.repositoryLimit !== undefined) {
+    return assertPositiveInteger(options.repositoryLimit, 'repositoryLimit')
+  }
+
+  const envValue = process.env.BACKFILL_REPOSITORY_LIMIT?.trim()
+  if (!envValue) return undefined
+
+  return assertPositiveInteger(Number(envValue), 'BACKFILL_REPOSITORY_LIMIT')
+}
+
+function assertPositiveInteger(value: number, label: string): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer; got ${value}`)
+  }
+
+  return value
+}
+
+function backfillComplete(
+  result: void | BackfillResult
+): result is void | (BackfillResult & { complete: true }) {
+  return !result || result.complete
+}
+
+function formatRepositoryCount(count: number): string {
+  return `${count} ${count === 1 ? 'repository' : 'repositories'}`
 }
 
 export async function findAccount(accountConfig: ShiplogCollectAccountConfig): Promise<AccountRow> {

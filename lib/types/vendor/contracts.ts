@@ -30,9 +30,17 @@ export interface BackfillArgs {
   ignoreOrganizationIds?: string[]
   ignoreRepositoryIds?: string[]
   throughDate?: string
+  repositoryLimit?: number
   fetch?: Fetcher
 }
 
+export interface BackfillResult {
+  complete: boolean
+  repositoriesDiscovered: number
+  repositoriesProcessed: number
+  repositoriesDeferred: number
+}
+
 export interface VendorModule {
-  run(args: CollectArgs | BackfillArgs): Promise<void>
+  run(args: CollectArgs | BackfillArgs): Promise<void | BackfillResult>
 }

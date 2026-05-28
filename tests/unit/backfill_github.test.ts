@@ -303,6 +303,60 @@ test('run skips repositories that GitHub no longer resolves', async () => {
   expect(logs.some((line) => line.includes('is unavailable; skipping enrichment'))).toBe(true)
 })
 
+test('run can pause after a repository budget and resume remaining work', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+  const args = {
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    repositoryLimit: 1,
+    fetch: mockGitHubFetchWithTwoRepositories()
+  }
+
+  const first = await backfillGitHub.run(args)
+  const firstState = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+  )
+  const second = await backfillGitHub.run(args)
+  const secondState = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+
+  expect(first).toMatchObject({
+    complete: false,
+    repositoriesDiscovered: 2,
+    repositoriesProcessed: 1,
+    repositoriesDeferred: 1
+  })
+  expect(firstState.rows[0]!.count).toBe(1)
+  expect(second).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 2,
+    repositoriesProcessed: 1,
+    repositoriesDeferred: 0
+  })
+  expect(secondState.rows[0]!.count).toBe(2)
+  expect(commits.rows[0]!.count).toBe(2)
+  expect(logs.some((line) => line.includes('deferred by budget'))).toBe(true)
+  expect(logs.some((line) => line.includes('paused after 1 repository'))).toBe(true)
+  expect(logs.some((line) => line.includes('already complete'))).toBe(true)
+})
+
 test('estimatedSearchPacingMs estimates minimum GitHub search throttle time', () => {
   expect(backfillGitHub.estimatedSearchPacingMs(0)).toBe(0)
   expect(backfillGitHub.estimatedSearchPacingMs(1)).toBe(5000)
@@ -666,6 +720,119 @@ function mockGitHubFetchWithUnavailableRepository(): typeof fetch {
   }) as typeof fetch
 }
 
+function mockGitHubFetchWithTwoRepositories(): typeof fetch {
+  const currentYear = new Date().getUTCFullYear()
+
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as {
+        query: string
+        variables?: Record<string, string>
+      }
+
+      if (body.query.includes('query UserById')) {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'U_TEST_1',
+              login: 'octocat',
+              name: 'Octocat',
+              url: 'https://github.com/octocat',
+              createdAt: `${currentYear}-01-01T00:00:00Z`
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({ data: githubContributionsWithRepository(publicRepositoryNode()) })
+      }
+
+      if (body.query.includes('query RepositoryCommits')) {
+        const name = body.variables?.name
+        return jsonResponse({
+          data: {
+            repository: {
+              defaultBranchRef: {
+                target: {
+                  history: {
+                    totalCount: 1,
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                    nodes: [
+                      {
+                        oid: name === 'secret' ? 'private-commit-1' : 'public-commit-1',
+                        committedDate: '2026-05-07T12:34:56Z',
+                        additions: 10,
+                        deletions: 2,
+                        changedFiles: 3,
+                        messageHeadline: 'Ship it',
+                        author: githubCommitActor(),
+                        authors: { nodes: [githubCommitActor()] }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query RepositoryLanguages')) {
+        const isPrivate = body.variables?.name === 'secret'
+        return jsonResponse({
+          data: {
+            repository: {
+              stargazerCount: isPrivate ? 0 : 10,
+              forkCount: isPrivate ? 0 : 2,
+              isArchived: false,
+              isPrivate,
+              languages: {
+                edges: [{ size: 100, node: { name: isPrivate ? 'TypeScript' : 'Go' } }]
+              }
+            }
+          }
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([
+        {
+          node_id: 'R_PRIVATE_1',
+          name: 'secret',
+          full_name: 'octocat/secret',
+          private: true,
+          fork: false,
+          archived: false,
+          language: 'TypeScript',
+          stargazers_count: 0,
+          forks_count: 0,
+          created_at: '2024-01-01T00:00:00Z',
+          pushed_at: '2026-05-07T12:00:00Z',
+          default_branch: 'main',
+          html_url: 'https://github.com/octocat/secret',
+          description: 'private test repository',
+          owner: {
+            login: 'octocat',
+            node_id: 'U_TEST_1',
+            type: 'User',
+            avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4'
+          }
+        }
+      ])
+    }
+
+    if (parsed.pathname === '/search/issues') {
+      return jsonResponse({ total_count: 0, items: [] })
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
 function githubContributionsFixture(): {
   user: {
     contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
@@ -689,6 +856,33 @@ function githubContributionsFixture(): {
   collection.pullRequestReviewContributionsByRepository = [contribution]
 
   return fixture
+}
+
+function publicRepositoryNode(): import('../../lib/providers/github/types.ts').GitHubRepositoryNode {
+  return {
+    id: 'R_TEST_1',
+    nameWithOwner: 'octo-org/hello',
+    owner: {
+      __typename: 'Organization',
+      id: 'O_TEST_1',
+      login: 'octo-org',
+      name: 'Octo Org',
+      description: 'Example GitHub organization',
+      avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
+      websiteUrl: 'https://example.com'
+    },
+    isPrivate: false,
+    isFork: false,
+    isArchived: false,
+    primaryLanguage: { name: 'Go' },
+    stargazerCount: 10,
+    forkCount: 2,
+    createdAt: '2020-01-01T00:00:00Z',
+    pushedAt: '2026-05-07T12:00:00Z',
+    defaultBranchRef: { name: 'main' },
+    url: 'https://github.com/octo-org/hello',
+    description: 'Test repo'
+  }
 }
 
 function githubContributionsWithRepository(

@@ -24,11 +24,16 @@ import type {
   GitHubSearchPullRequestItem,
   GitHubSearchResult
 } from '../lib/providers/github/types.ts'
-import type { BackfillArgs, VendorIdentity, VendorOrganizationToken } from '../lib/types/index.ts'
+import type {
+  BackfillArgs,
+  BackfillResult,
+  VendorIdentity,
+  VendorOrganizationToken
+} from '../lib/types/index.ts'
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
 
-export async function run(args: BackfillArgs): Promise<void> {
+export async function run(args: BackfillArgs): Promise<BackfillResult> {
   const {
     identity,
     token,
@@ -36,6 +41,7 @@ export async function run(args: BackfillArgs): Promise<void> {
     ignoreOrganizationIds = [],
     ignoreRepositoryIds = [],
     throughDate,
+    repositoryLimit,
     fetch
   } = args
   if (!identity) throw new Error('backfill_github: missing identity')
@@ -109,7 +115,9 @@ export async function run(args: BackfillArgs): Promise<void> {
   logger.info(discoveryCompleteMessage)
 
   const repositoriesStartedAt = Date.now()
-  let completedRepositories = 0
+  let visitedRepositories = 0
+  let processedRepositories = 0
+  let deferredRepositories = 0
 
   for (const repositoryPlan of repositoriesByExternalId.values()) {
     const repositoryNode = repositoryPlan.node
@@ -125,7 +133,7 @@ export async function run(args: BackfillArgs): Promise<void> {
     const name = requiredString(repositoryInput.name, 'repository name')
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
     const logLabel = repositoryLogLabel(repositoryNode, fullName)
-    const repositoryPosition = `${completedRepositories + 1}/${repositoryCount}`
+    const repositoryPosition = `${visitedRepositories + 1}/${repositoryCount}`
     const repositoryStartMessage = `[backfill] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel}`
     logger.info(repositoryStartMessage)
 
@@ -133,7 +141,11 @@ export async function run(args: BackfillArgs): Promise<void> {
     try {
       if (await repositoryBackfillComplete(identity.accountId, repository.id, observedOn)) {
         repositoryStatus = 'already complete'
+      } else if (repositoryLimit !== undefined && processedRepositories >= repositoryLimit) {
+        repositoryStatus = 'deferred by budget'
+        deferredRepositories += 1
       } else {
+        processedRepositories += 1
         for (const year of commitYearsForPlan(repositoryPlan, years)) {
           const { from, to } = dates.yearWindow(year)
           logRepositoryStep(
@@ -202,27 +214,46 @@ export async function run(args: BackfillArgs): Promise<void> {
 
       repositoryStatus = 'skipped'
       logger.warn(
-        `[backfill] github/${identity.externalLogin}: repository ${completedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is unavailable; skipping enrichment (${repositoryErrorSummary(
+        `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is unavailable; skipping enrichment (${repositoryErrorSummary(
           repositoryNode,
           error
         )})`
       )
     }
 
-    completedRepositories += 1
-    const progress = progressPercent(completedRepositories, repositoryCount)
+    visitedRepositories += 1
+    const progress = progressPercent(visitedRepositories, repositoryCount)
     const elapsed = formatDuration(Date.now() - repositoriesStartedAt)
     const eta = formatDuration(
-      estimatedRemainingMs(repositoriesStartedAt, completedRepositories, repositoryCount)
+      estimatedRemainingMs(repositoriesStartedAt, visitedRepositories, repositoryCount)
     )
-    const repositoryCompleteMessage = `[backfill] github/${identity.externalLogin}: repository ${completedRepositories}/${repositoryCount} [${visibility}] ${logLabel} ${repositoryStatus} (${progress}%, elapsed ${elapsed}, eta ${eta})`
+    const repositoryCompleteMessage = `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories}/${repositoryCount} [${visibility}] ${logLabel} ${repositoryStatus} (${progress}%, elapsed ${elapsed}, eta ${eta})`
     logger.info(repositoryCompleteMessage)
   }
 
   logger.info(`[backfill] github/${identity.externalLogin}: rolling up activity dates`)
   await rollupDistinctActivityDates(identity.accountId)
-  const completeMessage = `[backfill] github/${identity.externalLogin}: complete in ${formatDuration(Date.now() - startedAt)}`
-  logger.info(completeMessage)
+  const result = {
+    complete: deferredRepositories === 0,
+    repositoriesDiscovered: repositoryCount,
+    repositoriesProcessed: processedRepositories,
+    repositoriesDeferred: deferredRepositories
+  }
+
+  if (result.complete) {
+    const completeMessage = `[backfill] github/${identity.externalLogin}: complete in ${formatDuration(Date.now() - startedAt)}`
+    logger.info(completeMessage)
+  } else {
+    logger.info(
+      `[backfill] github/${identity.externalLogin}: paused after ${formatRepositoryCount(processedRepositories)}; ${formatRepositoryCount(deferredRepositories)} remaining`
+    )
+  }
+
+  return result
+}
+
+function formatRepositoryCount(count: number): string {
+  return `${count} ${count === 1 ? 'repository' : 'repositories'}`
 }
 
 function logRepositoryStep(
