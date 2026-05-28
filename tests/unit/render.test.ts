@@ -157,7 +157,6 @@ function profileConfig(): ProfileConfig {
       {
         provider: 'github',
         externalId: 'U_TEST_1',
-        loginHint: 'octocat',
         tokenEnv: 'GH_RO_CLASSIC_TOKEN',
         organizationTokens: [],
         ignoreOrganizations: [],
@@ -168,7 +167,6 @@ function profileConfig(): ProfileConfig {
       {
         provider: 'github',
         repositoryId: 'R_PROFILE_1',
-        repositoryHint: 'octocat/octocat',
         branch: 'main',
         path: 'README.md',
         tokenEnv: 'GH_RW_REPO_TOKEN'

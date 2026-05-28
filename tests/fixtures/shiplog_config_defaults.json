@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "collect": {
+    "accounts": [
+      {
+        "provider": "github",
+        "accountId": "U_TEST_1"
+      }
+    ]
+  },
+  "publish": {
+    "targets": [
+      {
+        "provider": "github",
+        "repositoryId": "R_PROFILE_1"
+      }
+    ]
+  }
+}

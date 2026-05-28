@@ -358,7 +358,7 @@ function accountFilter(
 }
 
 function displayName(profileConfig: ProfileConfig): string {
-  return profileConfig.displayName ?? profileConfig.identities[0]?.loginHint ?? 'shiplog user'
+  return profileConfig.displayName ?? 'shiplog user'
 }
 
 function completedYearsSince(value: Date | string, now: Date): number {

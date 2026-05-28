@@ -3,33 +3,20 @@ import type { Provider } from '../domain/enums.ts'
 export interface IdentityConfig {
   provider: Provider
   externalId: string
-  loginHint: string
   tokenEnv: string
   organizationTokens: OrganizationTokenConfig[]
-  ignoreOrganizations: IgnoredOrganizationConfig[]
-  ignoreRepositories: IgnoredRepositoryConfig[]
+  ignoreOrganizations: string[]
+  ignoreRepositories: string[]
 }
 
 export interface OrganizationTokenConfig {
   externalId: string
-  loginHint: string
   tokenEnv: string
-}
-
-export interface IgnoredOrganizationConfig {
-  externalId: string
-  loginHint: string
-}
-
-export interface IgnoredRepositoryConfig {
-  externalId: string
-  nameHint: string
 }
 
 export interface PublishTargetConfig {
   provider: Provider
   repositoryId: string
-  repositoryHint: string
   branch: string
   path: string
   tokenEnv: string
@@ -46,4 +33,50 @@ export interface ProfileConfig {
   identities: IdentityConfig[]
   publishTargets: PublishTargetConfig[]
   render: RenderKnobs
+}
+
+export interface ShiplogConfig {
+  $schema?: string
+  version: 1
+  profile?: ShiplogProfileConfig
+  collect: ShiplogCollectConfig
+  publish: ShiplogPublishConfig
+}
+
+export interface ShiplogProfileConfig {
+  displayName?: string
+}
+
+export interface ShiplogCollectConfig {
+  accounts: ShiplogCollectAccountConfig[]
+}
+
+export interface ShiplogCollectAccountConfig {
+  provider: Provider
+  accountId: string
+  tokenEnv?: string
+  organizationTokens?: ShiplogOrganizationTokenConfig[]
+  ignore?: ShiplogIgnoreConfig
+}
+
+export interface ShiplogOrganizationTokenConfig {
+  organizationId: string
+  tokenEnv: string
+}
+
+export interface ShiplogIgnoreConfig {
+  organizations?: string[]
+  repositories?: string[]
+}
+
+export interface ShiplogPublishConfig {
+  targets: ShiplogPublishTargetConfig[]
+}
+
+export interface ShiplogPublishTargetConfig {
+  provider: Provider
+  repositoryId: string
+  branch?: string
+  path?: string
+  tokenEnv?: string
 }

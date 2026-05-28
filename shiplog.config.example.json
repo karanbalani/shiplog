@@ -1,0 +1,37 @@
+{
+  "$schema": "./schemas/shiplog.config.schema.json",
+  "version": 1,
+  "profile": {
+    "displayName": "Your Name"
+  },
+  "collect": {
+    "accounts": [
+      {
+        "provider": "github",
+        "accountId": "your-github-user-node-id",
+        "tokenEnv": "GH_RO_CLASSIC_TOKEN",
+        "organizationTokens": [
+          {
+            "organizationId": "restricted-org-node-id",
+            "tokenEnv": "GH_RO_RESTRICTED_ORG_TOKEN"
+          }
+        ],
+        "ignore": {
+          "organizations": ["noisy-org-node-id"],
+          "repositories": ["your-profile-repository-node-id"]
+        }
+      }
+    ]
+  },
+  "publish": {
+    "targets": [
+      {
+        "provider": "github",
+        "repositoryId": "your-profile-repository-node-id",
+        "branch": "main",
+        "path": "README.md",
+        "tokenEnv": "GH_RW_REPO_TOKEN"
+      }
+    ]
+  }
+}

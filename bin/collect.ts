@@ -36,8 +36,8 @@ export async function run(options: CollectRunOptions = {}): Promise<void> {
 
   for (const identityConfig of profileConfig.identities) {
     const account = await findAccount(identityConfig)
-    const ignoreOrganizationIds = identityConfig.ignoreOrganizations.map((org) => org.externalId)
-    const ignoreRepositoryIds = identityConfig.ignoreRepositories.map((repo) => repo.externalId)
+    const ignoreOrganizationIds = identityConfig.ignoreOrganizations
+    const ignoreRepositoryIds = identityConfig.ignoreRepositories
 
     if (!requestedDate && !account.last_successful_collect_on) {
       const token = tokenForIdentity(identityConfig)

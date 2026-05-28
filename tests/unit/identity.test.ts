@@ -24,13 +24,57 @@ test('identity helper emits user config without requiring a token', async () => 
   expect(calls[0]!.init?.headers).not.toHaveProperty('Authorization')
   expect(JSON.parse(output.join(''))).toEqual({
     provider: 'github',
-    externalId: 'U_TEST_1',
-    loginHint: 'therealpandey',
+    accountId: 'U_TEST_1',
     tokenEnv: 'GH_RO_CLASSIC_TOKEN',
     organizationTokens: [],
-    ignoreOrganizations: [],
-    ignoreRepositories: []
+    ignore: {
+      organizations: [],
+      repositories: []
+    }
   })
+})
+
+test('identity helper emits organization token config', async () => {
+  const output: string[] = []
+  const fetch: Fetcher = async (url) => {
+    expect(url).toBe('https://api.github.com/orgs/restricted-org')
+    return jsonResponse({
+      node_id: 'O_RESTRICTED_1',
+      login: 'restricted-org',
+      html_url: 'https://github.com/restricted-org'
+    })
+  }
+
+  await identity.run(['github', 'organization-token', 'restricted-org'], {
+    fetch,
+    token: undefined,
+    write: (text) => output.push(text)
+  })
+
+  expect(JSON.parse(output.join(''))).toEqual({
+    organizationId: 'O_RESTRICTED_1',
+    tokenEnv: 'GH_RO_RESTRICTED_ORG_TOKEN'
+  })
+})
+
+test('identity helper emits repository id for ignore lists', async () => {
+  const output: string[] = []
+  const fetch: Fetcher = async (url) => {
+    expect(url).toBe('https://api.github.com/repos/octocat/octocat')
+    return jsonResponse({
+      node_id: 'R_PROFILE_1',
+      full_name: 'octocat/octocat',
+      html_url: 'https://github.com/octocat/octocat'
+    })
+  }
+
+  await identity.run(['github', 'repository', 'octocat/octocat'], {
+    fetch,
+    token: undefined,
+    write: (text) => output.push(text)
+  })
+
+  expect(JSON.parse(output.join(''))).toBe('R_PROFILE_1')
 })
 
 test('identity helper emits publish target config from repository lookup', async () => {
@@ -54,7 +98,6 @@ test('identity helper emits publish target config from repository lookup', async
   expect(JSON.parse(output.join(''))).toEqual({
     provider: 'github',
     repositoryId: 'R_PROFILE_1',
-    repositoryHint: 'octocat/octocat',
     branch: 'main',
     path: 'README.md',
     tokenEnv: 'GH_RW_REPO_TOKEN'
