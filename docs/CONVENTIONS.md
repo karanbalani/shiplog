@@ -18,9 +18,14 @@ This document captures project conventions that should stay consistent across im
 
 - Run `bun run format` before large handoffs.
 - Run `bun run format:check` before committing.
-- Prettier formats TypeScript, JSON, Markdown, YAML, and other supported text files.
+- Oxfmt formats TypeScript, JSON, Markdown, YAML, and other supported text files.
 - `sql-formatter` formats SQL migrations.
-- SQL migrations are excluded from Prettier so only one formatter owns SQL layout.
+- SQL migrations are excluded from Oxfmt so only one formatter owns SQL layout.
+
+## Linting
+
+- Run `bun run lint` before committing.
+- Oxlint handles JavaScript and TypeScript linting.
 
 ## Migrations
 
