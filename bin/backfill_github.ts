@@ -1,7 +1,11 @@
 import * as db from '../lib/db.ts'
+import { HttpError } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
-import { isGitHubRepositoryUnavailableError } from '../lib/providers/github/errors.ts'
+import {
+  GitHubGraphQLError,
+  isGitHubRepositoryUnavailableError
+} from '../lib/providers/github/errors.ts'
 import {
   privateRepositoryFailure,
   repositoryErrorSummary,
@@ -27,6 +31,7 @@ import type {
 import type {
   BackfillArgs,
   BackfillResult,
+  RepositoryBackfillStateRow,
   VendorIdentity,
   VendorOrganizationToken
 } from '../lib/types/index.ts'
@@ -141,8 +146,15 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
 
     let repositoryStatus = 'complete'
     try {
-      if (await repositoryBackfillComplete(identity.accountId, repository.id, observedOn)) {
+      const backfillState = await repositoryBackfillState(
+        identity.accountId,
+        repository.id,
+        observedOn
+      )
+      if (backfillState?.status === 'succeeded') {
         repositoryStatus = 'already complete'
+      } else if (backfillState?.status === 'skipped_permanent') {
+        repositoryStatus = 'already skipped'
       } else if (
         !pausedByTimeBudget &&
         processedRepositories > 0 &&
@@ -220,18 +232,36 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
         }
       }
     } catch (error) {
-      if (!isGitHubRepositoryUnavailableError(error)) {
+      const errorSummary = repositoryErrorSummary(repositoryNode, error)
+
+      if (isGitHubRepositoryUnavailableError(error)) {
         if (repositoryNode.isPrivate) throw privateRepositoryFailure(repositoryNode)
+
+        repositoryStatus = 'skipped'
+        await upserts.markRepositoryBackfillSkippedPermanent(
+          identity.accountId,
+          repository.id,
+          observedOn,
+          errorSummary
+        )
+        logger.warn(
+          `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is unavailable; skipping enrichment (${errorSummary})`
+        )
+      } else if (isRetryableRepositoryBackfillError(error)) {
+        repositoryStatus = 'retry later'
+        deferredRepositories += 1
+        await upserts.markRepositoryBackfillRetryWait(
+          identity.accountId,
+          repository.id,
+          observedOn,
+          errorSummary
+        )
+        logger.warn(
+          `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} hit a retryable provider error; will retry on a later run (${errorSummary})`
+        )
+      } else {
         throw error
       }
-
-      repositoryStatus = 'skipped'
-      logger.warn(
-        `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is unavailable; skipping enrichment (${repositoryErrorSummary(
-          repositoryNode,
-          error
-        )})`
-      )
     }
 
     visitedRepositories += 1
@@ -531,24 +561,64 @@ function shouldSearchIssues(plan: RepositoryBackfillPlan): boolean {
   return plan.fullScan || plan.issues
 }
 
-async function repositoryBackfillComplete(
+async function repositoryBackfillState(
   accountId: number,
   repositoryId: number,
   backfillThroughOn: string
-): Promise<boolean> {
-  const result = await db.query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
+): Promise<RepositoryBackfillStateRow | null> {
+  const result = await db.query<RepositoryBackfillStateRow>(
+    `SELECT *
        FROM repository_backfill_state
        WHERE account_id = $1
          AND repository_id = $2
          AND backfill_through_on = $3::date
-         AND status = 'succeeded'
-     ) AS exists`,
+       LIMIT 1`,
     [accountId, repositoryId, backfillThroughOn]
   )
 
-  return result.rows[0]?.exists ?? false
+  return result.rows[0] ?? null
+}
+
+function isRetryableRepositoryBackfillError(error: unknown): boolean {
+  if (error instanceof HttpError) {
+    if ([408, 429, 500, 502, 503, 504].includes(error.status)) return true
+    if (error.status === 403) {
+      const body = error.body.toLowerCase()
+      return body.includes('rate limit') || body.includes('secondary rate')
+    }
+    return false
+  }
+
+  if (error instanceof GitHubGraphQLError) {
+    return error.messages.some((message) => {
+      const normalized = message.toLowerCase()
+      return (
+        normalized.includes('rate limit') ||
+        normalized.includes('secondary rate') ||
+        normalized.includes('abuse detection') ||
+        normalized.includes('something went wrong') ||
+        normalized.includes('timed out') ||
+        normalized.includes('timeout') ||
+        normalized.includes('service unavailable') ||
+        normalized.includes('try again')
+      )
+    })
+  }
+
+  if (error instanceof Error) {
+    const normalized = error.message.toLowerCase()
+    return (
+      normalized.includes('fetch failed') ||
+      normalized.includes('network') ||
+      normalized.includes('socket') ||
+      normalized.includes('econnreset') ||
+      normalized.includes('etimedout') ||
+      normalized.includes('timed out') ||
+      normalized.includes('timeout')
+    )
+  }
+
+  return false
 }
 
 async function ingestCommits(
