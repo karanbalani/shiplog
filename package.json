@@ -10,6 +10,7 @@
     "identity": "bun bin/identity.ts",
     "backfill": "bun bin/backfill.ts",
     "collect": "bun bin/collect.ts",
+    "repair": "bun bin/repair.ts",
     "render": "bun bin/render.ts",
     "publish": "bun bin/publish.ts",
     "db:wait": "bun scripts/wait_for_db.ts",

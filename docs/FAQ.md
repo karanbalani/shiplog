@@ -163,7 +163,7 @@ If your config contains private repository names or other sensitive metadata, yo
 
 Run `init` first. It migrates the database and creates the configured accounts without collecting activity.
 
-After that, run `backfill` once to collect historical activity. Then `collect` runs daily or manually. When `collect` or `backfill` succeeds, `render` updates and publishes the README.
+After that, run `backfill` once to collect historical activity. Then `collect` runs daily or manually. Use `repair` for explicit one-off date or range repair. When `collect`, `backfill`, or `repair` succeeds, `render` updates and publishes the README.
 
 ## What happens if daily collect fails for a few days?
 
@@ -177,19 +177,19 @@ When the checkpoint is null, collect runs complete history. After that, normal c
 
 This means a failed or skipped workflow can usually be fixed by rerunning `collect`; it will catch up the missed dates automatically. The rolling lookback defaults to 7 days and can be disabled with `collect.lookbackDays: 0`.
 
-If you want to repair or inspect one specific day without moving the checkpoint, run with `COLLECT_DATE`:
+If you want to repair or inspect one specific day without moving the checkpoint, run:
 
 ```bash
-COLLECT_DATE=2026-05-07 bun run collect
+REPAIR_DATE=2026-05-07 bun run repair
 ```
 
-If you want to repair a historical range without moving the checkpoint, run with `COLLECT_FROM` and `COLLECT_TO` together:
+If you want to repair a historical range without moving the checkpoint, run with `REPAIR_FROM` and `REPAIR_TO` together:
 
 ```bash
-COLLECT_FROM=2026-05-01 COLLECT_TO=2026-05-07 bun run collect
+REPAIR_FROM=2026-05-01 REPAIR_TO=2026-05-07 bun run repair
 ```
 
-In GitHub Actions, the manual `collect` workflow has optional `collect_date`, `collect_from`, and `collect_to` inputs for the same purpose. The next normal collect run may safely reprocess those dates if they are still part of the checkpoint gap or rolling lookback window.
+In GitHub Actions, the manual `repair` workflow has optional `repair_date`, `repair_from`, and `repair_to` inputs for the same purpose. The next normal collect run may safely reprocess those dates if they are still part of the checkpoint gap or rolling lookback window.
 
 ## Why is historical backfill slow?
 
@@ -228,7 +228,8 @@ If `collect.yml` has a `push` trigger for `main`, merging a PR starts ingestion 
 - `ci.yml` runs on pull requests and pushes to `main`.
 - `backfill.yml` runs manually for historical collection.
 - `collect.yml` runs on a daily schedule or manually.
-- `render.yml` runs after a successful collect or backfill, or manually.
+- `repair.yml` runs manually for explicit date or range repair.
+- `render.yml` runs after a successful collect, backfill, or repair, or manually.
 
 ## Can I run only the renderer?
 
