@@ -15,6 +15,7 @@ CREATE TABLE repository_backfill_state (
       'blocked_auth'
     )
   ),
+  completed_steps TEXT NOT NULL DEFAULT '',
   completed_at TIMESTAMPTZ,
   last_error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

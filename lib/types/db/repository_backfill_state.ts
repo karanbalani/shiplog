@@ -15,6 +15,7 @@ export interface RepositoryBackfillStateRow extends AuditTimestampColumns {
   repository_id: number
   backfill_through_on: Date | string
   status: RepositoryBackfillStatus
+  completed_steps: string
   completed_at: Date | string | null
   last_error: string | null
 }

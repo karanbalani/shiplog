@@ -308,6 +308,29 @@ export async function markRepositoryBackfillSucceeded(
   return result.rows[0]!
 }
 
+export async function markRepositoryBackfillStepSucceeded(
+  accountId: number,
+  repositoryId: number,
+  backfillThroughOn: string,
+  completedSteps: string
+): Promise<RepositoryBackfillStateRow> {
+  const result = await db.query<RepositoryBackfillStateRow>(
+    `INSERT INTO repository_backfill_state
+       (account_id, repository_id, backfill_through_on, status, completed_steps, completed_at, last_error)
+     VALUES ($1, $2, $3, 'running', $4, NULL, NULL)
+     ON CONFLICT (account_id, repository_id, backfill_through_on) DO UPDATE
+       SET status = 'running',
+           completed_steps = EXCLUDED.completed_steps,
+           completed_at = NULL,
+           last_error = NULL,
+           updated_at = now()
+     RETURNING *`,
+    [accountId, repositoryId, backfillThroughOn, completedSteps]
+  )
+
+  return result.rows[0]!
+}
+
 export async function markRepositoryBackfillRetryWait(
   accountId: number,
   repositoryId: number,
