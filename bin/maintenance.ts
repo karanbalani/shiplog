@@ -7,6 +7,7 @@ import type { MaintenanceTaskRow, ShiplogConfig } from '../lib/types/index.ts'
 import * as upserts from '../lib/upserts.ts'
 
 const DEFAULT_MAINTENANCE_LIMIT = 10
+const DEFAULT_STALE_LOCK_MINUTES = 120
 
 export interface MaintenanceRunOptions {
   configPath?: string
@@ -14,12 +15,25 @@ export interface MaintenanceRunOptions {
   fetch?: Fetcher
   now?: Date
   limit?: number
+  staleLockMinutes?: number
 }
 
 export async function run(options: MaintenanceRunOptions = {}): Promise<void> {
   const shiplogConfig = options.config ?? config.load(options.configPath)
   const now = options.now ?? new Date()
   const limit = options.limit ?? DEFAULT_MAINTENANCE_LIMIT
+  const staleLockMinutes = maintenanceStaleLockMinutes(options)
+  if (staleLockMinutes > 0) {
+    const recovered = await upserts.recoverStaleMaintenanceTasks(
+      new Date(now.getTime() - staleLockMinutes * 60 * 1000),
+      now,
+      `maintenance task lock exceeded ${staleLockMinutes} minute(s)`
+    )
+    if (recovered.length > 0) {
+      logger.warn(`[maintenance] recovered ${recovered.length} stale task lock(s)`)
+    }
+  }
+
   const tasks = await upserts.dueMaintenanceTasks(now, limit)
 
   if (tasks.length === 0) {
@@ -30,7 +44,7 @@ export async function run(options: MaintenanceRunOptions = {}): Promise<void> {
   const failures: string[] = []
   for (const task of tasks) {
     try {
-      await runTask(task, shiplogConfig, options.fetch)
+      await runTask(task, shiplogConfig, now, options.fetch)
     } catch (err) {
       const message = errorMessage(err)
       failures.push(`task ${task.id}: ${message}`)
@@ -47,9 +61,14 @@ export async function run(options: MaintenanceRunOptions = {}): Promise<void> {
 async function runTask(
   task: MaintenanceTaskRow,
   shiplogConfig: ShiplogConfig,
+  now: Date,
   fetch?: Fetcher
 ): Promise<void> {
-  const runningTask = await upserts.markMaintenanceTaskRunning(task.id)
+  const runningTask = await upserts.markMaintenanceTaskRunning(task.id, now)
+  if (!runningTask) {
+    logger.info(`[maintenance] task ${task.id}: already claimed or no longer due`)
+    return
+  }
 
   if (runningTask.task_type !== 'repair_range') {
     throw new Error(`unsupported maintenance task type: ${runningTask.task_type}`)
@@ -81,6 +100,25 @@ async function runTask(
 
 function nextRetryAt(now: Date): Date {
   return new Date(now.getTime() + 60 * 60 * 1000)
+}
+
+function maintenanceStaleLockMinutes(options: MaintenanceRunOptions): number {
+  if (options.staleLockMinutes !== undefined) {
+    return assertNonNegativeInteger(options.staleLockMinutes, 'staleLockMinutes')
+  }
+
+  const envValue = process.env.MAINTENANCE_STALE_LOCK_MINUTES?.trim()
+  if (!envValue) return DEFAULT_STALE_LOCK_MINUTES
+
+  return assertNonNegativeInteger(Number(envValue), 'MAINTENANCE_STALE_LOCK_MINUTES')
+}
+
+function assertNonNegativeInteger(value: number, label: string): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer; got ${value}`)
+  }
+
+  return value
 }
 
 function dateRange(start: string, end: string): string[] {
