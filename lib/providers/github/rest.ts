@@ -4,6 +4,9 @@ const BASE_URL = 'https://api.github.com'
 export const GITHUB_SEARCH_REQUEST_INTERVAL_MS = 2500
 const RATE_LIMIT_RESET_BUFFER_MS = 1000
 const RATE_LIMIT_RETRIES = 5
+const DEFAULT_REST_RETRIES = 6
+const DEFAULT_REST_RETRY_DELAY_MS = 1_000
+const TEST_REST_RETRY_DELAY_MS = 1
 
 export interface RestClientOptions {
   token: string
@@ -62,7 +65,12 @@ export function restClient(options: RestClientOptions): RestClient {
               'User-Agent': 'shiplog'
             }
           },
-          fetch ? { fetch } : {}
+          {
+            retries: DEFAULT_REST_RETRIES,
+            retryDelayMs: fetch ? TEST_REST_RETRY_DELAY_MS : DEFAULT_REST_RETRY_DELAY_MS,
+            timeoutMs: 60_000,
+            ...(fetch ? { fetch } : {})
+          }
         )
       } catch (err) {
         if (!isGitHubRateLimitError(err) || attempt >= rateLimitRetries) {

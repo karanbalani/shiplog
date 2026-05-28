@@ -29,6 +29,7 @@ export interface BackfillArgs {
   organizationTokens?: VendorOrganizationToken[]
   ignoreOrganizationIds?: string[]
   ignoreRepositoryIds?: string[]
+  throughDate?: string
   fetch?: Fetcher
 }
 

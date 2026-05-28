@@ -103,12 +103,12 @@ query Contributions($login: String!, $from: DateTime!, $to: DateTime!) {
 `
 
 export const REPOSITORY_COMMITS_IN_WINDOW = `
-query RepositoryCommits($owner: String!, $name: String!, $since: GitTimestamp!, $until: GitTimestamp!, $cursor: String) {
+query RepositoryCommits($owner: String!, $name: String!, $since: GitTimestamp!, $until: GitTimestamp!, $cursor: String, $author: CommitAuthor) {
   repository(owner: $owner, name: $name) {
     defaultBranchRef {
       target {
         ... on Commit {
-          history(first: 100, after: $cursor, since: $since, until: $until) {
+          history(first: 100, after: $cursor, since: $since, until: $until, author: $author) {
             totalCount
             pageInfo { hasNextPage endCursor }
             nodes {
