@@ -174,7 +174,7 @@ function mockGitHubFetch(options: { includePrivateRepository?: boolean } = {}): 
       }
 
       if (body.query.includes('query RepositoryCommits')) {
-        expect(body.variables?.author).toEqual({ id: 'U_TEST_1' })
+        expect(body.variables?.author).toBeUndefined()
         const name = body.variables?.name
         return jsonResponse({
           data: {

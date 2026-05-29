@@ -119,6 +119,49 @@ test('run backfills GitHub history into generic schema tables', async () => {
   expect(logs.some((line) => line.includes('eta'))).toBe(true)
 })
 
+test('run backfills commits credited through co-authorship', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+
+  await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: mockGitHubFetchWithCoAuthoredCommit()
+  })
+
+  const commits = await db.query<{
+    oid: string
+    is_co_authored: boolean
+    additions: number
+    deletions: number
+  }>('SELECT oid, is_co_authored, additions, deletions FROM commits ORDER BY oid')
+  const activity = await db.query<{ commits: number; lines_added: number; lines_deleted: number }>(
+    'SELECT commits, lines_added, lines_deleted FROM daily_repository_activity'
+  )
+
+  expect(commits.rows).toEqual([
+    { oid: 'authored', is_co_authored: false, additions: 10, deletions: 2 },
+    { oid: 'coauthored', is_co_authored: true, additions: 5, deletions: 1 }
+  ])
+  expect(activity.rows[0]!).toMatchObject({
+    commits: 2,
+    lines_added: 15,
+    lines_deleted: 3
+  })
+})
+
 test('run paginates historical pull request search results', async () => {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
@@ -705,7 +748,7 @@ function mockGitHubFetch(): typeof fetch {
       }
 
       if (body.query.includes('query RepositoryCommits')) {
-        expect(body.variables?.author).toEqual({ id: 'U_TEST_1' })
+        expect(body.variables?.author).toBeUndefined()
         return jsonResponse({
           data: {
             repository: {
@@ -823,6 +866,128 @@ function mockGitHubFetch(): typeof fetch {
           submitted_at: '2026-05-07T09:00:00Z'
         }
       ])
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
+function mockGitHubFetchWithCoAuthoredCommit(): typeof fetch {
+  const currentYear = new Date().getUTCFullYear()
+
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as {
+        query: string
+        variables?: Record<string, unknown>
+      }
+
+      if (body.query.includes('query UserById')) {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'U_TEST_1',
+              login: 'octocat',
+              name: 'Octocat',
+              url: 'https://github.com/octocat',
+              createdAt: `${currentYear}-01-01T00:00:00Z`
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({ data: githubContributionsWithCommitCount(3) })
+      }
+
+      if (body.query.includes('query RepositoryCommits')) {
+        expect(body.variables?.author).toBeUndefined()
+        return jsonResponse({
+          data: {
+            repository: {
+              defaultBranchRef: {
+                target: {
+                  history: {
+                    totalCount: 3,
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                    nodes: [
+                      {
+                        oid: 'authored',
+                        committedDate: '2026-05-07T10:00:00Z',
+                        additions: 10,
+                        deletions: 2,
+                        changedFiles: 1,
+                        messageHeadline: 'Authored work',
+                        author: githubCommitActor(),
+                        authors: { nodes: [githubCommitActor()] }
+                      },
+                      {
+                        oid: 'coauthored',
+                        committedDate: '2026-05-07T11:00:00Z',
+                        additions: 5,
+                        deletions: 1,
+                        changedFiles: 2,
+                        messageHeadline: 'Co-authored work',
+                        author: githubCommitActor({
+                          id: 'U_TEAMMATE',
+                          login: 'teammate',
+                          name: 'Teammate'
+                        }),
+                        authors: {
+                          nodes: [
+                            githubCommitActor({
+                              id: 'U_TEAMMATE',
+                              login: 'teammate',
+                              name: 'Teammate'
+                            }),
+                            githubCommitActor()
+                          ]
+                        }
+                      },
+                      {
+                        oid: 'unrelated',
+                        committedDate: '2026-05-07T12:00:00Z',
+                        additions: 100,
+                        deletions: 50,
+                        changedFiles: 3,
+                        messageHeadline: 'Someone else',
+                        author: githubCommitActor({
+                          id: 'U_SOMEONE_ELSE',
+                          login: 'someone-else',
+                          name: 'Someone Else'
+                        }),
+                        authors: {
+                          nodes: [
+                            githubCommitActor({
+                              id: 'U_SOMEONE_ELSE',
+                              login: 'someone-else',
+                              name: 'Someone Else'
+                            })
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query RepositoryLanguages')) {
+        return repositoryLanguagesResponse()
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([])
+    }
+
+    if (parsed.pathname === '/search/issues') {
+      return jsonResponse({ total_count: 0, items: [] })
     }
 
     return new Response(`unexpected request: ${url}`, { status: 500 })
@@ -1589,11 +1754,44 @@ function githubContributionsWithRepository(
   }
 }
 
-function githubCommitActor(): import('../../lib/providers/github/types.ts').GitHubCommitActor {
+function githubContributionsWithCommitCount(totalCount: number): {
+  user: {
+    contributionsCollection: import('../../lib/providers/github/types.ts').GitHubContributionsCollection
+  }
+} {
+  const repository = publicRepositoryNode()
+
   return {
-    name: 'octocat',
-    email: 'octocat@example.com',
-    user: { id: 'U_TEST_1', login: 'octocat' }
+    user: {
+      contributionsCollection: {
+        totalCommitContributions: totalCount,
+        totalIssueContributions: 0,
+        totalPullRequestContributions: 0,
+        totalPullRequestReviewContributions: 0,
+        restrictedContributionsCount: 0,
+        commitContributionsByRepository: [{ repository, contributions: { totalCount } }],
+        pullRequestContributionsByRepository: [],
+        pullRequestReviewContributionsByRepository: [],
+        issueContributionsByRepository: []
+      }
+    }
+  }
+}
+
+function githubCommitActor(
+  overrides: Partial<{
+    id: string
+    login: string
+    name: string | null
+    email: string | null
+  }> = {}
+): import('../../lib/providers/github/types.ts').GitHubCommitActor {
+  const id = overrides.id ?? 'U_TEST_1'
+  const login = overrides.login ?? 'octocat'
+  return {
+    name: overrides.name ?? login,
+    email: overrides.email ?? `${login}@example.com`,
+    user: { id, login }
   }
 }
 
