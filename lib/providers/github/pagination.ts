@@ -1,3 +1,4 @@
+import * as logger from '../../logger.ts'
 import type { RestClient } from './rest.ts'
 import type { GitHubReviewItem, GitHubSearchPullRequestItem, GitHubSearchResult } from './types.ts'
 
@@ -19,7 +20,14 @@ export async function fetchSearchIssueItems(
     items.push(...result.items)
 
     if (result.items.length < GITHUB_REST_PAGE_SIZE) return items
-    if (items.length >= Math.min(result.total_count, GITHUB_SEARCH_RESULT_LIMIT)) return items
+    if (items.length >= Math.min(result.total_count, GITHUB_SEARCH_RESULT_LIMIT)) {
+      if (result.total_count > GITHUB_SEARCH_RESULT_LIMIT) {
+        logger.warn(
+          `[github] search returned ${result.total_count} matches; only the first ${GITHUB_SEARCH_RESULT_LIMIT} are available from GitHub Search`
+        )
+      }
+      return items
+    }
   }
 }
 
