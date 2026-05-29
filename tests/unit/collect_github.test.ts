@@ -216,15 +216,20 @@ test('run uses organization token for organization-owned repositories', async ()
     fetch: mockGitHubFetchWithOrganizationToken()
   })
 
-  const repositories = await db.query<{ visibility: string; owner_login: string }>(
-    'SELECT visibility, owner_login FROM repositories'
-  )
+  const repositories = await db.query<{
+    full_name: string
+    visibility: string
+    owner_login: string
+  }>('SELECT full_name, visibility, owner_login FROM repositories ORDER BY full_name')
   const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
 
-  expect(repositories.rows[0]).toMatchObject({
-    visibility: 'private',
-    owner_login: 'restricted-org'
-  })
+  expect(repositories.rows).toEqual([
+    {
+      full_name: 'restricted-org/secret',
+      visibility: 'private',
+      owner_login: 'restricted-org'
+    }
+  ])
   expect(commits.rows[0]!.count).toBe(1)
   expect(logs.join('\n')).toContain('[private] id:R_RESTRICTED_1')
   expect(logs.join('\n')).not.toContain('restricted-org/secret')
@@ -648,6 +653,28 @@ function mockGitHubFetchWithOrganizationToken(): typeof fetch {
           default_branch: 'main',
           html_url: 'https://github.com/restricted-org/secret',
           description: 'restricted test repository',
+          owner: {
+            login: 'restricted-org',
+            node_id: 'O_RESTRICTED_1',
+            type: 'Organization',
+            avatar_url: 'https://avatars.githubusercontent.com/u/2?v=4'
+          }
+        },
+        {
+          node_id: 'R_RESTRICTED_PUBLIC_1',
+          name: 'public-docs',
+          full_name: 'restricted-org/public-docs',
+          private: false,
+          fork: false,
+          archived: false,
+          language: 'Markdown',
+          stargazers_count: 12,
+          forks_count: 3,
+          created_at: '2024-01-01T00:00:00Z',
+          pushed_at: '2026-05-07T12:00:00Z',
+          default_branch: 'main',
+          html_url: 'https://github.com/restricted-org/public-docs',
+          description: 'public org repository without user activity',
           owner: {
             login: 'restricted-org',
             node_id: 'O_RESTRICTED_1',
