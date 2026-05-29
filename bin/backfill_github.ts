@@ -24,6 +24,7 @@ import {
 } from '../lib/providers/github/rest.ts'
 import { fetchGitHubAccountProfileById } from '../lib/providers/github/identity.ts'
 import * as translate from '../lib/providers/github/translate.ts'
+import type { NewRepositoryRow } from '../lib/upserts.ts'
 import type {
   GitHubCommitHistory,
   GitHubContributionsCollection,
@@ -32,8 +33,10 @@ import type {
 } from '../lib/providers/github/types.ts'
 import type {
   BackfillArgs,
+  BackfillMode,
   BackfillResult,
   RepositoryBackfillStateRow,
+  RepositoryRow,
   VendorIdentity,
   VendorOrganizationToken
 } from '../lib/types/index.ts'
@@ -44,6 +47,9 @@ const BACKFILL_STEP_PULL_REQUESTS = 'pull_requests'
 const BACKFILL_STEP_ISSUES = 'issues'
 const BACKFILL_STEP_PULL_REQUEST_REVIEWS = 'pull_request_reviews'
 const BACKFILL_STEP_SNAPSHOT = 'snapshot'
+const DEFAULT_BACKFILL_MODE: BackfillMode = 'fast'
+
+type CommitScanMode = 'authored' | 'credited'
 
 export async function run(args: BackfillArgs): Promise<BackfillResult> {
   const {
@@ -53,6 +59,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     ignoreOrganizationIds = [],
     ignoreRepositoryIds = [],
     throughDate,
+    backfillMode = DEFAULT_BACKFILL_MODE,
     repositoryLimit,
     maxRuntimeMs,
     fetch
@@ -75,8 +82,9 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
   )
   const firstDiscoveryYear = years[0] ?? new Date(`${observedOn}T00:00:00Z`).getUTCFullYear()
   const repositoriesByExternalId = new Map<string, RepositoryBackfillPlan>()
+  const commitScanMode = backfillMode === 'deep' ? 'credited' : 'authored'
 
-  const discoveryMessage = `[backfill] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)})`
+  const discoveryMessage = `[backfill] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)}) in ${backfillMode} mode`
   logger.info(discoveryMessage)
 
   for (const [index, year] of years.entries()) {
@@ -104,22 +112,24 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     })
   }
 
-  await collectAccessiblePrivateRepositories(
-    rest,
-    repositoriesByExternalId,
-    ignoredRepositories,
-    ignoredOrganizations
-  )
-  for (const organization of organizationTokens) {
-    const clients = organizationClients.get(organization.externalId)
-    if (!clients) continue
-    await collectOrganizationRepositories(
-      clients.rest,
-      organization.externalLogin,
+  if (backfillMode === 'deep') {
+    await collectAccessiblePrivateRepositories(
+      rest,
       repositoriesByExternalId,
       ignoredRepositories,
       ignoredOrganizations
     )
+    for (const organization of organizationTokens) {
+      const clients = organizationClients.get(organization.externalId)
+      if (!clients) continue
+      await collectOrganizationRepositories(
+        clients.rest,
+        organization.externalLogin,
+        repositoriesByExternalId,
+        ignoredRepositories,
+        ignoredOrganizations
+      )
+    }
   }
 
   const repositoryCount = repositoriesByExternalId.size
@@ -137,15 +147,9 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
   for (const repositoryPlan of repositoriesByExternalId.values()) {
     const repositoryNode = repositoryPlan.node
     const clients = clientsForRepository(repositoryNode, defaultClients, organizationClients)
-    const organizationId = await upsertOrganizationFromRepositoryOwner(repositoryNode, observedOn)
-    const repositoryInput = translate.repositoryFromGraphQLNode(
-      repositoryNode,
-      observedOn,
-      organizationId
-    )
-    const repository = await upserts.upsertRepository(repositoryInput)
-    const fullName = requiredString(repositoryInput.full_name, 'repository full name')
-    const name = requiredString(repositoryInput.name, 'repository name')
+    const displayRepositoryInput = translate.repositoryFromGraphQLNode(repositoryNode, observedOn)
+    const fullName = requiredString(displayRepositoryInput.full_name, 'repository full name')
+    const name = requiredString(displayRepositoryInput.name, 'repository name')
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
     const logLabel = repositoryLogLabel(repositoryNode, fullName)
     const repositoryPosition = `${visitedRepositories + 1}/${repositoryCount}`
@@ -158,18 +162,14 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     logger.info(repositoryStartMessage)
 
     let repositoryStatus = 'complete'
+    let repository: RepositoryRow | null = null
     try {
-      const backfillState = await repositoryBackfillState(
-        identity.accountId,
-        repository.id,
-        observedOn
-      )
-      const completedSteps = repositoryCompletedSteps(backfillState)
-      if (backfillState?.status === 'succeeded') {
-        repositoryStatus = 'already complete'
-      } else if (backfillState?.status === 'skipped_permanent') {
-        repositoryStatus = 'already skipped'
-      } else if (
+      const existingRepository = repositoryPlan.candidateOnly
+        ? await existingRepositoryByExternalId(repositoryNode.id)
+        : null
+      const isUnpromotedCandidate = repositoryPlan.candidateOnly && !existingRepository
+
+      if (
         !pausedByTimeBudget &&
         processedRepositories > 0 &&
         backfillTimeBudgetExceeded(startedAt, maxRuntimeMs)
@@ -185,166 +185,73 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
         deferredRepositories += 1
       } else {
         processedRepositories += 1
-        for (const year of commitYearsForPlan(repositoryPlan, years)) {
-          const step = commitBackfillStep(year)
-          const { from, to } = dates.yearWindow(year)
-          if (completedSteps.has(step)) {
-            logRepositoryStep(
-              identity,
-              repositoryPosition,
-              visibility,
-              logLabel,
-              `commits for ${year} already complete`
-            )
+
+        if (isUnpromotedCandidate) {
+          logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'activity probe')
+          const hasActivity = await privateCandidateHasActivity(
+            clients,
+            repositoryPlan,
+            displayRepositoryInput.owner_login,
+            name,
+            fullName,
+            identity,
+            years,
+            searchDateSplit,
+            observedOn,
+            commitScanMode
+          )
+
+          if (!hasActivity) {
+            repositoryStatus = 'no matching activity'
+            processedRepositories -= 1
           } else {
             logRepositoryStep(
               identity,
               repositoryPosition,
               visibility,
               logLabel,
-              `commits for ${year}`
+              'promote private candidate'
             )
-            await ingestCommits(
-              clients.graphQL,
-              repository.id,
-              repositoryInput.owner_login,
+            const promoted = await upsertRepositoryForPlan(repositoryNode, observedOn)
+            repository = promoted.repository
+            repositoryStatus = await processRepositoryBackfill({
+              clients,
+              repositoryPlan,
+              repository,
+              repositoryInput: promoted.repositoryInput,
+              fullName,
               name,
               identity,
-              from,
-              to
-            )
-            await markBackfillStepSucceeded(
-              identity.accountId,
-              repository.id,
+              years,
               observedOn,
-              completedSteps,
-              step
-            )
-          }
-        }
-
-        if (shouldSearchPullRequests(repositoryPlan)) {
-          if (completedSteps.has(BACKFILL_STEP_PULL_REQUESTS)) {
-            logRepositoryStep(
-              identity,
-              repositoryPosition,
-              visibility,
-              logLabel,
-              'pull requests already complete'
-            )
-          } else {
-            logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull requests')
-            await ingestPullRequests(
-              clients.rest,
-              repository.id,
-              fullName,
-              identity,
-              searchDateSplit
-            )
-            await markBackfillStepSucceeded(
-              identity.accountId,
-              repository.id,
-              observedOn,
-              completedSteps,
-              BACKFILL_STEP_PULL_REQUESTS
-            )
-          }
-        }
-        if (shouldSearchIssues(repositoryPlan)) {
-          if (completedSteps.has(BACKFILL_STEP_ISSUES)) {
-            logRepositoryStep(
-              identity,
-              repositoryPosition,
-              visibility,
-              logLabel,
-              'issues already complete'
-            )
-          } else {
-            logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'issues')
-            await ingestIssues(clients.rest, repository.id, fullName, identity, searchDateSplit)
-            await markBackfillStepSucceeded(
-              identity.accountId,
-              repository.id,
-              observedOn,
-              completedSteps,
-              BACKFILL_STEP_ISSUES
-            )
-          }
-        }
-        if (shouldSearchPullRequestReviews(repositoryPlan)) {
-          if (completedSteps.has(BACKFILL_STEP_PULL_REQUEST_REVIEWS)) {
-            logRepositoryStep(
-              identity,
-              repositoryPosition,
-              visibility,
-              logLabel,
-              'pull request reviews already complete'
-            )
-          } else {
-            logRepositoryStep(
-              identity,
-              repositoryPosition,
-              visibility,
-              logLabel,
-              'pull request reviews'
-            )
-            await ingestPullRequestReviews(
-              clients.rest,
-              repository.id,
-              fullName,
-              identity,
               searchDateSplit,
-              observedOn
-            )
-            await markBackfillStepSucceeded(
-              identity.accountId,
-              repository.id,
-              observedOn,
-              completedSteps,
-              BACKFILL_STEP_PULL_REQUEST_REVIEWS
-            )
+              repositoryPosition,
+              visibility,
+              logLabel,
+              commitScanMode
+            })
+            if (!repositoryStatusCountsAsProcessed(repositoryStatus)) processedRepositories -= 1
           }
-        }
-        let snapshotCaptured = true
-        if (completedSteps.has(BACKFILL_STEP_SNAPSHOT)) {
-          logRepositoryStep(
-            identity,
-            repositoryPosition,
-            visibility,
-            logLabel,
-            'repository snapshot and languages already complete'
-          )
         } else {
-          logRepositoryStep(
+          const upserted = await upsertRepositoryForPlan(repositoryNode, observedOn)
+          repository = upserted.repository
+          repositoryStatus = await processRepositoryBackfill({
+            clients,
+            repositoryPlan,
+            repository,
+            repositoryInput: upserted.repositoryInput,
+            fullName,
+            name,
             identity,
+            years,
+            observedOn,
+            searchDateSplit,
             repositoryPosition,
             visibility,
             logLabel,
-            'repository snapshot and languages'
-          )
-          snapshotCaptured = await upsertRepositoryLanguageSnapshot(
-            clients.graphQL,
-            repository.id,
-            repositoryInput.owner_login,
-            name,
-            observedOn
-          )
-          if (snapshotCaptured) {
-            await markBackfillStepSucceeded(
-              identity.accountId,
-              repository.id,
-              observedOn,
-              completedSteps,
-              BACKFILL_STEP_SNAPSHOT
-            )
-          }
-        }
-        if (snapshotCaptured) {
-          await upserts.markRepositoryBackfillSucceeded(
-            identity.accountId,
-            repository.id,
-            observedOn
-          )
+            commitScanMode
+          })
+          if (!repositoryStatusCountsAsProcessed(repositoryStatus)) processedRepositories -= 1
         }
       }
     } catch (error) {
@@ -354,24 +261,28 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
         if (repositoryNode.isPrivate) throw privateRepositoryFailure(repositoryNode)
 
         repositoryStatus = 'skipped'
-        await upserts.markRepositoryBackfillSkippedPermanent(
-          identity.accountId,
-          repository.id,
-          observedOn,
-          errorSummary
-        )
+        if (repository) {
+          await upserts.markRepositoryBackfillSkippedPermanent(
+            identity.accountId,
+            repository.id,
+            observedOn,
+            errorSummary
+          )
+        }
         logger.warn(
           `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is unavailable; skipping enrichment (${errorSummary})`
         )
       } else if (isRetryableRepositoryBackfillError(error)) {
         repositoryStatus = 'retry later'
         deferredRepositories += 1
-        await upserts.markRepositoryBackfillRetryWait(
-          identity.accountId,
-          repository.id,
-          observedOn,
-          errorSummary
-        )
+        if (repository) {
+          await upserts.markRepositoryBackfillRetryWait(
+            identity.accountId,
+            repository.id,
+            observedOn,
+            errorSummary
+          )
+        }
         logger.warn(
           `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} hit a retryable provider error; will retry on a later run (${errorSummary})`
         )
@@ -419,6 +330,10 @@ function formatRepositoryCount(count: number): string {
   return `${count} ${count === 1 ? 'repository' : 'repositories'}`
 }
 
+function repositoryStatusCountsAsProcessed(status: string): boolean {
+  return status !== 'already complete' && status !== 'already skipped'
+}
+
 function logRepositoryStep(
   identity: VendorIdentity,
   repositoryPosition: string,
@@ -430,13 +345,46 @@ function logRepositoryStep(
   logger.info(message)
 }
 
-function commitBackfillStep(year: number): string {
+function commitBackfillStep(year: number, commitScanMode: CommitScanMode): string {
+  if (commitScanMode === 'authored') return `commits_authored:${year}`
   return `commits:${year}`
+}
+
+function commitBackfillStepCompleted(
+  completedSteps: Set<string>,
+  year: number,
+  commitScanMode: CommitScanMode
+): boolean {
+  if (completedSteps.has(commitBackfillStep(year, commitScanMode))) return true
+  return commitScanMode === 'authored' && completedSteps.has(commitBackfillStep(year, 'credited'))
 }
 
 function repositoryCompletedSteps(state: RepositoryBackfillStateRow | null): Set<string> {
   if (!state?.completed_steps.trim()) return new Set()
   return new Set(state.completed_steps.split(',').filter(Boolean))
+}
+
+function repositoryBackfillCompleteForMode(
+  state: RepositoryBackfillStateRow | null,
+  completedSteps: Set<string>,
+  repositoryPlan: RepositoryBackfillPlan,
+  years: number[],
+  commitScanMode: CommitScanMode
+): boolean {
+  if (state?.status !== 'succeeded') return false
+
+  for (const year of commitYearsForPlan(repositoryPlan, years)) {
+    if (!commitBackfillStepCompleted(completedSteps, year, commitScanMode)) return false
+  }
+  if (shouldSearchPullRequests(repositoryPlan) && !completedSteps.has(BACKFILL_STEP_PULL_REQUESTS))
+    return false
+  if (shouldSearchIssues(repositoryPlan) && !completedSteps.has(BACKFILL_STEP_ISSUES)) return false
+  if (
+    shouldSearchPullRequestReviews(repositoryPlan) &&
+    !completedSteps.has(BACKFILL_STEP_PULL_REQUEST_REVIEWS)
+  )
+    return false
+  return completedSteps.has(BACKFILL_STEP_SNAPSHOT)
 }
 
 function serializeRepositoryCompletedSteps(steps: Set<string>): string {
@@ -459,6 +407,229 @@ async function markBackfillStepSucceeded(
   )
 }
 
+interface UpsertedRepositoryPlan {
+  repository: RepositoryRow
+  repositoryInput: NewRepositoryRow
+}
+
+async function upsertRepositoryForPlan(
+  repositoryNode: GitHubRepositoryNode,
+  observedOn: string
+): Promise<UpsertedRepositoryPlan> {
+  const organizationId = await upsertOrganizationFromRepositoryOwner(repositoryNode, observedOn)
+  const repositoryInput = translate.repositoryFromGraphQLNode(
+    repositoryNode,
+    observedOn,
+    organizationId
+  )
+  const repository = await upserts.upsertRepository(repositoryInput)
+
+  return { repository, repositoryInput }
+}
+
+async function existingRepositoryByExternalId(externalId: string): Promise<RepositoryRow | null> {
+  const result = await db.query<RepositoryRow>(
+    `SELECT *
+     FROM repositories
+     WHERE provider = 'github' AND external_id = $1
+     LIMIT 1`,
+    [externalId]
+  )
+
+  return result.rows[0] ?? null
+}
+
+interface ProcessRepositoryBackfillOptions {
+  clients: GitHubClients
+  repositoryPlan: RepositoryBackfillPlan
+  repository: RepositoryRow
+  repositoryInput: NewRepositoryRow
+  fullName: string
+  name: string
+  identity: VendorIdentity
+  years: number[]
+  observedOn: string
+  searchDateSplit: GitHubSearchDateSplit
+  repositoryPosition: string
+  visibility: string
+  logLabel: string
+  commitScanMode: CommitScanMode
+}
+
+async function processRepositoryBackfill({
+  clients,
+  repositoryPlan,
+  repository,
+  repositoryInput,
+  fullName,
+  name,
+  identity,
+  years,
+  observedOn,
+  searchDateSplit,
+  repositoryPosition,
+  visibility,
+  logLabel,
+  commitScanMode
+}: ProcessRepositoryBackfillOptions): Promise<string> {
+  const backfillState = await repositoryBackfillState(identity.accountId, repository.id, observedOn)
+  const completedSteps = repositoryCompletedSteps(backfillState)
+  if (
+    repositoryBackfillCompleteForMode(
+      backfillState,
+      completedSteps,
+      repositoryPlan,
+      years,
+      commitScanMode
+    )
+  )
+    return 'already complete'
+  if (backfillState?.status === 'skipped_permanent') return 'already skipped'
+
+  for (const year of commitYearsForPlan(repositoryPlan, years)) {
+    const step = commitBackfillStep(year, commitScanMode)
+    const { from, to } = dates.yearWindow(year)
+    if (commitBackfillStepCompleted(completedSteps, year, commitScanMode)) {
+      logRepositoryStep(
+        identity,
+        repositoryPosition,
+        visibility,
+        logLabel,
+        `commits for ${year} already complete`
+      )
+    } else {
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, `commits for ${year}`)
+      await ingestCommits(
+        clients.graphQL,
+        repository.id,
+        repositoryInput.owner_login,
+        name,
+        identity,
+        from,
+        to,
+        commitScanMode
+      )
+      await markBackfillStepSucceeded(
+        identity.accountId,
+        repository.id,
+        observedOn,
+        completedSteps,
+        step
+      )
+    }
+  }
+
+  if (shouldSearchPullRequests(repositoryPlan)) {
+    if (completedSteps.has(BACKFILL_STEP_PULL_REQUESTS)) {
+      logRepositoryStep(
+        identity,
+        repositoryPosition,
+        visibility,
+        logLabel,
+        'pull requests already complete'
+      )
+    } else {
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull requests')
+      await ingestPullRequests(clients.rest, repository.id, fullName, identity, searchDateSplit)
+      await markBackfillStepSucceeded(
+        identity.accountId,
+        repository.id,
+        observedOn,
+        completedSteps,
+        BACKFILL_STEP_PULL_REQUESTS
+      )
+    }
+  }
+  if (shouldSearchIssues(repositoryPlan)) {
+    if (completedSteps.has(BACKFILL_STEP_ISSUES)) {
+      logRepositoryStep(
+        identity,
+        repositoryPosition,
+        visibility,
+        logLabel,
+        'issues already complete'
+      )
+    } else {
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'issues')
+      await ingestIssues(clients.rest, repository.id, fullName, identity, searchDateSplit)
+      await markBackfillStepSucceeded(
+        identity.accountId,
+        repository.id,
+        observedOn,
+        completedSteps,
+        BACKFILL_STEP_ISSUES
+      )
+    }
+  }
+  if (shouldSearchPullRequestReviews(repositoryPlan)) {
+    if (completedSteps.has(BACKFILL_STEP_PULL_REQUEST_REVIEWS)) {
+      logRepositoryStep(
+        identity,
+        repositoryPosition,
+        visibility,
+        logLabel,
+        'pull request reviews already complete'
+      )
+    } else {
+      logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull request reviews')
+      await ingestPullRequestReviews(
+        clients.rest,
+        repository.id,
+        fullName,
+        identity,
+        searchDateSplit,
+        observedOn
+      )
+      await markBackfillStepSucceeded(
+        identity.accountId,
+        repository.id,
+        observedOn,
+        completedSteps,
+        BACKFILL_STEP_PULL_REQUEST_REVIEWS
+      )
+    }
+  }
+  let snapshotCaptured = true
+  if (completedSteps.has(BACKFILL_STEP_SNAPSHOT)) {
+    logRepositoryStep(
+      identity,
+      repositoryPosition,
+      visibility,
+      logLabel,
+      'repository snapshot and languages already complete'
+    )
+  } else {
+    logRepositoryStep(
+      identity,
+      repositoryPosition,
+      visibility,
+      logLabel,
+      'repository snapshot and languages'
+    )
+    snapshotCaptured = await upsertRepositoryLanguageSnapshot(
+      clients.graphQL,
+      repository.id,
+      repositoryInput.owner_login,
+      name,
+      observedOn
+    )
+    if (snapshotCaptured) {
+      await markBackfillStepSucceeded(
+        identity.accountId,
+        repository.id,
+        observedOn,
+        completedSteps,
+        BACKFILL_STEP_SNAPSHOT
+      )
+    }
+  }
+  if (snapshotCaptured) {
+    await upserts.markRepositoryBackfillSucceeded(identity.accountId, repository.id, observedOn)
+  }
+
+  return 'complete'
+}
+
 interface GitHubClients {
   graphQL: GraphQLClient
   rest: RestClient
@@ -471,6 +642,7 @@ interface RepositoryBackfillPlan {
   pullRequestReviews: boolean
   issues: boolean
   fullScan: boolean
+  candidateOnly: boolean
 }
 
 function organizationClientMap(
@@ -630,7 +802,8 @@ async function collectAccessiblePrivateRepositories(
         repositoriesByExternalId,
         repositoryNode,
         ignoredRepositories,
-        ignoredOrganizations
+        ignoredOrganizations,
+        { candidateOnly: true }
       )
       if (plan && repository.private) plan.fullScan = true
     }
@@ -669,7 +842,8 @@ async function collectOrganizationRepositories(
         repositoriesByExternalId,
         repositoryNode,
         ignoredRepositories,
-        ignoredOrganizations
+        ignoredOrganizations,
+        { candidateOnly: true }
       )
       if (plan && repository.private) plan.fullScan = true
     }
@@ -682,7 +856,8 @@ function upsertRepositoryPlan(
   repositoriesByExternalId: Map<string, RepositoryBackfillPlan>,
   repository: GitHubRepositoryNode,
   ignoredRepositories: Set<string>,
-  ignoredOrganizations: Set<string>
+  ignoredOrganizations: Set<string>,
+  options: { candidateOnly?: boolean } = {}
 ): RepositoryBackfillPlan | null {
   if (shouldIgnoreRepository(repository, ignoredRepositories, ignoredOrganizations)) return null
 
@@ -695,7 +870,8 @@ function upsertRepositoryPlan(
     pullRequests: false,
     pullRequestReviews: false,
     issues: false,
-    fullScan: false
+    fullScan: false,
+    candidateOnly: options.candidateOnly ?? false
   }
   repositoriesByExternalId.set(repository.id, plan)
   return plan
@@ -823,24 +999,22 @@ async function ingestCommits(
   name: string,
   identity: VendorIdentity,
   since: string,
-  until: string
+  until: string,
+  commitScanMode: CommitScanMode
 ): Promise<void> {
   let cursor: string | null = null
 
   for (;;) {
-    const data: RepositoryCommitsResponse = await graphQL<RepositoryCommitsResponse>(
-      queries.REPOSITORY_COMMITS_IN_WINDOW,
-      {
-        owner,
-        name,
-        since,
-        until,
-        cursor
-      }
+    const history = await fetchCommitHistory(
+      graphQL,
+      owner,
+      name,
+      identity,
+      since,
+      until,
+      cursor,
+      commitScanMode
     )
-
-    const history: GitHubCommitHistory | undefined =
-      data.repository?.defaultBranchRef?.target?.history
     if (!history) return
 
     for (const node of history.nodes) {
@@ -852,6 +1026,128 @@ async function ingestCommits(
     if (!history.pageInfo.hasNextPage) return
     cursor = history.pageInfo.endCursor
   }
+}
+
+async function privateCandidateHasActivity(
+  clients: GitHubClients,
+  repositoryPlan: RepositoryBackfillPlan,
+  owner: string,
+  name: string,
+  fullName: string,
+  identity: VendorIdentity,
+  years: number[],
+  dateSplit: GitHubSearchDateSplit,
+  observedOn: string,
+  commitScanMode: CommitScanMode
+): Promise<boolean> {
+  for (const year of commitYearsForPlan(repositoryPlan, years)) {
+    const { from, to } = dates.yearWindow(year)
+    if (
+      await repositoryHasMatchingCommit(
+        clients.graphQL,
+        owner,
+        name,
+        identity,
+        from,
+        to,
+        commitScanMode
+      )
+    ) {
+      return true
+    }
+  }
+
+  if (shouldSearchPullRequests(repositoryPlan)) {
+    const pullRequests = await fetchSearchIssueItems(
+      clients.rest,
+      `repo:${fullName} type:pr author:${identity.externalLogin}`,
+      { dateSplit }
+    )
+    if (pullRequests.length > 0) return true
+  }
+
+  if (shouldSearchIssues(repositoryPlan)) {
+    const issues = await fetchSearchIssueItems(
+      clients.rest,
+      `repo:${fullName} type:issue author:${identity.externalLogin}`,
+      { dateSplit }
+    )
+    if (issues.length > 0) return true
+  }
+
+  if (shouldSearchPullRequestReviews(repositoryPlan)) {
+    const reviewedPullRequests = await fetchSearchIssueItems(
+      clients.rest,
+      `repo:${fullName} type:pr reviewed-by:${identity.externalLogin}`,
+      { dateSplit }
+    )
+    if (
+      reviewedPullRequests.some(
+        (pullRequest) => !pullRequest.closed_at || pullRequest.closed_at.slice(0, 10) <= observedOn
+      )
+    ) {
+      return true
+    }
+  }
+
+  return false
+}
+
+async function repositoryHasMatchingCommit(
+  graphQL: GraphQLClient,
+  owner: string,
+  name: string,
+  identity: VendorIdentity,
+  since: string,
+  until: string,
+  commitScanMode: CommitScanMode
+): Promise<boolean> {
+  let cursor: string | null = null
+
+  for (;;) {
+    const history = await fetchCommitHistory(
+      graphQL,
+      owner,
+      name,
+      identity,
+      since,
+      until,
+      cursor,
+      commitScanMode
+    )
+    if (!history) return false
+    if (history.nodes.some((node) => translate.commitIncludesIdentity(node, identity))) return true
+    if (!history.pageInfo.hasNextPage) return false
+    cursor = history.pageInfo.endCursor
+  }
+}
+
+async function fetchCommitHistory(
+  graphQL: GraphQLClient,
+  owner: string,
+  name: string,
+  identity: VendorIdentity,
+  since: string,
+  until: string,
+  cursor: string | null,
+  commitScanMode: CommitScanMode
+): Promise<GitHubCommitHistory | undefined> {
+  const query =
+    commitScanMode === 'authored'
+      ? queries.REPOSITORY_AUTHORED_COMMITS_IN_WINDOW
+      : queries.REPOSITORY_COMMITS_IN_WINDOW
+  const variables: Record<string, unknown> = {
+    owner,
+    name,
+    since,
+    until,
+    cursor
+  }
+  if (commitScanMode === 'authored') variables.author = { id: identity.externalId }
+
+  const data = await graphQL<RepositoryCommitsResponse>(query, variables)
+
+  return data.repository?.defaultBranchRef?.target?.history
 }
 
 interface RepositoryCommitsResponse {

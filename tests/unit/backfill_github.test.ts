@@ -119,7 +119,7 @@ test('run backfills GitHub history into generic schema tables', async () => {
   expect(logs.some((line) => line.includes('eta'))).toBe(true)
 })
 
-test('run backfills commits credited through co-authorship', async () => {
+test('run fast mode backfills primary-authored commits before deep co-author repair', async () => {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
     user_id: user.id,
@@ -138,6 +138,36 @@ test('run backfills commits credited through co-authorship', async () => {
       externalId: account.external_id
     },
     token: 'test-token',
+    fetch: mockGitHubFetchWithCoAuthoredCommit()
+  })
+
+  const commits = await db.query<{ oid: string; is_co_authored: boolean }>(
+    'SELECT oid, is_co_authored FROM commits ORDER BY oid'
+  )
+
+  expect(commits.rows).toEqual([{ oid: 'authored', is_co_authored: false }])
+})
+
+test('run deep mode backfills commits credited through co-authorship', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+
+  await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    backfillMode: 'deep',
     fetch: mockGitHubFetchWithCoAuthoredCommit()
   })
 
@@ -160,6 +190,48 @@ test('run backfills commits credited through co-authorship', async () => {
     lines_added: 15,
     lines_deleted: 3
   })
+})
+
+test('run deep mode repairs co-authored commits after a fast backfill', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+  const args = {
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: mockGitHubFetchWithCoAuthoredCommit()
+  }
+
+  await backfillGitHub.run(args)
+  await backfillGitHub.run({ ...args, backfillMode: 'deep' })
+
+  const commits = await db.query<{ oid: string; is_co_authored: boolean }>(
+    'SELECT oid, is_co_authored FROM commits ORDER BY oid'
+  )
+  const state = await db.query<{ status: string; completed_steps: string }>(
+    'SELECT status, completed_steps FROM repository_backfill_state'
+  )
+
+  expect(commits.rows).toEqual([
+    { oid: 'authored', is_co_authored: false },
+    { oid: 'coauthored', is_co_authored: true }
+  ])
+  expect(state.rows[0]!.status).toBe('succeeded')
+  expect(state.rows[0]!.completed_steps).toContain(
+    `commits_authored:${new Date().getUTCFullYear()}`
+  )
+  expect(state.rows[0]!.completed_steps).toContain(`commits:${new Date().getUTCFullYear()}`)
 })
 
 test('run paginates historical pull request search results', async () => {
@@ -242,7 +314,7 @@ test('run skips repositories that already have successful backfill state', async
   const countingFetch: typeof fetch = (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
       const body = JSON.parse(String(init?.body)) as { query: string }
-      if (body.query.includes('query RepositoryCommits')) commitRequests += 1
+      if (isRepositoryCommitsQuery(body.query)) commitRequests += 1
     }
     return fetch(url, init)
   }) as typeof fetch
@@ -309,7 +381,7 @@ test('run does not treat repository snapshots as backfill completion state', asy
   const countingFetch: typeof fetch = (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
       const body = JSON.parse(String(init?.body)) as { query: string }
-      if (body.query.includes('query RepositoryCommits')) commitRequests += 1
+      if (isRepositoryCommitsQuery(body.query)) commitRequests += 1
     }
     return fetch(url, init)
   }) as typeof fetch
@@ -334,7 +406,38 @@ test('run does not treat repository snapshots as backfill completion state', asy
   expect(state.rows[0]!.status).toBe('succeeded')
 })
 
-test('run backfills accessible private repositories outside contribution groups', async () => {
+test('run fast mode skips accessible private repositories outside contribution groups', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+
+  await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: mockGitHubFetchWithPrivateRepository()
+  })
+
+  const repositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories'
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+
+  expect(repositories.rows[0]!.count).toBe(0)
+  expect(commits.rows[0]!.count).toBe(0)
+})
+
+test('run deep mode promotes accessible private repositories after matching activity', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
   const user = await upserts.upsertUser({ display_name: 'Example User' })
@@ -355,6 +458,7 @@ test('run backfills accessible private repositories outside contribution groups'
       externalId: account.external_id
     },
     token: 'test-token',
+    backfillMode: 'deep',
     fetch: mockGitHubFetchWithPrivateRepository()
   })
 
@@ -419,17 +523,34 @@ test('run limits full private repository commit scans to repository active years
   })
   const fetch = mockGitHubFetchWithPrivateRepositoryActiveWindow()
 
-  await backfillGitHub.run({
+  const result = await backfillGitHub.run({
     identity: {
       accountId: account.id,
       externalLogin: account.external_login,
       externalId: account.external_id
     },
     token: 'test-token',
+    backfillMode: 'deep',
+    repositoryLimit: 1,
     throughDate: '2026-05-07',
     fetch: fetch.fetch
   })
 
+  const repositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories'
+  )
+  const repositoryBackfillState = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+  )
+
+  expect(result).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 1,
+    repositoriesProcessed: 0,
+    repositoriesDeferred: 0
+  })
+  expect(repositories.rows[0]!.count).toBe(0)
+  expect(repositoryBackfillState.rows[0]!.count).toBe(0)
   expect(fetch.commitYears).toEqual([2025, 2026])
 })
 
@@ -492,6 +613,7 @@ test('run defers retryable repository errors and continues remaining repositorie
       externalId: account.external_id
     },
     token: 'test-token',
+    backfillMode: 'deep',
     fetch: transientFetch.fetch
   })
   const firstState = await db.query<{ status: string; last_error: string | null }>(
@@ -521,6 +643,7 @@ test('run defers retryable repository errors and continues remaining repositorie
       externalId: account.external_id
     },
     token: 'test-token',
+    backfillMode: 'deep',
     fetch: mockGitHubFetchWithTwoRepositories()
   })
   const secondState = await db.query<{ status: string }>(
@@ -577,7 +700,7 @@ test('run resumes retry_wait repositories after completed steps', async () => {
   expect(failingSearch.pullRequestSearchAttempts).toBe(7)
   expect(retryState.rows[0]).toMatchObject({
     status: 'retry_wait',
-    completed_steps: `commits:${new Date().getUTCFullYear()}`
+    completed_steps: `commits_authored:${new Date().getUTCFullYear()}`
   })
 
   const fetch = mockGitHubFetch()
@@ -585,7 +708,7 @@ test('run resumes retry_wait repositories after completed steps', async () => {
   const countingFetch: typeof fetch = (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
       const body = JSON.parse(String(init?.body)) as { query: string }
-      if (body.query.includes('query RepositoryCommits')) secondRunCommitRequests += 1
+      if (isRepositoryCommitsQuery(body.query)) secondRunCommitRequests += 1
     }
     return fetch(url, init)
   }) as typeof fetch
@@ -615,7 +738,7 @@ test('run resumes retry_wait repositories after completed steps', async () => {
   expect(secondRunCommitRequests).toBe(0)
   expect(completedState.rows[0]!.status).toBe('succeeded')
   expect(completedState.rows[0]!.completed_steps.split(',').sort()).toEqual([
-    `commits:${new Date().getUTCFullYear()}`,
+    `commits_authored:${new Date().getUTCFullYear()}`,
     'issues',
     'pull_request_reviews',
     'pull_requests',
@@ -647,6 +770,7 @@ test('run can pause after a repository budget and resume remaining work', async 
       externalId: account.external_id
     },
     token: 'test-token',
+    backfillMode: 'deep' as const,
     repositoryLimit: 1,
     fetch: mockGitHubFetchWithTwoRepositories()
   }
@@ -710,6 +834,7 @@ test('run can pause after a time budget before starting another repository', asy
         externalId: account.external_id
       },
       token: 'test-token',
+      backfillMode: 'deep',
       maxRuntimeMs: 5,
       fetch: mockGitHubFetchWithTwoRepositories()
     })
@@ -780,8 +905,7 @@ function mockGitHubFetch(): typeof fetch {
         return jsonResponse({ data: githubContributionsFixture() })
       }
 
-      if (body.query.includes('query RepositoryCommits')) {
-        expect(body.variables?.author).toBeUndefined()
+      if (isRepositoryCommitsQuery(body.query)) {
         return jsonResponse({
           data: {
             repository: {
@@ -905,6 +1029,10 @@ function mockGitHubFetch(): typeof fetch {
   }) as typeof fetch
 }
 
+function isRepositoryCommitsQuery(query: string): boolean {
+  return query.includes('RepositoryCommits') || query.includes('RepositoryAuthoredCommits')
+}
+
 function mockGitHubFetchWithCoAuthoredCommit(): typeof fetch {
   const currentYear = new Date().getUTCFullYear()
 
@@ -933,73 +1061,81 @@ function mockGitHubFetchWithCoAuthoredCommit(): typeof fetch {
         return jsonResponse({ data: githubContributionsWithCommitCount(3) })
       }
 
-      if (body.query.includes('query RepositoryCommits')) {
-        expect(body.variables?.author).toBeUndefined()
+      if (isRepositoryCommitsQuery(body.query)) {
+        const isAuthoredQuery = body.query.includes('RepositoryAuthoredCommits')
+        if (isAuthoredQuery) {
+          expect(body.variables?.author).toEqual({ id: 'U_TEST_1' })
+        } else {
+          expect(body.variables?.author).toBeUndefined()
+        }
+        const authoredCommit = {
+          oid: 'authored',
+          committedDate: '2026-05-07T10:00:00Z',
+          additions: 10,
+          deletions: 2,
+          changedFiles: 1,
+          messageHeadline: 'Authored work',
+          author: githubCommitActor(),
+          authors: { nodes: [githubCommitActor()] }
+        }
         return jsonResponse({
           data: {
             repository: {
               defaultBranchRef: {
                 target: {
                   history: {
-                    totalCount: 3,
+                    totalCount: isAuthoredQuery ? 1 : 3,
                     pageInfo: { hasNextPage: false, endCursor: null },
-                    nodes: [
-                      {
-                        oid: 'authored',
-                        committedDate: '2026-05-07T10:00:00Z',
-                        additions: 10,
-                        deletions: 2,
-                        changedFiles: 1,
-                        messageHeadline: 'Authored work',
-                        author: githubCommitActor(),
-                        authors: { nodes: [githubCommitActor()] }
-                      },
-                      {
-                        oid: 'coauthored',
-                        committedDate: '2026-05-07T11:00:00Z',
-                        additions: 5,
-                        deletions: 1,
-                        changedFiles: 2,
-                        messageHeadline: 'Co-authored work',
-                        author: githubCommitActor({
-                          id: 'U_TEAMMATE',
-                          login: 'teammate',
-                          name: 'Teammate'
-                        }),
-                        authors: {
-                          nodes: [
-                            githubCommitActor({
+                    nodes: isAuthoredQuery
+                      ? [authoredCommit]
+                      : [
+                          authoredCommit,
+                          {
+                            oid: 'coauthored',
+                            committedDate: '2026-05-07T11:00:00Z',
+                            additions: 5,
+                            deletions: 1,
+                            changedFiles: 2,
+                            messageHeadline: 'Co-authored work',
+                            author: githubCommitActor({
                               id: 'U_TEAMMATE',
                               login: 'teammate',
                               name: 'Teammate'
                             }),
-                            githubCommitActor()
-                          ]
-                        }
-                      },
-                      {
-                        oid: 'unrelated',
-                        committedDate: '2026-05-07T12:00:00Z',
-                        additions: 100,
-                        deletions: 50,
-                        changedFiles: 3,
-                        messageHeadline: 'Someone else',
-                        author: githubCommitActor({
-                          id: 'U_SOMEONE_ELSE',
-                          login: 'someone-else',
-                          name: 'Someone Else'
-                        }),
-                        authors: {
-                          nodes: [
-                            githubCommitActor({
+                            authors: {
+                              nodes: [
+                                githubCommitActor({
+                                  id: 'U_TEAMMATE',
+                                  login: 'teammate',
+                                  name: 'Teammate'
+                                }),
+                                githubCommitActor()
+                              ]
+                            }
+                          },
+                          {
+                            oid: 'unrelated',
+                            committedDate: '2026-05-07T12:00:00Z',
+                            additions: 100,
+                            deletions: 50,
+                            changedFiles: 3,
+                            messageHeadline: 'Someone else',
+                            author: githubCommitActor({
                               id: 'U_SOMEONE_ELSE',
                               login: 'someone-else',
                               name: 'Someone Else'
-                            })
-                          ]
-                        }
-                      }
-                    ]
+                            }),
+                            authors: {
+                              nodes: [
+                                githubCommitActor({
+                                  id: 'U_SOMEONE_ELSE',
+                                  login: 'someone-else',
+                                  name: 'Someone Else'
+                                })
+                              ]
+                            }
+                          }
+                        ]
                   }
                 }
               }
@@ -1202,7 +1338,7 @@ function mockGitHubFetchWithPrivateRepository(): typeof fetch {
         })
       }
 
-      if (body.query.includes('query RepositoryCommits')) {
+      if (isRepositoryCommitsQuery(body.query)) {
         expect(body.variables?.name).toBe('secret')
         return jsonResponse({
           data: {
@@ -1385,7 +1521,7 @@ function mockGitHubFetchWithPrivateRepositoryActiveWindow(): {
           })
         }
 
-        if (body.query.includes('query RepositoryCommits')) {
+        if (isRepositoryCommitsQuery(body.query)) {
           if (body.variables?.since) {
             commitYears.push(new Date(body.variables.since).getUTCFullYear())
           }
@@ -1491,7 +1627,7 @@ function mockGitHubFetchWithUnavailableRepository(): typeof fetch {
         })
       }
 
-      if (body.query.includes('query RepositoryCommits')) {
+      if (isRepositoryCommitsQuery(body.query)) {
         return jsonResponse({
           data: { repository: null },
           errors: [
@@ -1541,7 +1677,7 @@ function mockGitHubFetchWithTwoRepositories(): typeof fetch {
         return jsonResponse({ data: githubContributionsWithRepository(publicRepositoryNode()) })
       }
 
-      if (body.query.includes('query RepositoryCommits')) {
+      if (isRepositoryCommitsQuery(body.query)) {
         const name = body.variables?.name
         return jsonResponse({
           data: {
@@ -1639,7 +1775,7 @@ function mockGitHubFetchWithTransientRepositoryFailure(): {
           query: string
           variables?: Record<string, string>
         }
-        if (body.query.includes('query RepositoryCommits') && body.variables?.name === 'hello') {
+        if (isRepositoryCommitsQuery(body.query) && body.variables?.name === 'hello') {
           result.publicCommitAttempts += 1
           return new Response('service unavailable', { status: 503 })
         }

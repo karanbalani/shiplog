@@ -183,6 +183,40 @@ test('run ignores repositories through stable repository and organization ids', 
   expect(summaries.rows[0]!.count).toBe(1)
 })
 
+test('run keeps daily collect scoped to contribution-group repositories', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2011-01-25T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+
+  await collectGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    date: '2026-05-07',
+    fetch: mockGitHubFetchWithReadablePrivateRepositoryOutsideContributionGroups()
+  })
+
+  const repositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories'
+  )
+  const summaries = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM daily_user_summary'
+  )
+
+  expect(repositories.rows[0]!.count).toBe(0)
+  expect(summaries.rows[0]!.count).toBe(1)
+})
+
 test('run uses organization token for organization-owned repositories', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
@@ -578,23 +612,7 @@ function mockGitHubFetchWithOrganizationToken(): typeof fetch {
 
       if (body.query.includes('query Contributions')) {
         expect(authorization).toBe('Bearer default-token')
-        return jsonResponse({
-          data: {
-            user: {
-              contributionsCollection: {
-                totalCommitContributions: 1,
-                totalIssueContributions: 0,
-                totalPullRequestContributions: 0,
-                totalPullRequestReviewContributions: 0,
-                restrictedContributionsCount: 0,
-                commitContributionsByRepository: [],
-                pullRequestContributionsByRepository: [],
-                pullRequestReviewContributionsByRepository: [],
-                issueContributionsByRepository: []
-              }
-            }
-          }
-        })
+        return jsonResponse({ data: githubContributionsWithRepository(restrictedRepositoryNode()) })
       }
 
       if (body.query.includes('query RepositoryCommits')) {
@@ -630,18 +648,67 @@ function mockGitHubFetchWithOrganizationToken(): typeof fetch {
 
     const parsed = new URL(url)
 
-    if (parsed.pathname === '/user/repos') {
-      expect(authorization).toBe('Bearer default-token')
-      return jsonResponse([])
+    if (parsed.pathname === '/search/issues') {
+      expect(authorization).toBe('Bearer org-token')
+      return jsonResponse({ total_count: 0, items: [] })
     }
 
-    if (parsed.pathname === '/orgs/restricted-org/repos') {
-      expect(authorization).toBe('Bearer org-token')
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
+function mockGitHubFetchWithReadablePrivateRepositoryOutsideContributionGroups(): typeof fetch {
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({
+          data: {
+            user: {
+              contributionsCollection: {
+                totalCommitContributions: 0,
+                totalIssueContributions: 0,
+                totalPullRequestContributions: 0,
+                totalPullRequestReviewContributions: 0,
+                restrictedContributionsCount: 0,
+                commitContributionsByRepository: [],
+                pullRequestContributionsByRepository: [],
+                pullRequestReviewContributionsByRepository: [],
+                issueContributionsByRepository: []
+              }
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query RepositoryCommits')) {
+        return jsonResponse({
+          data: {
+            repository: {
+              defaultBranchRef: {
+                target: {
+                  history: {
+                    totalCount: 0,
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                    nodes: []
+                  }
+                }
+              }
+            }
+          }
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
       return jsonResponse([
         {
-          node_id: 'R_RESTRICTED_1',
+          node_id: 'R_PRIVATE_OUTSIDE_DAILY_1',
           name: 'secret',
-          full_name: 'restricted-org/secret',
+          full_name: 'octocat/secret',
           private: true,
           fork: false,
           archived: false,
@@ -651,42 +718,19 @@ function mockGitHubFetchWithOrganizationToken(): typeof fetch {
           created_at: '2024-01-01T00:00:00Z',
           pushed_at: '2026-05-07T12:00:00Z',
           default_branch: 'main',
-          html_url: 'https://github.com/restricted-org/secret',
-          description: 'restricted test repository',
+          html_url: 'https://github.com/octocat/secret',
+          description: 'readable private repository without daily activity',
           owner: {
-            login: 'restricted-org',
-            node_id: 'O_RESTRICTED_1',
-            type: 'Organization',
-            avatar_url: 'https://avatars.githubusercontent.com/u/2?v=4'
-          }
-        },
-        {
-          node_id: 'R_RESTRICTED_PUBLIC_1',
-          name: 'public-docs',
-          full_name: 'restricted-org/public-docs',
-          private: false,
-          fork: false,
-          archived: false,
-          language: 'Markdown',
-          stargazers_count: 12,
-          forks_count: 3,
-          created_at: '2024-01-01T00:00:00Z',
-          pushed_at: '2026-05-07T12:00:00Z',
-          default_branch: 'main',
-          html_url: 'https://github.com/restricted-org/public-docs',
-          description: 'public org repository without user activity',
-          owner: {
-            login: 'restricted-org',
-            node_id: 'O_RESTRICTED_1',
-            type: 'Organization',
-            avatar_url: 'https://avatars.githubusercontent.com/u/2?v=4'
+            login: 'octocat',
+            node_id: 'U_TEST_1',
+            type: 'User',
+            avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4'
           }
         }
       ])
     }
 
     if (parsed.pathname === '/search/issues') {
-      expect(authorization).toBe('Bearer org-token')
       return jsonResponse({ total_count: 0, items: [] })
     }
 
@@ -1039,6 +1083,30 @@ function githubContributionsWithRepository(
         issueContributionsByRepository: []
       }
     }
+  }
+}
+
+function restrictedRepositoryNode(): import('../../lib/providers/github/types.ts').GitHubRepositoryNode {
+  return {
+    id: 'R_RESTRICTED_1',
+    nameWithOwner: 'restricted-org/secret',
+    owner: {
+      __typename: 'Organization',
+      id: 'O_RESTRICTED_1',
+      login: 'restricted-org',
+      avatarUrl: 'https://avatars.githubusercontent.com/u/2?v=4'
+    },
+    isPrivate: true,
+    isFork: false,
+    isArchived: false,
+    primaryLanguage: { name: 'TypeScript' },
+    stargazerCount: 0,
+    forkCount: 0,
+    createdAt: '2024-01-01T00:00:00Z',
+    pushedAt: '2026-05-07T12:00:00Z',
+    defaultBranchRef: { name: 'main' },
+    url: 'https://github.com/restricted-org/secret',
+    description: 'restricted test repository'
   }
 }
 

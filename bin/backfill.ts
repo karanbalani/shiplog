@@ -10,6 +10,7 @@ import {
 import type {
   AccountRow,
   BackfillArgs,
+  BackfillMode,
   BackfillResult,
   ShiplogCollectAccountConfig,
   ShiplogConfig,
@@ -25,15 +26,20 @@ export interface BackfillRunOptions {
   config?: ShiplogConfig
   fetch?: Fetcher
   now?: Date
+  backfillMode?: BackfillMode
   repositoryLimit?: number
   maxRuntimeMinutes?: number
+  requireComplete?: boolean
 }
 
 export async function run(options: BackfillRunOptions = {}): Promise<void> {
   const shiplogConfig = options.config ?? config.load(options.configPath)
   const throughDate = dates.yesterdayUTC(options.now)
+  const backfillMode = backfillModeOption(options)
   const repositoryLimit = backfillRepositoryLimit(options)
   const maxRuntimeMs = backfillMaxRuntimeMs(options)
+  const requireComplete = backfillRequireComplete(options)
+  const incompleteRuns: string[] = []
 
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await findAccount(accountConfig)
@@ -54,6 +60,7 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
       ignoreOrganizationIds: accountConfig.ignore.organizations,
       ignoreRepositoryIds: accountConfig.ignore.repositories,
       throughDate,
+      backfillMode,
       repositoryLimit,
       maxRuntimeMs,
       fetch: options.fetch
@@ -62,11 +69,21 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
     if (backfillComplete(result)) {
       await upserts.markCollectSuccess(refreshedAccount.id, throughDate)
     } else {
-      logger.info(
-        `[backfill] ${accountConfig.provider}/${refreshedAccount.external_login}: paused with ${formatRepositoryCount(result.repositoriesDeferred)} remaining; rerun backfill to continue`
-      )
+      const message = `[backfill] ${accountConfig.provider}/${refreshedAccount.external_login}: paused with ${formatRepositoryCount(result.repositoriesDeferred)} remaining; rerun backfill to continue`
+      logger.info(message)
+      incompleteRuns.push(message)
     }
   }
+
+  if (requireComplete && incompleteRuns.length > 0) {
+    throw new Error(incompleteRuns.join('; '))
+  }
+}
+
+function backfillModeOption(options: BackfillRunOptions): BackfillMode {
+  const value = options.backfillMode ?? process.env.BACKFILL_MODE ?? 'fast'
+  if (value === 'fast' || value === 'deep') return value
+  throw new Error(`BACKFILL_MODE must be fast or deep; got ${value}`)
 }
 
 function backfillRepositoryLimit(options: BackfillRunOptions): number | undefined {
@@ -89,6 +106,16 @@ function backfillMaxRuntimeMs(options: BackfillRunOptions): number | undefined {
   if (!envValue) return undefined
 
   return minutesToMs(assertPositiveNumber(Number(envValue), 'BACKFILL_MAX_MINUTES'))
+}
+
+function backfillRequireComplete(options: BackfillRunOptions): boolean {
+  if (options.requireComplete !== undefined) return options.requireComplete
+
+  const envValue = process.env.BACKFILL_REQUIRE_COMPLETE?.trim().toLowerCase()
+  if (!envValue) return false
+  if (['1', 'true', 'yes'].includes(envValue)) return true
+  if (['0', 'false', 'no'].includes(envValue)) return false
+  throw new Error(`BACKFILL_REQUIRE_COMPLETE must be true or false; got ${envValue}`)
 }
 
 function assertPositiveInteger(value: number, label: string): number {

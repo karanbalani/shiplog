@@ -142,6 +142,32 @@ query RepositoryCommits($owner: String!, $name: String!, $since: GitTimestamp!, 
 }
 `
 
+export const REPOSITORY_AUTHORED_COMMITS_IN_WINDOW = `
+query RepositoryAuthoredCommits($owner: String!, $name: String!, $author: CommitAuthor!, $since: GitTimestamp!, $until: GitTimestamp!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef {
+      target {
+        ... on Commit {
+          history(first: 100, after: $cursor, author: $author, since: $since, until: $until) {
+            totalCount
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              oid committedDate
+              additions deletions changedFiles
+              messageHeadline
+              author { name email user { id login } }
+              authors(first: 100) {
+                nodes { name email user { id login } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
 export const REPOSITORY_LANGUAGES = `
 query RepositoryLanguages($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
