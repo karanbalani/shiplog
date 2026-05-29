@@ -14,6 +14,7 @@ const originalGitHubToken = process.env.GH_RO_CLASSIC_TOKEN
 const originalDriftFrom = process.env.DRIFT_FROM
 const originalDriftTo = process.env.DRIFT_TO
 const originalDriftLookbackDays = process.env.DRIFT_LOOKBACK_DAYS
+const originalDriftRepairChunkDays = process.env.DRIFT_REPAIR_CHUNK_DAYS
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
@@ -22,6 +23,7 @@ beforeEach(() => {
   delete process.env.DRIFT_FROM
   delete process.env.DRIFT_TO
   delete process.env.DRIFT_LOOKBACK_DAYS
+  delete process.env.DRIFT_REPAIR_CHUNK_DAYS
 })
 
 afterEach(async () => {
@@ -31,6 +33,7 @@ afterEach(async () => {
   restoreEnv('DRIFT_FROM', originalDriftFrom)
   restoreEnv('DRIFT_TO', originalDriftTo)
   restoreEnv('DRIFT_LOOKBACK_DAYS', originalDriftLookbackDays)
+  restoreEnv('DRIFT_REPAIR_CHUNK_DAYS', originalDriftRepairChunkDays)
 })
 
 test('run queues repair work for mismatched daily summaries without mutating collected data', async () => {
@@ -104,6 +107,38 @@ test('run groups adjacent missing summaries into one repair range', async () => 
   expect(dateOnly(tasks.rows[0]!.target_from_on)).toBe('2026-05-05')
   expect(dateOnly(tasks.rows[0]!.target_to_on)).toBe('2026-05-06')
   expect(tasks.rows[0]!.reason).toBe('drift: missing daily summary')
+})
+
+test('run chunks long adjacent repair ranges', async () => {
+  await seedAccount({ lastSuccessfulCollectOn: '2026-05-14' })
+  const calls = { totalsRequests: 0 }
+
+  const result = await drift.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-15T00:00:00Z'),
+    fromDate: '2026-05-01',
+    toDate: '2026-05-10',
+    repairChunkDays: 3,
+    fetch: mockGitHubFetch(calls)
+  })
+
+  const tasks = await db.query<{
+    target_from_on: Date | string
+    target_to_on: Date | string
+    reason: string | null
+  }>('SELECT target_from_on, target_to_on, reason FROM maintenance_tasks ORDER BY target_from_on')
+
+  expect(result).toEqual({ accountsChecked: 1, datesChecked: 10, tasksEnqueued: 4 })
+  expect(calls.totalsRequests).toBe(0)
+  expect(
+    tasks.rows.map((row) => [dateOnly(row.target_from_on), dateOnly(row.target_to_on)])
+  ).toEqual([
+    ['2026-05-01', '2026-05-03'],
+    ['2026-05-04', '2026-05-06'],
+    ['2026-05-07', '2026-05-09'],
+    ['2026-05-10', '2026-05-10']
+  ])
+  expect(tasks.rows.every((row) => row.reason === 'drift: missing daily summary')).toBe(true)
 })
 
 test('run does not queue work when stored summaries match provider totals', async () => {

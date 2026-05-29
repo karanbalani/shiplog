@@ -17,6 +17,11 @@ on:
         description: 'Optional recent-day window when no explicit range is provided'
         required: false
         type: string
+      repair_chunk_days:
+        description: 'Maximum days per queued maintenance repair task'
+        required: false
+        default: '7'
+        type: string
 
 permissions:
   contents: read
@@ -71,3 +76,4 @@ jobs:
           DRIFT_FROM: ${{ github.event.inputs.drift_from }}
           DRIFT_TO: ${{ github.event.inputs.drift_to }}
           DRIFT_LOOKBACK_DAYS: ${{ github.event.inputs.drift_lookback_days }}
+          DRIFT_REPAIR_CHUNK_DAYS: ${{ github.event.inputs.repair_chunk_days }}
