@@ -4,12 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       repository_limit:
-        description: 'Optional maximum unfinished repositories to process in this run'
+        description: 'Maximum unfinished repositories to process in this run'
         required: false
+        default: '25'
         type: string
       max_minutes:
-        description: 'Optional maximum run time before pausing between repositories'
+        description: 'Maximum run time before pausing between repositories'
         required: false
+        default: '45'
         type: string
 
 permissions:

@@ -216,7 +216,7 @@ Historical backfill is designed to be resumable:
 - `accounts.last_successful_collect_on` stays null until the complete historical collect succeeds.
 - Most writes use database upserts or uniqueness constraints.
 - Repeated rows are deduplicated on rerun.
-- Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_REPOSITORY_LIMIT`, `BACKFILL_MAX_MINUTES`, or the backfill workflow's matching inputs to process large accounts in smaller chunks.
+- Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_REPOSITORY_LIMIT`, `BACKFILL_MAX_MINUTES`, or the backfill workflow's matching inputs to process large accounts in smaller chunks. The manual backfill workflow defaults to `repository_limit=25` and `max_minutes=45`.
 - If a single repository still gets a retryable provider error after request retries are exhausted, shiplog marks that repository `retry_wait`, continues with other repositories, and leaves the account checkpoint unchanged so a later run can retry the incomplete repository. Reruns skip completed repository sub-steps before retrying the failed work.
 
 Partial progress from the failed run is useful and should normally be kept.
