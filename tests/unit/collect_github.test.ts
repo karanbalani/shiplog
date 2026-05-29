@@ -730,13 +730,17 @@ function mockGitHubFetchWithWindowAssertions(): typeof fetch {
 function mockGitHubFetchWithCoAuthoredCommit(): typeof fetch {
   return (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
-      const body = JSON.parse(String(init?.body)) as { query: string }
+      const body = JSON.parse(String(init?.body)) as {
+        query: string
+        variables?: Record<string, unknown>
+      }
 
       if (body.query.includes('query Contributions')) {
         return jsonResponse({ data: githubContributionsFixture() })
       }
 
       if (body.query.includes('query RepositoryCommits')) {
+        expect(body.variables?.author).toBeUndefined()
         return jsonResponse({
           data: {
             repository: {
