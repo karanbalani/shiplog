@@ -36,6 +36,45 @@ test('fetchSearchIssueItems warns when GitHub search result limit is reached', a
   expect(logs.join('\n')).not.toContain('private-org/private-repo')
 })
 
+test('fetchSearchIssueItems splits capped search result windows', async () => {
+  const logs: string[] = []
+  const queries: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const rest: RestClient = async <T = unknown>(
+    _path: string,
+    params: Record<string, string | number | undefined> = {}
+  ) => {
+    const query = String(params.q)
+    queries.push(query)
+
+    if (query.includes('created:2026-01-01..2026-01-04')) {
+      return { total_count: 1001, items: [searchItem(999)] } as T
+    }
+    if (query.includes('created:2026-01-01..2026-01-02')) {
+      return { total_count: 2, items: [searchItem(1), searchItem(2)] } as T
+    }
+    if (query.includes('created:2026-01-03..2026-01-04')) {
+      return { total_count: 2, items: [searchItem(3), searchItem(4)] } as T
+    }
+
+    throw new Error(`unexpected query: ${query}`)
+  }
+
+  const items = await fetchSearchIssueItems(
+    rest,
+    'repo:private-org/private-repo type:pr author:octocat',
+    { dateSplit: { qualifier: 'created', from: '2026-01-01', to: '2026-01-04' } }
+  )
+
+  expect(items.map((item) => item.number)).toEqual([1, 2, 3, 4])
+  expect(queries).toEqual([
+    'repo:private-org/private-repo type:pr author:octocat created:2026-01-01..2026-01-04',
+    'repo:private-org/private-repo type:pr author:octocat created:2026-01-01..2026-01-02',
+    'repo:private-org/private-repo type:pr author:octocat created:2026-01-03..2026-01-04'
+  ])
+  expect(logs).toEqual([])
+})
+
 function searchItem(number: number): GitHubSearchPullRequestItem {
   return {
     node_id: `PR_${number}`,

@@ -13,7 +13,8 @@ import {
 } from '../lib/providers/github/logging.ts'
 import {
   fetchPullRequestReviews,
-  fetchSearchIssueItems
+  fetchSearchIssueItems,
+  type GitHubSearchDateSplit
 } from '../lib/providers/github/pagination.ts'
 import * as queries from '../lib/providers/github/queries.ts'
 import {
@@ -72,6 +73,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     new Date(user.externalCreatedAt).getUTCFullYear(),
     new Date(`${observedOn}T00:00:00Z`).getUTCFullYear()
   )
+  const firstDiscoveryYear = years[0] ?? new Date(`${observedOn}T00:00:00Z`).getUTCFullYear()
   const repositoriesByExternalId = new Map<string, RepositoryBackfillPlan>()
 
   const discoveryMessage = `[backfill] github/${identity.externalLogin}: discovering ${years.length} years of activity (${years[0]}-${years.at(-1)})`
@@ -147,6 +149,11 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
     const logLabel = repositoryLogLabel(repositoryNode, fullName)
     const repositoryPosition = `${visitedRepositories + 1}/${repositoryCount}`
+    const searchDateSplit = repositoryCreatedSearchDateSplit(
+      repositoryNode,
+      firstDiscoveryYear,
+      observedOn
+    )
     const repositoryStartMessage = `[backfill] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel}`
     logger.info(repositoryStartMessage)
 
@@ -227,7 +234,13 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
             )
           } else {
             logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'pull requests')
-            await ingestPullRequests(clients.rest, repository.id, fullName, identity)
+            await ingestPullRequests(
+              clients.rest,
+              repository.id,
+              fullName,
+              identity,
+              searchDateSplit
+            )
             await markBackfillStepSucceeded(
               identity.accountId,
               repository.id,
@@ -248,7 +261,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
             )
           } else {
             logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'issues')
-            await ingestIssues(clients.rest, repository.id, fullName, identity)
+            await ingestIssues(clients.rest, repository.id, fullName, identity, searchDateSplit)
             await markBackfillStepSucceeded(
               identity.accountId,
               repository.id,
@@ -275,7 +288,14 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
               logLabel,
               'pull request reviews'
             )
-            await ingestPullRequestReviews(clients.rest, repository.id, fullName, identity)
+            await ingestPullRequestReviews(
+              clients.rest,
+              repository.id,
+              fullName,
+              identity,
+              searchDateSplit,
+              observedOn
+            )
             await markBackfillStepSucceeded(
               identity.accountId,
               repository.id,
@@ -685,11 +705,31 @@ function repositoryActiveYears(repository: GitHubRepositoryNode, years: number[]
   })
 }
 
+function repositoryCreatedSearchDateSplit(
+  repository: GitHubRepositoryNode,
+  firstDiscoveryYear: number,
+  observedOn: string
+): GitHubSearchDateSplit {
+  return {
+    qualifier: 'created',
+    from: dateOnlyFromIso(repository.createdAt) ?? `${firstDiscoveryYear}-01-01`,
+    to: observedOn
+  }
+}
+
 function yearFromIso(value: string | null | undefined): number | null {
   if (!value) return null
 
   const year = new Date(value).getUTCFullYear()
   return Number.isFinite(year) ? year : null
+}
+
+function dateOnlyFromIso(value: string | null | undefined): string | null {
+  if (!value) return null
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toISOString().slice(0, 10)
 }
 
 function shouldSearchPullRequests(plan: RepositoryBackfillPlan): boolean {
@@ -815,11 +855,13 @@ async function ingestPullRequests(
   rest: RestClient,
   repositoryId: number,
   fullName: string,
-  identity: VendorIdentity
+  identity: VendorIdentity,
+  dateSplit: GitHubSearchDateSplit
 ): Promise<void> {
   const items = await fetchSearchIssueItems(
     rest,
-    `repo:${fullName} type:pr author:${identity.externalLogin}`
+    `repo:${fullName} type:pr author:${identity.externalLogin}`,
+    { dateSplit }
   )
 
   for (const item of items) {
@@ -848,11 +890,13 @@ async function ingestIssues(
   rest: RestClient,
   repositoryId: number,
   fullName: string,
-  identity: VendorIdentity
+  identity: VendorIdentity,
+  dateSplit: GitHubSearchDateSplit
 ): Promise<void> {
   const items = await fetchSearchIssueItems(
     rest,
-    `repo:${fullName} type:issue author:${identity.externalLogin}`
+    `repo:${fullName} type:issue author:${identity.externalLogin}`,
+    { dateSplit }
   )
 
   for (const item of items) {
@@ -875,11 +919,14 @@ async function ingestPullRequestReviews(
   rest: RestClient,
   repositoryId: number,
   fullName: string,
-  identity: VendorIdentity
+  identity: VendorIdentity,
+  dateSplit: GitHubSearchDateSplit,
+  observedOn: string
 ): Promise<void> {
   const pullRequests = await fetchSearchIssueItems(
     rest,
-    `repo:${fullName} type:pr reviewed-by:${identity.externalLogin}`
+    `repo:${fullName} type:pr reviewed-by:${identity.externalLogin}`,
+    { dateSplit }
   )
 
   for (const pullRequest of pullRequests) {
@@ -888,6 +935,7 @@ async function ingestPullRequestReviews(
     for (const review of reviews) {
       if (review.user?.login !== identity.externalLogin) continue
       if (!review.submitted_at) continue
+      if (review.submitted_at.slice(0, 10) > observedOn) continue
 
       await upserts.upsertPullRequestReview({
         account_id: identity.accountId,

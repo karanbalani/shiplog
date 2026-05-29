@@ -426,7 +426,8 @@ async function ingestPullRequestReviews(
 ): Promise<void> {
   const reviewedPullRequests = await fetchSearchIssueItems(
     rest,
-    `repo:${fullName} type:pr reviewed-by:${identity.externalLogin}`
+    `repo:${fullName} type:pr reviewed-by:${identity.externalLogin}`,
+    { dateSplit: { qualifier: 'updated', from: date, to: todayOrLater(date) } }
   )
 
   for (const pullRequest of reviewedPullRequests) {
@@ -491,6 +492,15 @@ function requiredString(value: string | null, label: string): string {
 
 function ignoreSet(values: string[]): Set<string> {
   return new Set(values.map((value) => value.toLowerCase()))
+}
+
+function todayUTC(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function todayOrLater(date: string): string {
+  const today = todayUTC()
+  return today > date ? today : date
 }
 
 function shouldIgnoreRepository(

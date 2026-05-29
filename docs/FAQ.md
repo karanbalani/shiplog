@@ -223,7 +223,7 @@ Partial progress from the failed run is useful and should normally be kept.
 
 ## Why did GitHub return `API rate limit exceeded`?
 
-GitHub has separate limits for some REST APIs, including search. shiplog throttles GitHub search requests, serializes ingestion workflows in GitHub Actions, and retries rate-limit responses using `Retry-After` or `X-RateLimit-Reset` headers.
+GitHub has separate limits for some REST APIs, including search. shiplog throttles GitHub search requests, serializes ingestion workflows in GitHub Actions, retries rate-limit responses using `Retry-After` or `X-RateLimit-Reset` headers, and splits large date-bounded searches into smaller windows before falling back to GitHub's 1,000-result search cap.
 
 If a token was already exhausted by another run or tool, shiplog may wait for the reset window before continuing. That is expected for first-time historical collects.
 
