@@ -318,7 +318,7 @@ Detect drift and queue repair work:
 bun run drift
 ```
 
-`drift` checks recent stored `daily_user_summary` rows against provider contribution totals and enqueues `maintenance_tasks` repair ranges for missing or mismatched dates. By default it checks the last 14 UTC days through yesterday. Set `DRIFT_LOOKBACK_DAYS=0` to disable the default window, or use `DRIFT_FROM=2026-05-01 DRIFT_TO=2026-05-07 bun run drift` for an explicit range.
+`drift` checks recent stored `daily_user_summary` rows against provider contribution totals and enqueues `maintenance_tasks` repair ranges for missing or mismatched dates. By default it checks the last 14 UTC days through yesterday and chunks queued repairs into ranges of at most 7 days. Set `DRIFT_LOOKBACK_DAYS=0` to disable the default window, `DRIFT_REPAIR_CHUNK_DAYS=3` to queue smaller maintenance tasks, or use `DRIFT_FROM=2026-05-01 DRIFT_TO=2026-05-07 bun run drift` for an explicit range.
 
 Run queued maintenance work:
 

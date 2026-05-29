@@ -17,6 +17,7 @@ import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
 
 const DEFAULT_DRIFT_LOOKBACK_DAYS = 14
+const DEFAULT_DRIFT_REPAIR_CHUNK_DAYS = 7
 const DRIFT_REPAIR_PRIORITY = 20
 
 type GitHubContributionTotals = Pick<
@@ -36,6 +37,7 @@ export interface DriftRunOptions {
   fromDate?: string
   toDate?: string
   lookbackDays?: number
+  repairChunkDays?: number
 }
 
 export interface DriftRunResult {
@@ -73,6 +75,7 @@ export async function run(options: DriftRunOptions = {}): Promise<DriftRunResult
     return { accountsChecked: 0, datesChecked: 0, tasksEnqueued: 0 }
   }
 
+  const repairChunkDays = driftRepairChunkDays(options)
   const result: DriftRunResult = { accountsChecked: 0, datesChecked: 0, tasksEnqueued: 0 }
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await collect.findAccount(accountConfig)
@@ -90,7 +93,7 @@ export async function run(options: DriftRunOptions = {}): Promise<DriftRunResult
       refreshedAccount.external_login,
       checkDates
     )
-    const ranges = repairRanges(findings)
+    const ranges = repairRanges(findings, repairChunkDays)
 
     for (const range of ranges) {
       await upserts.enqueueMaintenanceRepairTask({
@@ -216,7 +219,7 @@ async function refreshAccount(
   })
 }
 
-function repairRanges(findings: DriftFinding[]): RepairRange[] {
+function repairRanges(findings: DriftFinding[], repairChunkDays: number): RepairRange[] {
   const ranges: RepairRange[] = []
   const sorted = [...findings].sort((left, right) => left.date.localeCompare(right.date))
 
@@ -225,7 +228,8 @@ function repairRanges(findings: DriftFinding[]): RepairRange[] {
     if (
       previous &&
       previous.reason === finding.reason &&
-      addDays(previous.to, 1) === finding.date
+      addDays(previous.to, 1) === finding.date &&
+      dateSpanDays(previous.from, finding.date) <= repairChunkDays
     ) {
       previous.to = finding.date
       continue
@@ -256,6 +260,17 @@ function driftLookbackDays(options: DriftRunOptions): number {
   if (envLookbackDays === undefined) return DEFAULT_DRIFT_LOOKBACK_DAYS
 
   return assertLookbackDays(Number(envLookbackDays))
+}
+
+function driftRepairChunkDays(options: DriftRunOptions): number {
+  if (options.repairChunkDays !== undefined) {
+    return assertPositiveInteger(options.repairChunkDays, 'repairChunkDays')
+  }
+
+  const envRepairChunkDays = optionalDate(process.env.DRIFT_REPAIR_CHUNK_DAYS)
+  if (envRepairChunkDays === undefined) return DEFAULT_DRIFT_REPAIR_CHUNK_DAYS
+
+  return assertPositiveInteger(Number(envRepairChunkDays), 'DRIFT_REPAIR_CHUNK_DAYS')
 }
 
 function driftDates(request: DriftDateRequest, yesterday: string, lookbackDays: number): string[] {
@@ -296,6 +311,14 @@ function assertLookbackDays(value: number): number {
   return value
 }
 
+function assertPositiveInteger(value: number, label: string): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer; got ${value}`)
+  }
+
+  return value
+}
+
 function optionalDate(value: string | undefined): string | undefined {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
@@ -330,6 +353,15 @@ function dateRange(start: string, end: string): string[] {
     out.push(d)
   }
   return out
+}
+
+function dateSpanDays(start: string, end: string): number {
+  return (
+    Math.floor(
+      (new Date(`${end}T00:00:00Z`).getTime() - new Date(`${start}T00:00:00Z`).getTime()) /
+        (24 * 60 * 60 * 1000)
+    ) + 1
+  )
 }
 
 function addDays(date: string, days: number): string {
