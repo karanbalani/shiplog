@@ -108,7 +108,9 @@ If a publish target uses a `tokenEnv` other than `GH_RW_REPO_TOKEN`, expose that
 
 ## How does shiplog collect private repository activity?
 
-GitHub contribution groups are useful for discovering active repositories, but private repositories can be omitted from those grouped lists depending on token access and GitHub visibility rules. shiplog also calls GitHub's authenticated-user repository endpoint with `visibility=private` during daily and historical collect, and organization-specific tokens only add private repositories from organization listing. Public repositories are collected when GitHub reports contribution activity for them, not merely because the token can list them.
+GitHub contribution groups are useful for discovering active repositories, but private repositories can be omitted from those grouped lists depending on token access and GitHub visibility rules. Daily collect stays scoped to contribution-group repositories so the scheduled lane remains short and predictable.
+
+Historical backfill has two modes. The default `fast` mode uses contribution groups and avoids broad private repository enumeration so first-time setup finishes quickly. `deep` mode also reads authenticated private repository lists and organization-specific private repository lists, but those repositories are treated as candidates: shiplog probes them for matching account activity and only writes them to `repositories` after it finds commits, pull requests, issues, or reviews for the configured account. Public repositories are collected when GitHub reports contribution activity for them, not merely because a token can list them.
 
 If an organization blocks or requires separate authorization for the default classic token, add an organization-specific read token to `shiplog.config.json`:
 
@@ -125,7 +127,7 @@ If an organization blocks or requires separate authorization for the default cla
 
 Find the stable organization PAT token config with `bun run identity github organization-pat-token restricted-org`. Repository metadata, commits, pull requests, issues, and reviews for that organization will use the organization-specific token, even if the organization is later renamed.
 
-Private repository names are stored in the database when your token can read them, but they are not printed in workflow logs. Log lines use the provider repository id for private repositories, for example `id:R_abc123`, so a public Actions run does not leak private repository names.
+Private repository names are stored in the database when your token can read them and matching activity exists, but they are not printed in workflow logs. Log lines use the provider repository id for private repositories, for example `id:R_abc123`, so a public Actions run does not leak private repository names.
 
 ## Why did GitHub say it could not resolve a repository during backfill?
 
@@ -195,7 +197,9 @@ For set-and-forget consistency, the scheduled `drift` workflow checks a bounded 
 
 ## Why is historical backfill slow?
 
-Historical backfill can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps backfill under provider limits instead of racing into rate-limit failures. Private repository full scans limit commit queries to the repository's own created-to-pushed year window instead of the account's full lifetime.
+Historical backfill can make many provider API calls. For GitHub, shiplog deliberately throttles REST Search calls and waits when GitHub asks the client to retry later. This keeps backfill under provider limits instead of racing into rate-limit failures.
+
+Use `fast` mode for first value. It skips broad private repository candidate scans and asks GitHub for commits authored by the configured account, which avoids walking unrelated default-branch history on large repositories. Use `deep` mode later when you want slower reconciliation for co-authored commits and readable private repositories that GitHub omitted from contribution groups. Deep-mode private repository full scans limit commit queries to the repository's own created-to-pushed year window instead of the account's full lifetime.
 
 GitHub Search exposes at most the first 1000 matches for one query. shiplog splits large date-bounded searches into smaller windows; if one day still reaches that ceiling, it logs a warning so the gap is visible.
 
@@ -216,7 +220,8 @@ Historical backfill is designed to be resumable:
 - `accounts.last_successful_collect_on` stays null until the complete historical collect succeeds.
 - Most writes use database upserts or uniqueness constraints.
 - Repeated rows are deduplicated on rerun.
-- Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_REPOSITORY_LIMIT`, `BACKFILL_MAX_MINUTES`, or the backfill workflow's matching inputs to process large accounts in smaller chunks. The manual backfill workflow defaults to `repository_limit=25` and `max_minutes=45`.
+- Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_MODE`, `BACKFILL_REPOSITORY_LIMIT`, `BACKFILL_MAX_MINUTES`, or the backfill workflow's matching inputs to choose the fast or deep path and process large accounts in smaller chunks. The manual backfill workflow defaults to `mode=fast`, `repository_limit=25`, and `max_minutes=45`.
+- The manual backfill workflow also sets `BACKFILL_REQUIRE_COMPLETE=true`. If a run pauses because of repository or time limits, the workflow ends unsuccessfully on purpose so the render workflow does not publish partial historical data. Rerun backfill until it reports completion.
 - If a single repository still gets a retryable provider error after request retries are exhausted, shiplog marks that repository `retry_wait`, continues with other repositories, and leaves the account checkpoint unchanged so a later run can retry the incomplete repository. Reruns skip completed repository sub-steps before retrying the failed work.
 
 Partial progress from the failed run is useful and should normally be kept.

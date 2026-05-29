@@ -167,7 +167,7 @@ Repository-level historical ingestion progress for an account.
 | `repository_id`       | `BIGINT`      | Required reference to `repositories.id`.                                                                                            |
 | `backfill_through_on` | `DATE`        | Historical target date this repository was backfilled through.                                                                      |
 | `status`              | `TEXT`        | Backfill state. Must be `queued`, `running`, `retry_wait`, `succeeded`, `skipped_permanent`, `failed_permanent`, or `blocked_auth`. |
-| `completed_steps`     | `TEXT`        | Comma-separated repository sub-steps that finished before final repository success.                                                 |
+| `completed_steps`     | `TEXT`        | Comma-separated repository sub-steps that finished before final repository success; commit steps are mode-aware.                    |
 | `completed_at`        | `TIMESTAMPTZ` | When the repository backfill finished successfully, when available.                                                                 |
 | `last_error`          | `TEXT`        | Last failure message, when available.                                                                                               |
 | `created_at`          | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.                                                             |
@@ -177,6 +177,7 @@ Constraints and indexes:
 
 - `UNIQUE (account_id, repository_id, backfill_through_on)` stores one backfill state row per account, repository, and target date.
 - Chunked backfill runs use this state to skip completed and permanently skipped repositories before spending their repository or time budget on unfinished work.
+- Fast backfill records authored commit steps as `commits_authored:<year>`; deep backfill records credited/co-author-compatible steps as `commits:<year>`, so a later deep run can repair co-authored commits after a fast run.
 - Retryable provider failures are stored with `status = 'retry_wait'`; later backfill runs retry those repositories, skip completed sub-steps, and keep the account checkpoint unchanged until they succeed.
 - `idx_repository_backfill_state_account_status` speeds account-scoped background work queries.
 

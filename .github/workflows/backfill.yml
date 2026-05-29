@@ -3,6 +3,14 @@ name: backfill
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'Backfill mode: fast skips expensive private candidate and co-author scans; deep reconciles them'
+        required: false
+        default: 'fast'
+        type: choice
+        options:
+          - fast
+          - deep
       repository_limit:
         description: 'Maximum unfinished repositories to process in this run'
         required: false
@@ -64,5 +72,7 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          BACKFILL_MODE: ${{ github.event.inputs.mode }}
           BACKFILL_REPOSITORY_LIMIT: ${{ github.event.inputs.repository_limit }}
           BACKFILL_MAX_MINUTES: ${{ github.event.inputs.max_minutes }}
+          BACKFILL_REQUIRE_COMPLETE: 'true'

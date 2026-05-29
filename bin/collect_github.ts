@@ -17,7 +17,6 @@ import type {
   GitHubCommitHistory,
   GitHubContributionsCollection,
   GitHubRepositoryNode,
-  GitHubRestRepository,
   GitHubSearchPullRequestItem
 } from '../lib/providers/github/types.ts'
 import * as upserts from '../lib/upserts.ts'
@@ -64,23 +63,6 @@ export async function run(args: CollectArgs): Promise<void> {
     ignoredRepositories,
     ignoredOrganizations
   )
-  await collectAccessiblePrivateRepositories(
-    rest,
-    activeRepositories,
-    ignoredRepositories,
-    ignoredOrganizations
-  )
-  for (const organization of organizationTokens) {
-    const clients = organizationClients.get(organization.externalId)
-    if (!clients) continue
-    await collectOrganizationRepositories(
-      clients.rest,
-      organization.externalLogin,
-      activeRepositories,
-      ignoredRepositories,
-      ignoredOrganizations
-    )
-  }
 
   const repositoryCount = activeRepositories.length
   let completedRepositories = 0
@@ -236,78 +218,6 @@ export function collectActiveRepositories(
   }
 
   return [...repositories.values()]
-}
-
-async function collectAccessiblePrivateRepositories(
-  rest: RestClient,
-  repositories: GitHubRepositoryNode[],
-  ignoredRepositories: Set<string>,
-  ignoredOrganizations: Set<string>
-): Promise<void> {
-  const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>(
-    repositories.map((repository) => [repository.id, repository])
-  )
-
-  for (let page = 1; ; page += 1) {
-    const privateRepositories = await rest<GitHubRestRepository[]>('/user/repos', {
-      visibility: 'private',
-      affiliation: 'owner,collaborator,organization_member',
-      sort: 'full_name',
-      direction: 'asc',
-      per_page: 100,
-      page
-    })
-
-    for (const repository of privateRepositories) {
-      const repositoryNode = translate.repositoryFromRestRepository(repository)
-      if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
-        continue
-      if (repositoriesByExternalId.has(repository.node_id)) continue
-      repositoriesByExternalId.set(repository.node_id, repositoryNode)
-    }
-
-    if (privateRepositories.length < 100) break
-  }
-
-  repositories.splice(0, repositories.length, ...repositoriesByExternalId.values())
-}
-
-async function collectOrganizationRepositories(
-  rest: RestClient,
-  organization: string,
-  repositories: GitHubRepositoryNode[],
-  ignoredRepositories: Set<string>,
-  ignoredOrganizations: Set<string>
-): Promise<void> {
-  const repositoriesByExternalId = new Map<string, GitHubRepositoryNode>(
-    repositories.map((repository) => [repository.id, repository])
-  )
-
-  for (let page = 1; ; page += 1) {
-    const organizationRepositories = await rest<GitHubRestRepository[]>(
-      `/orgs/${organization}/repos`,
-      {
-        type: 'all',
-        sort: 'full_name',
-        direction: 'asc',
-        per_page: 100,
-        page
-      }
-    )
-
-    for (const repository of organizationRepositories) {
-      const repositoryNode = translate.repositoryFromRestRepository(repository)
-      if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
-        continue
-      if (repositoriesByExternalId.has(repository.node_id)) continue
-      if (!repository.private) continue
-      repositoriesByExternalId.set(repository.node_id, repositoryNode)
-    }
-
-    if (organizationRepositories.length < 100) break
-  }
-
-  repositories.splice(0, repositories.length, ...repositoriesByExternalId.values())
 }
 
 async function upsertRepositorySnapshot(

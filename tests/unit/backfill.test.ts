@@ -12,6 +12,8 @@ import * as upserts from '../../lib/upserts.ts'
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
 const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
 const originalGitHubToken = process.env.GH_RO_CLASSIC_TOKEN
+const originalBackfillMode = process.env.BACKFILL_MODE
+const originalBackfillRequireComplete = process.env.BACKFILL_REQUIRE_COMPLETE
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
@@ -27,6 +29,16 @@ afterEach(async () => {
     delete process.env.GH_RO_CLASSIC_TOKEN
   } else {
     process.env.GH_RO_CLASSIC_TOKEN = originalGitHubToken
+  }
+  if (originalBackfillMode === undefined) {
+    delete process.env.BACKFILL_MODE
+  } else {
+    process.env.BACKFILL_MODE = originalBackfillMode
+  }
+  if (originalBackfillRequireComplete === undefined) {
+    delete process.env.BACKFILL_REQUIRE_COMPLETE
+  } else {
+    process.env.BACKFILL_REQUIRE_COMPLETE = originalBackfillRequireComplete
   }
 })
 
@@ -60,6 +72,7 @@ test('run with repository limit advances checkpoint only after all repositories 
   await backfill.run({
     config: shiplogConfig(),
     now: new Date('2026-05-08T00:00:00Z'),
+    backfillMode: 'deep',
     repositoryLimit: 1,
     fetch
   })
@@ -74,6 +87,7 @@ test('run with repository limit advances checkpoint only after all repositories 
   await backfill.run({
     config: shiplogConfig(),
     now: new Date('2026-05-08T00:00:00Z'),
+    backfillMode: 'deep',
     repositoryLimit: 1,
     fetch
   })
@@ -89,6 +103,32 @@ test('run with repository limit advances checkpoint only after all repositories 
   expect(partialState.rows[0]!.count).toBe(1)
   expect(dateOnly(completeAccounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
   expect(completeState.rows[0]!.count).toBe(2)
+})
+
+test('run can require completion before exiting successfully', async () => {
+  await seedAccount()
+  const fetch = mockGitHubFetch({ includePrivateRepository: true })
+
+  await expect(
+    backfill.run({
+      config: shiplogConfig(),
+      now: new Date('2026-05-08T00:00:00Z'),
+      backfillMode: 'deep',
+      repositoryLimit: 1,
+      requireComplete: true,
+      fetch
+    })
+  ).rejects.toThrow(/paused with 1 repository remaining/i)
+
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  const state = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+  )
+
+  expect(accounts.rows[0]!.last_successful_collect_on).toBeNull()
+  expect(state.rows[0]!.count).toBe(1)
 })
 
 test('run throws when account has not been initialized', async () => {
@@ -173,8 +213,12 @@ function mockGitHubFetch(options: { includePrivateRepository?: boolean } = {}): 
         return jsonResponse({ data: githubContributionsFixture() })
       }
 
-      if (body.query.includes('query RepositoryCommits')) {
-        expect(body.variables?.author).toBeUndefined()
+      if (isRepositoryCommitsQuery(body.query)) {
+        if (body.query.includes('RepositoryAuthoredCommits')) {
+          expect(body.variables?.author).toEqual({ id: 'U_TEST_1' })
+        } else {
+          expect(body.variables?.author).toBeUndefined()
+        }
         const name = body.variables?.name
         return jsonResponse({
           data: {
@@ -250,6 +294,10 @@ function mockGitHubFetch(options: { includePrivateRepository?: boolean } = {}): 
 
     return new Response(`unexpected request: ${url}`, { status: 500 })
   }) as typeof fetch
+}
+
+function isRepositoryCommitsQuery(query: string): boolean {
+  return query.includes('RepositoryCommits') || query.includes('RepositoryAuthoredCommits')
 }
 
 function privateRepositoryFixture(): import('../../lib/providers/github/types.ts').GitHubRestRepository {

@@ -13,6 +13,8 @@ export interface VendorOrganizationToken {
   tokenEnv: string
 }
 
+export type BackfillMode = 'fast' | 'deep'
+
 export interface CollectArgs {
   identity: VendorIdentity
   token: string
@@ -30,6 +32,7 @@ export interface BackfillArgs {
   ignoreOrganizationIds?: string[]
   ignoreRepositoryIds?: string[]
   throughDate?: string
+  backfillMode?: BackfillMode
   repositoryLimit?: number
   maxRuntimeMs?: number
   fetch?: Fetcher
