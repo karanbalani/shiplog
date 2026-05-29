@@ -300,6 +300,7 @@ async function collectOrganizationRepositories(
       if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
         continue
       if (repositoriesByExternalId.has(repository.node_id)) continue
+      if (!repository.private) continue
       repositoriesByExternalId.set(repository.node_id, repositoryNode)
     }
 

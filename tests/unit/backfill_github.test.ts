@@ -373,6 +373,39 @@ test('run backfills accessible private repositories outside contribution groups'
   expect(logs.join('\n')).not.toContain('octocat/secret')
 })
 
+test('run skips accessible public repositories outside contribution groups', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+
+  await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: mockGitHubFetchWithAccessiblePublicRepository()
+  })
+
+  const repositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories'
+  )
+  const repositoryBackfillState = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+  )
+
+  expect(repositories.rows[0]!.count).toBe(0)
+  expect(repositoryBackfillState.rows[0]!.count).toBe(0)
+})
+
 test('run limits full private repository commit scans to repository active years', async () => {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
@@ -1240,6 +1273,70 @@ function mockGitHubFetchWithPrivateRepository(): typeof fetch {
             node_id: 'U_TEST_1',
             type: 'User',
             avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4'
+          }
+        }
+      ])
+    }
+
+    if (parsed.pathname === '/search/issues') {
+      return jsonResponse({ total_count: 0, items: [] })
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
+function mockGitHubFetchWithAccessiblePublicRepository(): typeof fetch {
+  const currentYear = new Date().getUTCFullYear()
+
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+
+      if (body.query.includes('query UserById')) {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'U_TEST_1',
+              login: 'octocat',
+              name: 'Octocat',
+              url: 'https://github.com/octocat',
+              createdAt: `${currentYear}-01-01T00:00:00Z`
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({ data: githubContributionsWithRepositoryActivity({}) })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      expect(parsed.searchParams.get('visibility')).toBe('private')
+      return jsonResponse([
+        {
+          node_id: 'R_SIGNOZ_PUBLIC_1',
+          name: 'Awesome-OpenTelemetry',
+          full_name: 'SigNoz/Awesome-OpenTelemetry',
+          private: false,
+          fork: false,
+          archived: false,
+          language: 'Markdown',
+          stargazers_count: 1200,
+          forks_count: 100,
+          created_at: '2024-01-01T00:00:00Z',
+          pushed_at: '2026-05-07T12:00:00Z',
+          default_branch: 'main',
+          html_url: 'https://github.com/SigNoz/Awesome-OpenTelemetry',
+          description: 'Public org repository visible to the token',
+          owner: {
+            login: 'SigNoz',
+            node_id: 'O_SIGNOZ_1',
+            type: 'Organization',
+            avatar_url: 'https://avatars.githubusercontent.com/u/999?v=4'
           }
         }
       ])

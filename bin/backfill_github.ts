@@ -104,7 +104,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     })
   }
 
-  await collectAccessibleRepositories(
+  await collectAccessiblePrivateRepositories(
     rest,
     repositoriesByExternalId,
     ignoredRepositories,
@@ -600,7 +600,7 @@ function collectActiveRepositories(
   }
 }
 
-async function collectAccessibleRepositories(
+async function collectAccessiblePrivateRepositories(
   rest: RestClient,
   repositoriesByExternalId: Map<string, RepositoryBackfillPlan>,
   ignoredRepositories: Set<string>,
@@ -608,7 +608,7 @@ async function collectAccessibleRepositories(
 ): Promise<void> {
   for (let page = 1; ; page += 1) {
     const repositories = await rest<GitHubRestRepository[]>('/user/repos', {
-      visibility: 'all',
+      visibility: 'private',
       affiliation: 'owner,collaborator,organization_member',
       sort: 'full_name',
       direction: 'asc',
@@ -620,6 +620,12 @@ async function collectAccessibleRepositories(
       const repositoryNode = translate.repositoryFromRestRepository(repository)
       if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
         continue
+      const existing = repositoriesByExternalId.get(repository.node_id)
+      if (existing) {
+        if (repository.private) existing.fullScan = true
+        continue
+      }
+      if (!repository.private) continue
       const plan = upsertRepositoryPlan(
         repositoriesByExternalId,
         repositoryNode,
@@ -653,6 +659,12 @@ async function collectOrganizationRepositories(
       const repositoryNode = translate.repositoryFromRestRepository(repository)
       if (shouldIgnoreRepository(repositoryNode, ignoredRepositories, ignoredOrganizations))
         continue
+      const existing = repositoriesByExternalId.get(repository.node_id)
+      if (existing) {
+        if (repository.private) existing.fullScan = true
+        continue
+      }
+      if (!repository.private) continue
       const plan = upsertRepositoryPlan(
         repositoriesByExternalId,
         repositoryNode,

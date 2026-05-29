@@ -108,7 +108,7 @@ If a publish target uses a `tokenEnv` other than `GH_RW_REPO_TOKEN`, expose that
 
 ## How does shiplog collect private repository activity?
 
-GitHub contribution groups are useful for discovering active repositories, but private repositories can be omitted from those grouped lists depending on token access and GitHub visibility rules. shiplog also calls GitHub's authenticated-user repository endpoint with `visibility=private` during daily collect and `visibility=all` during historical collect, then processes those repositories through the same normal ingestion path as public repositories.
+GitHub contribution groups are useful for discovering active repositories, but private repositories can be omitted from those grouped lists depending on token access and GitHub visibility rules. shiplog also calls GitHub's authenticated-user repository endpoint with `visibility=private` during daily and historical collect, and organization-specific tokens only add private repositories from organization listing. Public repositories are collected when GitHub reports contribution activity for them, not merely because the token can list them.
 
 If an organization blocks or requires separate authorization for the default classic token, add an organization-specific read token to `shiplog.config.json`:
 
