@@ -1,5 +1,6 @@
 import * as config from '../lib/config.ts'
 import * as db from '../lib/db.ts'
+import fs from 'node:fs'
 import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
 import { graphQLClient } from '../lib/providers/github/graphql.ts'
@@ -40,6 +41,7 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
   const maxRuntimeMs = backfillMaxRuntimeMs(options)
   const requireComplete = backfillRequireComplete(options)
   const incompleteRuns: string[] = []
+  const summaries: BackfillRunSummary[] = []
 
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await findAccount(accountConfig)
@@ -65,19 +67,32 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
       maxRuntimeMs,
       fetch: options.fetch
     } satisfies BackfillArgs)
+    const summary = normalizeBackfillResult(result)
+    summaries.push({
+      provider: accountConfig.provider,
+      login: refreshedAccount.external_login,
+      ...summary
+    })
 
-    if (backfillComplete(result)) {
+    if (summary.complete) {
       await upserts.markCollectSuccess(refreshedAccount.id, throughDate)
     } else {
-      const message = `[backfill] ${accountConfig.provider}/${refreshedAccount.external_login}: paused with ${formatRepositoryCount(result.repositoriesDeferred)} remaining; rerun backfill to continue`
+      const message = `[backfill] ${accountConfig.provider}/${refreshedAccount.external_login}: paused with ${formatRepositoryCount(summary.repositoriesDeferred)} remaining; rerun backfill to continue`
       logger.info(message)
       incompleteRuns.push(message)
     }
   }
 
+  writeBackfillStepSummary(throughDate, backfillMode, repositoryLimit, maxRuntimeMs, summaries)
+
   if (requireComplete && incompleteRuns.length > 0) {
     throw new Error(incompleteRuns.join('; '))
   }
+}
+
+interface BackfillRunSummary extends BackfillResult {
+  provider: string
+  login: string
 }
 
 function backfillModeOption(options: BackfillRunOptions): BackfillMode {
@@ -138,14 +153,65 @@ function minutesToMs(minutes: number): number {
   return Math.round(minutes * 60 * 1000)
 }
 
-function backfillComplete(
-  result: void | BackfillResult
-): result is void | (BackfillResult & { complete: true }) {
-  return !result || result.complete
+function formatDuration(ms: number): string {
+  const totalMinutes = Math.max(1, Math.round(ms / 60_000))
+  if (totalMinutes < 60) return `${totalMinutes}m`
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+}
+
+function normalizeBackfillResult(result: void | BackfillResult): BackfillResult {
+  return (
+    result ?? {
+      complete: true,
+      repositoriesDiscovered: 0,
+      repositoriesProcessed: 0,
+      repositoriesDeferred: 0
+    }
+  )
 }
 
 function formatRepositoryCount(count: number): string {
   return `${count} ${count === 1 ? 'repository' : 'repositories'}`
+}
+
+function writeBackfillStepSummary(
+  throughDate: string,
+  backfillMode: BackfillMode,
+  repositoryLimit: number | undefined,
+  maxRuntimeMs: number | undefined,
+  summaries: BackfillRunSummary[]
+): void {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY
+  if (!summaryPath) return
+
+  const rows = summaries
+    .map((summary) => {
+      const status = summary.complete ? 'complete' : 'paused'
+      return `| ${summary.provider}/${summary.login} | ${status} | ${summary.repositoriesDiscovered} | ${summary.repositoriesProcessed} | ${summary.repositoriesDeferred} |`
+    })
+    .join('\n')
+  const budget = [
+    repositoryLimit ? `repository limit: ${repositoryLimit}` : null,
+    maxRuntimeMs ? `time limit: ${formatDuration(maxRuntimeMs)}` : null
+  ]
+    .filter(Boolean)
+    .join(', ')
+  const lines = [
+    '## History backfill',
+    '',
+    `Mode: ${backfillMode}`,
+    `Through: ${throughDate}`,
+    ...(budget ? [`Budget: ${budget}`] : []),
+    '',
+    '| Account | Status | Discovered | Processed | Deferred |',
+    '| --- | --- | ---: | ---: | ---: |',
+    rows || '| none | complete | 0 | 0 | 0 |',
+    ''
+  ]
+
+  fs.appendFileSync(summaryPath, `${lines.join('\n')}\n`)
 }
 
 export async function findAccount(accountConfig: ShiplogCollectAccountConfig): Promise<AccountRow> {

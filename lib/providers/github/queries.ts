@@ -168,6 +168,22 @@ query RepositoryAuthoredCommits($owner: String!, $name: String!, $author: Commit
 }
 `
 
+export const REPOSITORY_AUTHORED_COMMIT_EXISTS_IN_WINDOW = `
+query RepositoryAuthoredCommitsExist($owner: String!, $name: String!, $author: CommitAuthor!, $since: GitTimestamp!, $until: GitTimestamp!) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef {
+      target {
+        ... on Commit {
+          history(first: 1, author: $author, since: $since, until: $until) {
+            nodes { oid }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
 export const REPOSITORY_LANGUAGES = `
 query RepositoryLanguages($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {

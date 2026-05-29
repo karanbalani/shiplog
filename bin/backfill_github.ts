@@ -6,11 +6,7 @@ import {
   GitHubGraphQLError,
   isGitHubRepositoryUnavailableError
 } from '../lib/providers/github/errors.ts'
-import {
-  privateRepositoryFailure,
-  repositoryErrorSummary,
-  repositoryLogLabel
-} from '../lib/providers/github/logging.ts'
+import { repositoryErrorSummary, repositoryLogLabel } from '../lib/providers/github/logging.ts'
 import {
   fetchPullRequestReviews,
   fetchSearchIssueItems,
@@ -48,6 +44,7 @@ const BACKFILL_STEP_ISSUES = 'issues'
 const BACKFILL_STEP_PULL_REQUEST_REVIEWS = 'pull_request_reviews'
 const BACKFILL_STEP_SNAPSHOT = 'snapshot'
 const DEFAULT_BACKFILL_MODE: BackfillMode = 'fast'
+const PRIVATE_CANDIDATE_CREDITED_PROBE_PAGE_LIMIT = 2
 
 type CommitScanMode = 'authored' | 'credited'
 
@@ -113,22 +110,36 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
   }
 
   if (backfillMode === 'deep') {
-    await collectAccessiblePrivateRepositories(
-      rest,
-      repositoriesByExternalId,
-      ignoredRepositories,
-      ignoredOrganizations
-    )
-    for (const organization of organizationTokens) {
-      const clients = organizationClients.get(organization.externalId)
-      if (!clients) continue
-      await collectOrganizationRepositories(
-        clients.rest,
-        organization.externalLogin,
+    try {
+      await collectAccessiblePrivateRepositories(
+        rest,
         repositoriesByExternalId,
         ignoredRepositories,
         ignoredOrganizations
       )
+    } catch (error) {
+      if (!isSkippableAccessError(error)) throw error
+      logger.warn(
+        `[backfill] github/${identity.externalLogin}: skipped default private repository discovery for this run (${errorMessage(error)})`
+      )
+    }
+    for (const organization of organizationTokens) {
+      const clients = organizationClients.get(organization.externalId)
+      if (!clients) continue
+      try {
+        await collectOrganizationRepositories(
+          clients.rest,
+          organization.externalLogin,
+          repositoriesByExternalId,
+          ignoredRepositories,
+          ignoredOrganizations
+        )
+      } catch (error) {
+        if (!isSkippableAccessError(error)) throw error
+        logger.warn(
+          `[backfill] github/${identity.externalLogin}: skipped private repository discovery for organization ${organization.externalLogin} in this run (${errorMessage(error)})`
+        )
+      }
     }
   }
 
@@ -258,19 +269,29 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
       const errorSummary = repositoryErrorSummary(repositoryNode, error)
 
       if (isGitHubRepositoryUnavailableError(error)) {
-        if (repositoryNode.isPrivate) throw privateRepositoryFailure(repositoryNode)
-
-        repositoryStatus = 'skipped'
-        if (repository) {
-          await upserts.markRepositoryBackfillSkippedPermanent(
-            identity.accountId,
-            repository.id,
-            observedOn,
-            errorSummary
+        if (repositoryNode.isPrivate) {
+          repositoryStatus = 'skipped for now'
+          logger.warn(
+            `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is inaccessible in this run; skipping without recording a permanent state (${errorSummary})`
+          )
+        } else {
+          repositoryStatus = 'skipped'
+          if (repository) {
+            await upserts.markRepositoryBackfillSkippedPermanent(
+              identity.accountId,
+              repository.id,
+              observedOn,
+              errorSummary
+            )
+          }
+          logger.warn(
+            `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is unavailable; skipping enrichment (${errorSummary})`
           )
         }
+      } else if (repositoryNode.isPrivate && isSkippableAccessError(error)) {
+        repositoryStatus = 'skipped for now'
         logger.warn(
-          `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is unavailable; skipping enrichment (${errorSummary})`
+          `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is inaccessible in this run; skipping without recording a permanent state (${errorSummary})`
         )
       } else if (isRetryableRepositoryBackfillError(error)) {
         repositoryStatus = 'retry later'
@@ -992,6 +1013,41 @@ function isRetryableRepositoryBackfillError(error: unknown): boolean {
   return false
 }
 
+function isSkippableAccessError(error: unknown): boolean {
+  if (isRetryableRepositoryBackfillError(error)) return false
+
+  if (error instanceof HttpError) {
+    return [401, 403, 404].includes(error.status)
+  }
+
+  if (error instanceof GitHubGraphQLError) {
+    return error.messages.some(isSkippableAccessMessage)
+  }
+
+  if (error instanceof Error) {
+    return isSkippableAccessMessage(error.message)
+  }
+
+  return false
+}
+
+function isSkippableAccessMessage(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('resource not accessible') ||
+    normalized.includes('could not resolve to a repository') ||
+    normalized.includes('repository not found') ||
+    normalized.includes('not found')
+  )
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof HttpError) return `HTTP ${error.status}: ${error.body.slice(0, 160)}`
+  if (error instanceof GitHubGraphQLError) return error.messages.join('; ')
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
 async function ingestCommits(
   graphQL: GraphQLClient,
   repositoryId: number,
@@ -1042,18 +1098,27 @@ async function privateCandidateHasActivity(
 ): Promise<boolean> {
   for (const year of commitYearsForPlan(repositoryPlan, years)) {
     const { from, to } = dates.yearWindow(year)
-    if (
-      await repositoryHasMatchingCommit(
-        clients.graphQL,
-        owner,
-        name,
-        identity,
-        from,
-        to,
-        commitScanMode
-      )
-    ) {
+    if (await repositoryHasAuthoredCommit(clients.graphQL, owner, name, identity, from, to))
       return true
+  }
+
+  if (commitScanMode === 'credited') {
+    for (const year of commitYearsForPlan(repositoryPlan, years)) {
+      const { from, to } = dates.yearWindow(year)
+      if (
+        await repositoryHasMatchingCommit(
+          clients.graphQL,
+          owner,
+          name,
+          identity,
+          from,
+          to,
+          commitScanMode,
+          PRIVATE_CANDIDATE_CREDITED_PROBE_PAGE_LIMIT
+        )
+      ) {
+        return true
+      }
     }
   }
 
@@ -1093,6 +1158,36 @@ async function privateCandidateHasActivity(
   return false
 }
 
+async function repositoryHasAuthoredCommit(
+  graphQL: GraphQLClient,
+  owner: string,
+  name: string,
+  identity: VendorIdentity,
+  since: string,
+  until: string
+): Promise<boolean> {
+  const data = await graphQL<RepositoryCommitExistsResponse>(
+    queries.REPOSITORY_AUTHORED_COMMIT_EXISTS_IN_WINDOW,
+    {
+      owner,
+      name,
+      author: { id: identity.externalId },
+      since,
+      until
+    }
+  )
+
+  return Boolean(data.repository?.defaultBranchRef?.target?.history.nodes.length)
+}
+
+interface RepositoryCommitExistsResponse {
+  repository: {
+    defaultBranchRef: {
+      target: { history: { nodes: Array<{ oid: string }> } } | null
+    } | null
+  } | null
+}
+
 async function repositoryHasMatchingCommit(
   graphQL: GraphQLClient,
   owner: string,
@@ -1100,11 +1195,15 @@ async function repositoryHasMatchingCommit(
   identity: VendorIdentity,
   since: string,
   until: string,
-  commitScanMode: CommitScanMode
+  commitScanMode: CommitScanMode,
+  maxPages = Number.POSITIVE_INFINITY
 ): Promise<boolean> {
   let cursor: string | null = null
+  let pages = 0
 
   for (;;) {
+    if (pages >= maxPages) return false
+    pages += 1
     const history = await fetchCommitHistory(
       graphQL,
       owner,

@@ -25,14 +25,14 @@ Completed so far:
 - Schema-aware database upsert helpers and daily repository rollups in `lib/upserts.ts`
 - GitHub daily collector in `bin/collect_github.ts`
 - Internal GitHub historical collection strategy in `bin/backfill_github.ts`
-- Backfill dispatcher in `bin/backfill.ts` that runs historical collection outside the daily collect workflow
+- Backfill dispatcher in `bin/backfill.ts` that runs progressive historical collection
 - Repair dispatcher in `bin/repair.ts` that reruns specific daily windows without moving checkpoints
 - Drift dispatcher in `bin/drift.ts` that checks stored daily summaries and queues repair work
 - Maintenance dispatcher in `bin/maintenance.ts` that drains queued background repair work
 - Init dispatcher in `bin/init.ts` that creates and refreshes `users`/`accounts`
 - Collect dispatcher in `bin/collect.ts` that runs daily catch-up and rolling lookback only
 - README renderer in `bin/render.ts`
-- GitHub Actions workflows for one-time account init, historical backfill, daily collection, manual repair, drift detection, and maintenance
+- GitHub Actions lanes for freshness, progressive history, integrity repair, and CI
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -155,7 +155,7 @@ For GitHub Actions, store the config as a repository variable named `SHIPLOG_CON
 base64 < shiplog.config.json | tr -d '\n'
 ```
 
-Then decode it inside the workflow before running `bun run init`, `bun run backfill`, `bun run collect`, `bun run repair`, `bun run drift`, `bun run maintenance`, or `bun run render`:
+Then decode it inside the workflow before running shiplog commands:
 
 ```yaml
 - name: Write shiplog config
@@ -178,11 +178,18 @@ Token responsibilities:
 - `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org` so private repository activity is available.
 - `GH_RW_REPO_TOKEN` authenticates README publishing commits for configured publish targets.
 
-If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_PAT_TOKEN`, add the stable organization PAT token entry to `collect.accounts[0].organizationPatTokens`, and expose it in the workflow env next to `GH_RO_CLASSIC_TOKEN`.
+If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_PAT_TOKEN` and add the stable organization PAT token entry to `collect.accounts[0].organizationPatTokens`. The bundled workflows expose that example secret next to `GH_RO_CLASSIC_TOKEN`; add more env mappings if your config uses additional token names.
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
 
-After setting those values, run the `init` workflow once from GitHub Actions. It migrates and creates the configured account rows without collecting activity. Then run the separate `backfill` workflow to collect historical activity. Backfill defaults to `fast` mode so first-time runs prioritize contribution-group repositories and primary-authored commits; run `deep` mode when you want slower reconciliation for co-authored commits and readable private repositories that GitHub omitted from contribution groups. During backfill, shiplog logs discovery progress, repository progress, elapsed time, and an approximate ETA. If `backfill` fails before completion, fix the error and rerun it; writes are upserted, completed repositories are skipped on the next run, retryable repository failures are recorded for a later run, and the account checkpoint advances only after backfill completes. For large accounts, set the backfill workflow's optional `repository_limit` or `max_minutes` input to process unfinished repositories in smaller chunks. The `collect` workflow then runs daily or manually. Normal collect runs catch up from each account's `last_successful_collect_on` checkpoint through UTC yesterday, then rechecks the recent `collect.lookbackDays` window. Use the `repair` workflow for explicit one-off date or range repair without moving the checkpoint. The `drift` workflow compares stored daily summaries with provider totals and queues repairs when data changes or is missing. The `maintenance` workflow drains queued background repair work separately from the daily lane. When `collect`, `backfill`, `repair`, or `maintenance` succeeds, the `render` workflow regenerates `rendered.md` and publishes it to each configured target. The separate `ci` workflow handles formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
+After setting those values, run the `freshness` workflow once from GitHub Actions. It migrates, initializes accounts, collects current activity, runs queued maintenance, renders `rendered.md`, and publishes it. From there, the default lanes keep the database improving:
+
+- `freshness` runs every 6 hours and keeps normal recent activity current.
+- `history` runs every 2 hours, defaults to `deep`, and makes bounded historical progress with `repository_limit=10` and `max_minutes=45`.
+- `integrity` runs daily to detect drift, queue repair work, run maintenance, render, and publish. It can also be dispatched manually for explicit `repair` ranges.
+- `ci` handles formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
+
+Historical work is intentionally progressive. If `history` pauses because of its repository or time budget, the workflow still succeeds, writes a GitHub Actions summary, renders the best current database state, and resumes remaining repository work on the next scheduled run. Completed repository sub-steps are skipped on rerun, retryable repository failures are recorded for later, and historical progress is tracked in `repository_backfill_state`.
 
 ## Development Commands
 
@@ -290,7 +297,7 @@ Run historical backfill directly:
 bun run backfill
 ```
 
-`backfill` requires initialized account rows, runs historical collection through UTC yesterday, records repository-level backfill state, and advances `accounts.last_successful_collect_on` after all discovered repositories are complete. Set `BACKFILL_MODE=fast` for the default quick path, or `BACKFILL_MODE=deep` to run slower reconciliation that scans for co-authored commits and probes readable private repositories that GitHub did not return in contribution groups. Deep-mode private repository candidates are not written to `repositories` unless shiplog finds matching account activity. Set `BACKFILL_REPOSITORY_LIMIT=25` to process only that many unfinished repositories in one run, or `BACKFILL_MAX_MINUTES=20` to pause before starting another repository after the run exceeds that budget. If one repository hits an exhausted retryable provider error, such as a persistent 503, that repository is marked `retry_wait`, the remaining repositories continue, and the account checkpoint stays unchanged until a later run completes everything. Reruns skip completed repository sub-steps such as finished commit years before retrying the failed work. Rerun backfill until it reports completion. The GitHub Actions `backfill` workflow exposes the same path manually and defaults to `mode=fast`, `repository_limit=25`, and `max_minutes=45`; it also sets `BACKFILL_REQUIRE_COMPLETE=true` so a paused chunk does not trigger README rendering before historical collection is complete.
+`backfill` requires initialized account rows, runs historical collection through UTC yesterday, and records repository-level backfill state. Set `BACKFILL_MODE=fast` for the quick path, or `BACKFILL_MODE=deep` for wider reconciliation that checks co-authored commits and probes readable private repositories GitHub did not return in contribution groups. Deep-mode private repository candidates are not written to `repositories` unless shiplog finds matching account activity. For authored commits, that proof is a one-result default-branch history query per active repository year; co-author proof is bounded so private candidate checks do not become a full private-org crawl. Set `BACKFILL_REPOSITORY_LIMIT=25` to process only that many unfinished repositories in one run, or `BACKFILL_MAX_MINUTES=20` to pause before starting another repository after the run exceeds that budget. If one repository hits an exhausted retryable provider error, such as a persistent 503, that repository is marked `retry_wait`, the remaining repositories continue, and a later run can retry it without replaying completed repository sub-steps. If a private repository or organization token loses access, shiplog warns and skips that scope for the current run without recording permanent blocked state, so a refreshed token can pick it up later. The GitHub Actions `history` workflow runs this path every 2 hours with progressive defaults: `mode=deep`, `repository_limit=10`, and `max_minutes=45`.
 
 Collect activity and regenerate the README:
 
@@ -361,11 +368,11 @@ Project conventions live in `docs/CONVENTIONS.md`. Frequently asked setup and op
 
 The GitHub daily collector currently resolves configured stable IDs to current GitHub logins/names, ingests active repositories from GitHub contribution data, applies ignored repository/organization IDs, links GitHub organization-owned repositories to `organizations`, then writes commits, pull requests, pull request reviews, issues, repository snapshots, daily provider summaries, and daily repository activity rollups. It keeps the daily lane scoped to repositories GitHub reports as active; wider private repository and co-author reconciliation belongs to deep backfill. Commit ingestion counts commits where the configured GitHub account appears in the commit authors list, including `Co-authored-by` credits.
 
-The internal GitHub historical strategy resolves the stable account ID, uses the account creation year to walk contribution history by year, applies ignored repository/organization IDs, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date. Fast mode keeps this path focused on contribution-group repositories and primary-authored commit history. Deep mode enumerates readable private repository candidates and scans unfiltered commit history for co-author reconciliation. When a repository or time budget is set, it skips already-complete repositories, processes bounded unfinished repository work, records retryable repository failures as `retry_wait`, records completed repository sub-steps, leaves the account checkpoint unchanged if work remains, and lets the next run resume from repository state.
+The internal GitHub historical strategy resolves the stable account ID, uses the account creation year to walk contribution history by year, applies ignored repository/organization IDs, links GitHub organization-owned repositories to `organizations`, writes yearly provider summaries, enriches repository snapshots/languages, ingests historical commits/PRs/reviews/issues, and derives daily repository activity for every distinct event date. Fast mode keeps this path focused on contribution-group repositories and primary-authored commit history. Deep mode enumerates readable private repository candidates, proves account activity before promotion, and scans unfiltered commit history for co-author reconciliation only after that gate. When a repository or time budget is set, it skips already-complete repositories, processes bounded unfinished repository work, records retryable repository failures as `retry_wait`, records completed repository sub-steps, and lets the next run resume from repository state. Lost private or organization access is treated as a warning-only skip for the current run, not as permanent repository state.
 
 The init dispatcher reads `shiplog.config.json`, ensures the human `users` row exists, fetches provider account profile data, and writes `accounts`. It does not collect activity.
 
-The backfill dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, runs provider history through UTC yesterday, and advances the account checkpoint after successful historical collection. Fast mode is the default first-run path. Deep mode trades runtime for wider reconciliation of co-authored commits and private repository candidates.
+The backfill dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, and runs provider history through UTC yesterday. Fast mode is the quick path. Deep mode trades runtime for wider reconciliation of co-authored commits and private repository candidates.
 
 The collect dispatcher reads `shiplog.config.json`, resolves initialized `accounts` by stable provider ID, refreshes the current login, catches up every missing date through UTC yesterday, and rechecks the recent `collect.lookbackDays` window. It never runs historical backfill or manual repair; after each successful automatic date, it advances the account checkpoint.
 
