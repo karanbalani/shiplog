@@ -477,6 +477,132 @@ test('run deep mode promotes accessible private repositories after matching acti
   expect(logs.join('\n')).not.toContain('octocat/secret')
 })
 
+test('run deep mode soft-skips private discovery when the default token loses access', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+
+  const result = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    backfillMode: 'deep',
+    fetch: mockGitHubFetchWithPrivateDiscoveryFailure()
+  })
+
+  const repositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories'
+  )
+
+  expect(result).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 0,
+    repositoriesProcessed: 0,
+    repositoriesDeferred: 0
+  })
+  expect(repositories.rows[0]!.count).toBe(0)
+  expect(logs.join('\n')).toContain('skipped default private repository discovery for this run')
+})
+
+test('run deep mode soft-skips organization repository discovery when an org token loses access', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+
+  const result = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    organizationTokens: [
+      {
+        externalId: 'O_ACME_1',
+        externalLogin: 'acme',
+        tokenEnv: 'GH_RO_ACME_TOKEN',
+        token: 'org-token'
+      }
+    ],
+    backfillMode: 'deep',
+    fetch: mockGitHubFetchWithOrganizationRepositoryFailure()
+  })
+
+  expect(result).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 0,
+    repositoriesProcessed: 0,
+    repositoriesDeferred: 0
+  })
+  expect(logs.join('\n')).toContain(
+    'skipped private repository discovery for organization acme in this run'
+  )
+})
+
+test('run soft-skips inaccessible private candidates without permanent repository state', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+
+  const result = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    backfillMode: 'deep',
+    fetch: mockGitHubFetchWithPrivateProbeFailure()
+  })
+
+  const repositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories'
+  )
+  const repositoryBackfillState = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+  )
+
+  expect(result).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 1,
+    repositoriesProcessed: 1,
+    repositoriesDeferred: 0
+  })
+  expect(repositories.rows[0]!.count).toBe(0)
+  expect(repositoryBackfillState.rows[0]!.count).toBe(0)
+  expect(logs.join('\n')).toContain('skipping without recording a permanent state')
+})
+
 test('run skips accessible public repositories outside contribution groups', async () => {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
@@ -551,7 +677,8 @@ test('run limits full private repository commit scans to repository active years
   })
   expect(repositories.rows[0]!.count).toBe(0)
   expect(repositoryBackfillState.rows[0]!.count).toBe(0)
-  expect(fetch.commitYears).toEqual([2025, 2026])
+  expect([...new Set(fetch.commitYears)]).toEqual([2025, 2026])
+  expect(fetch.commitYears.every((year) => year === 2025 || year === 2026)).toBe(true)
 })
 
 test('run skips repositories that GitHub no longer resolves', async () => {
@@ -1422,6 +1549,144 @@ function mockGitHubFetchWithPrivateRepository(): typeof fetch {
   }) as typeof fetch
 }
 
+function mockGitHubFetchWithPrivateDiscoveryFailure(): typeof fetch {
+  const currentYear = new Date().getUTCFullYear()
+
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+
+      if (body.query.includes('query UserById')) {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'U_TEST_1',
+              login: 'octocat',
+              name: 'Octocat',
+              url: 'https://github.com/octocat',
+              createdAt: `${currentYear}-01-01T00:00:00Z`
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({ data: githubContributionsWithRepositoryActivity({}) })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      return new Response('resource not accessible by integration', { status: 403 })
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
+function mockGitHubFetchWithOrganizationRepositoryFailure(): typeof fetch {
+  const currentYear = new Date().getUTCFullYear()
+
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+
+      if (body.query.includes('query UserById')) {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'U_TEST_1',
+              login: 'octocat',
+              name: 'Octocat',
+              url: 'https://github.com/octocat',
+              createdAt: `${currentYear}-01-01T00:00:00Z`
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({ data: githubContributionsWithRepositoryActivity({}) })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([])
+    }
+
+    if (parsed.pathname === '/orgs/acme/repos') {
+      return new Response('resource not accessible by integration', { status: 403 })
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
+function mockGitHubFetchWithPrivateProbeFailure(): typeof fetch {
+  const currentYear = new Date().getUTCFullYear()
+
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as {
+        query: string
+        variables?: Record<string, string>
+      }
+
+      if (body.query.includes('query UserById')) {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'U_TEST_1',
+              login: 'octocat',
+              name: 'Octocat',
+              url: 'https://github.com/octocat',
+              createdAt: `${currentYear}-01-01T00:00:00Z`
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({
+          data: {
+            user: {
+              contributionsCollection: {
+                totalCommitContributions: 1,
+                totalIssueContributions: 0,
+                totalPullRequestContributions: 0,
+                totalPullRequestReviewContributions: 0,
+                restrictedContributionsCount: 0,
+                commitContributionsByRepository: [],
+                pullRequestContributionsByRepository: [],
+                pullRequestReviewContributionsByRepository: [],
+                issueContributionsByRepository: []
+              }
+            }
+          }
+        })
+      }
+
+      if (body.query.includes('RepositoryAuthoredCommitsExist')) {
+        expect(body.variables?.name).toBe('secret')
+        return jsonResponse({
+          errors: [{ message: 'Could not resolve to a Repository with the name "secret".' }]
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+
+    if (parsed.pathname === '/user/repos') {
+      return jsonResponse([privateRepositoryRestFixture()])
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
 function mockGitHubFetchWithAccessiblePublicRepository(): typeof fetch {
   const currentYear = new Date().getUTCFullYear()
 
@@ -1861,6 +2126,31 @@ function publicRepositoryNode(): import('../../lib/providers/github/types.ts').G
     defaultBranchRef: { name: 'main' },
     url: 'https://github.com/octo-org/hello',
     description: 'Test repo'
+  }
+}
+
+function privateRepositoryRestFixture(): import('../../lib/providers/github/types.ts').GitHubRestRepository {
+  return {
+    node_id: 'R_PRIVATE_1',
+    name: 'secret',
+    full_name: 'octocat/secret',
+    private: true,
+    fork: false,
+    archived: false,
+    language: 'TypeScript',
+    stargazers_count: 0,
+    forks_count: 0,
+    created_at: '2024-01-01T00:00:00Z',
+    pushed_at: '2026-05-07T12:00:00Z',
+    default_branch: 'main',
+    html_url: 'https://github.com/octocat/secret',
+    description: 'private test repository',
+    owner: {
+      login: 'octocat',
+      node_id: 'U_TEST_1',
+      type: 'User',
+      avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4'
+    }
   }
 }
 

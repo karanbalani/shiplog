@@ -83,7 +83,7 @@ Fix it by using a role that can create objects in the target schema, or grant th
 GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
 ```
 
-After updating permissions, rerun the `init` workflow.
+After updating permissions, rerun the `freshness` workflow.
 
 ## Why did `ALTER SCHEMA public OWNER TO shiplog` fail?
 
@@ -104,13 +104,15 @@ The tokens have different jobs:
 
 Keeping them separate limits what each token can do.
 
-If a publish target uses a `tokenEnv` other than `GH_RW_REPO_TOKEN`, expose that secret in the `Publish rendered README` workflow step env. GitHub Actions secrets are not available to scripts unless the workflow maps them into environment variables.
+If a publish target uses a `tokenEnv` other than `GH_RW_REPO_TOKEN`, expose that secret in the `Publish rendered README` workflow step env. The bundled ingestion steps already expose the example `GH_RO_RESTRICTED_ORG_PAT_TOKEN` secret for organization-specific reads; add more env mappings if your config uses additional read-token names. GitHub Actions secrets are not available to scripts unless the workflow maps them into environment variables.
 
 ## How does shiplog collect private repository activity?
 
 GitHub contribution groups are useful for discovering active repositories, but private repositories can be omitted from those grouped lists depending on token access and GitHub visibility rules. Daily collect stays scoped to contribution-group repositories so the scheduled lane remains short and predictable.
 
-Historical backfill has two modes. The default `fast` mode uses contribution groups and avoids broad private repository enumeration so first-time setup finishes quickly. `deep` mode also reads authenticated private repository lists and organization-specific private repository lists, but those repositories are treated as candidates: shiplog probes them for matching account activity and only writes them to `repositories` after it finds commits, pull requests, issues, or reviews for the configured account. Public repositories are collected when GitHub reports contribution activity for them, not merely because a token can list them.
+Historical backfill has two modes. `fast` mode uses contribution groups and avoids broad private repository enumeration. `deep` mode also reads authenticated private repository lists and organization-specific private repository lists, but those repositories are treated as candidates: shiplog probes them for matching account activity and only writes them to `repositories` after it finds commits, pull requests, issues, or reviews for the configured account. Public repositories are collected when GitHub reports contribution activity for them, not merely because a token can list them.
+
+For private repository candidates, authored commit proof is quick: shiplog asks GitHub for one matching default-branch commit by the configured account per active repository year. Co-authored commit proof cannot be filtered as tightly by GitHub, so deep mode uses a small bounded scan before falling back to pull request, issue, and review probes. This keeps private access useful without turning every scheduled run into a full organization crawl.
 
 If an organization blocks or requires separate authorization for the default classic token, add an organization-specific read token to `shiplog.config.json`:
 
@@ -128,6 +130,8 @@ If an organization blocks or requires separate authorization for the default cla
 Find the stable organization PAT token config with `bun run identity github organization-pat-token restricted-org`. Repository metadata, commits, pull requests, issues, and reviews for that organization will use the organization-specific token, even if the organization is later renamed.
 
 Private repository names are stored in the database when your token can read them and matching activity exists, but they are not printed in workflow logs. Log lines use the provider repository id for private repositories, for example `id:R_abc123`, so a public Actions run does not leak private repository names.
+
+If a private repository, default token, or organization token loses access, shiplog logs a warning and skips that scope for the current run. It does not mark the org or repository permanently blocked, so refreshing the token or restoring access lets a later run continue from the data already stored.
 
 ## Why did GitHub say it could not resolve a repository during backfill?
 
@@ -163,9 +167,9 @@ If your config contains private repository names or other sensitive metadata, yo
 
 ## Which workflow should I run first?
 
-Run `init` first. It migrates the database and creates the configured accounts without collecting activity.
+Run `freshness` first. It migrates the database, initializes configured accounts, collects current activity, runs queued maintenance, renders `rendered.md`, and publishes it.
 
-After that, run `backfill` once to collect historical activity. Then `collect` runs daily or manually. Use `repair` for explicit one-off date or range repair. `drift` checks stored summaries against provider totals and queues repairs. `maintenance` drains queued background repair work. When `collect`, `backfill`, `repair`, or `maintenance` succeeds, `render` updates and publishes the README.
+After that, leave the scheduled lanes on. `freshness` keeps recent data current every 6 hours. `history` runs every 2 hours and makes bounded historical improvements. `integrity` runs daily to detect drift, queue repairs, drain maintenance work, render, and publish. Dispatch `integrity` manually with `operation=repair` for an explicit one-off date or range repair.
 
 ## What happens if daily collect fails for a few days?
 
@@ -177,7 +181,7 @@ accounts.last_successful_collect_on
 
 When the checkpoint is null, collect processes only UTC yesterday. After that, normal collect runs process every missing date from the day after that checkpoint through UTC yesterday, then recheck the recent `collect.lookbackDays` window. After each automatic run succeeds, shiplog advances the checkpoint. Complete historical ingestion belongs to `backfill`.
 
-This means a failed or skipped workflow can usually be fixed by rerunning `collect`; it will catch up the missed dates automatically. The rolling lookback defaults to 7 days and can be disabled with `collect.lookbackDays: 0`.
+This means a failed or skipped freshness run can usually be fixed by rerunning `freshness`; the collect command inside it will catch up missed dates automatically. The rolling lookback defaults to 7 days and can be disabled with `collect.lookbackDays: 0`.
 
 If you want to repair or inspect one specific day without moving the checkpoint, run:
 
@@ -191,9 +195,9 @@ If you want to repair a historical range without moving the checkpoint, run with
 REPAIR_FROM=2026-05-01 REPAIR_TO=2026-05-07 bun run repair
 ```
 
-In GitHub Actions, the manual `repair` workflow has optional `repair_date`, `repair_from`, and `repair_to` inputs for the same purpose. The next normal collect run may safely reprocess those dates if they are still part of the checkpoint gap or rolling lookback window.
+In GitHub Actions, dispatch `integrity` with `operation=repair` and optional `repair_date`, `repair_from`, and `repair_to` inputs for the same purpose. The next normal collect run may safely reprocess those dates if they are still part of the checkpoint gap or rolling lookback window.
 
-For set-and-forget consistency, the scheduled `drift` workflow checks a bounded recent window outside daily collect. It does not rewrite activity directly. It enqueues `maintenance_tasks` repair ranges for missing or mismatched daily summaries, chunks those repairs to at most 7 days by default, and the scheduled `maintenance` workflow processes that queue separately. If a maintenance run dies after claiming a task, a later maintenance run recovers stale locks after `MAINTENANCE_STALE_LOCK_MINUTES`, which defaults to `120`.
+For set-and-forget consistency, the scheduled `integrity` workflow checks a bounded recent window outside normal collect. It enqueues `maintenance_tasks` repair ranges for missing or mismatched daily summaries, chunks those repairs to at most 7 days by default, and then drains queued maintenance work. If a maintenance run dies after claiming a task, a later integrity or freshness run recovers stale locks after `MAINTENANCE_STALE_LOCK_MINUTES`, which defaults to `120`.
 
 ## Why is historical backfill slow?
 
@@ -211,20 +215,21 @@ During historical backfill, shiplog logs:
 - repository progress
 - elapsed time and approximate ETA
 
-## What should I do if `backfill` fails during historical collect?
+## What should I do if historical collection fails or pauses?
 
-Fix the error and rerun `backfill`. You do not need to truncate tables.
+Fix the error and rerun `history` or `bun run backfill`. You do not need to truncate tables.
 
 Historical backfill is designed to be resumable:
 
 - `accounts.last_successful_collect_on` stays null until the complete historical collect succeeds.
 - Most writes use database upserts or uniqueness constraints.
 - Repeated rows are deduplicated on rerun.
-- Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_MODE`, `BACKFILL_REPOSITORY_LIMIT`, `BACKFILL_MAX_MINUTES`, or the backfill workflow's matching inputs to choose the fast or deep path and process large accounts in smaller chunks. The manual backfill workflow defaults to `mode=fast`, `repository_limit=25`, and `max_minutes=45`.
-- The manual backfill workflow also sets `BACKFILL_REQUIRE_COMPLETE=true`. If a run pauses because of repository or time limits, the workflow ends unsuccessfully on purpose so the render workflow does not publish partial historical data. Rerun backfill until it reports completion.
-- If a single repository still gets a retryable provider error after request retries are exhausted, shiplog marks that repository `retry_wait`, continues with other repositories, and leaves the account checkpoint unchanged so a later run can retry the incomplete repository. Reruns skip completed repository sub-steps before retrying the failed work.
+- Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_MODE`, `BACKFILL_REPOSITORY_LIMIT`, `BACKFILL_MAX_MINUTES`, or the history workflow's matching inputs to choose the fast or deep path and process large accounts in smaller chunks. The scheduled history workflow defaults to `mode=deep`, `repository_limit=10`, and `max_minutes=45`.
+- A budgeted history run that pauses is still useful progress. In GitHub Actions it writes a step summary, renders the best current database state, publishes it, and resumes the remaining repositories on the next scheduled run.
+- If a single repository still gets a retryable provider error after request retries are exhausted, shiplog marks that repository `retry_wait`, continues with other repositories, and lets a later run retry the incomplete repository. Reruns skip completed repository sub-steps before retrying the failed work.
+- If a private repository or organization token loses access, shiplog warns and skips that scope for the current run without marking it permanently blocked.
 
-Partial progress from the failed run is useful and should normally be kept.
+Partial progress is useful and should normally be kept.
 
 ## Why did GitHub return `API rate limit exceeded`?
 
@@ -232,17 +237,14 @@ GitHub has separate limits for some REST APIs, including search. shiplog throttl
 
 If a token was already exhausted by another run or tool, shiplog may wait for the reset window before continuing. That is expected for first-time historical collects.
 
-## Why did collection run after I merged to `main`?
+## Why did ingestion run after I merged to `main`?
 
-If `collect.yml` has a `push` trigger for `main`, merging a PR starts ingestion immediately. The intended setup is:
+Only `ci.yml` should run on pushes to `main`. If an ingestion lane has a `push` trigger, merging a PR starts data movement immediately. The intended setup is:
 
 - `ci.yml` runs on pull requests and pushes to `main`.
-- `backfill.yml` runs manually for historical collection.
-- `collect.yml` runs on a daily schedule or manually.
-- `repair.yml` runs manually for explicit date or range repair.
-- `drift.yml` runs scheduled or manually to queue repairs for missing or mismatched daily summaries.
-- `maintenance.yml` runs scheduled or manually for queued background repair work.
-- `render.yml` runs after a successful collect, backfill, repair, or maintenance, or manually.
+- `freshness.yml` runs scheduled or manually for current collection, queued maintenance, render, and publish.
+- `history.yml` runs scheduled or manually for progressive historical improvement, render, and publish.
+- `integrity.yml` runs scheduled or manually for drift detection, repair, queued maintenance, render, and publish.
 
 ## Can I run only the renderer?
 

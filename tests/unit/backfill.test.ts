@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { newDb } from 'pg-mem'
 import type { Pool } from 'pg'
@@ -14,6 +15,7 @@ const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
 const originalGitHubToken = process.env.GH_RO_CLASSIC_TOKEN
 const originalBackfillMode = process.env.BACKFILL_MODE
 const originalBackfillRequireComplete = process.env.BACKFILL_REQUIRE_COMPLETE
+const originalGitHubStepSummary = process.env.GITHUB_STEP_SUMMARY
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
@@ -39,6 +41,11 @@ afterEach(async () => {
     delete process.env.BACKFILL_REQUIRE_COMPLETE
   } else {
     process.env.BACKFILL_REQUIRE_COMPLETE = originalBackfillRequireComplete
+  }
+  if (originalGitHubStepSummary === undefined) {
+    delete process.env.GITHUB_STEP_SUMMARY
+  } else {
+    process.env.GITHUB_STEP_SUMMARY = originalGitHubStepSummary
   }
 })
 
@@ -103,6 +110,27 @@ test('run with repository limit advances checkpoint only after all repositories 
   expect(partialState.rows[0]!.count).toBe(1)
   expect(dateOnly(completeAccounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
   expect(completeState.rows[0]!.count).toBe(2)
+})
+
+test('run writes a GitHub Actions progress summary when requested', async () => {
+  await seedAccount()
+  const summaryPath = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-summary-')),
+    'step.md'
+  )
+  process.env.GITHUB_STEP_SUMMARY = summaryPath
+
+  await backfill.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
+    fetch: mockGitHubFetch()
+  })
+
+  const summary = fs.readFileSync(summaryPath, 'utf8')
+  expect(summary).toContain('## History backfill')
+  expect(summary).toContain('Mode: fast')
+  expect(summary).toContain('Through: 2026-05-07')
+  expect(summary).toContain('| github/octocat | complete | 1 | 1 | 0 |')
 })
 
 test('run can require completion before exiting successfully', async () => {

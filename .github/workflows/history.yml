@@ -1,20 +1,22 @@
-name: backfill
+name: history
 
 on:
+  schedule:
+    - cron: '41 */2 * * *'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Backfill mode: fast skips expensive private candidate and co-author scans; deep reconciles them'
+        description: 'History mode: fast for authored commits, deep for co-authored/private contribution repair'
         required: false
-        default: 'fast'
+        default: 'deep'
         type: choice
         options:
           - fast
           - deep
       repository_limit:
-        description: 'Maximum unfinished repositories to process in this run'
+        description: 'Maximum unfinished repositories to improve in this run'
         required: false
-        default: '25'
+        default: '10'
         type: string
       max_minutes:
         description: 'Maximum run time before pausing between repositories'
@@ -30,7 +32,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  backfill:
+  history:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,12 +69,35 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
-      - name: Backfill historical activity
+      - name: Initialize accounts
+        run: bun run init
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
+
+      - name: Improve historical activity
         run: bun run backfill
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
-          BACKFILL_MODE: ${{ github.event.inputs.mode }}
-          BACKFILL_REPOSITORY_LIMIT: ${{ github.event.inputs.repository_limit }}
-          BACKFILL_MAX_MINUTES: ${{ github.event.inputs.max_minutes }}
-          BACKFILL_REQUIRE_COMPLETE: 'true'
+          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
+          BACKFILL_MODE: ${{ github.event.inputs.mode || 'deep' }}
+          BACKFILL_REPOSITORY_LIMIT: ${{ github.event.inputs.repository_limit || '10' }}
+          BACKFILL_MAX_MINUTES: ${{ github.event.inputs.max_minutes || '45' }}
+
+      - name: Render README
+        run: bun run render
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+
+      - name: Print rendered README
+        run: |
+          echo "::group::rendered.md"
+          cat rendered.md
+          echo "::endgroup::"
+
+      - name: Publish rendered README
+        run: bun run publish
+        env:
+          GH_RW_REPO_TOKEN: ${{ secrets.GH_RW_REPO_TOKEN }}

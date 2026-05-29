@@ -1,8 +1,8 @@
-name: collect
+name: freshness
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  collect:
+  freshness:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,8 +50,39 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
-      - name: Collect daily activity
+      - name: Initialize accounts
+        run: bun run init
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
+
+      - name: Collect current activity
         run: bun run collect
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
+
+      - name: Run queued maintenance
+        run: bun run maintenance
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
+
+      - name: Render README
+        run: bun run render
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+
+      - name: Print rendered README
+        run: |
+          echo "::group::rendered.md"
+          cat rendered.md
+          echo "::endgroup::"
+
+      - name: Publish rendered README
+        run: bun run publish
+        env:
+          GH_RW_REPO_TOKEN: ${{ secrets.GH_RW_REPO_TOKEN }}

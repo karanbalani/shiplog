@@ -1,0 +1,147 @@
+name: integrity
+
+on:
+  schedule:
+    - cron: '23 1 * * *'
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Integrity operation to run'
+        required: false
+        default: 'drift'
+        type: choice
+        options:
+          - drift
+          - repair
+      drift_from:
+        description: 'Optional YYYY-MM-DD range start for drift detection'
+        required: false
+        type: string
+      drift_to:
+        description: 'Optional YYYY-MM-DD range end for drift detection'
+        required: false
+        type: string
+      drift_lookback_days:
+        description: 'Optional recent-day window when no explicit range is provided'
+        required: false
+        type: string
+      repair_chunk_days:
+        description: 'Maximum days per queued maintenance repair task'
+        required: false
+        default: '7'
+        type: string
+      repair_date:
+        description: 'Optional YYYY-MM-DD date to repair exactly one day'
+        required: false
+        type: string
+      repair_from:
+        description: 'Optional YYYY-MM-DD range start for repair'
+        required: false
+        type: string
+      repair_to:
+        description: 'Optional YYYY-MM-DD range end for repair'
+        required: false
+        type: string
+      stale_lock_minutes:
+        description: 'Optional minutes before a running maintenance task is considered stale'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shiplog-ingestion-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dbmate
+        run: |
+          curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+          chmod +x /usr/local/bin/dbmate
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Write shiplog config
+        run: |
+          if [ -z "${SHIPLOG_CONFIG_BASE64:-}" ]; then
+            echo "missing repository variable: SHIPLOG_CONFIG_BASE64" >&2
+            exit 1
+          fi
+          printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > shiplog.config.json
+        env:
+          SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
+
+      - name: Wait for database
+        run: bun run db:wait
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+
+      - name: Run migrations
+        run: bun run migrate
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+
+      - name: Initialize accounts
+        run: bun run init
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
+
+      - name: Detect drift
+        if: github.event_name == 'schedule' || github.event.inputs.operation == 'drift'
+        run: bun run drift
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
+          DRIFT_FROM: ${{ github.event.inputs.drift_from }}
+          DRIFT_TO: ${{ github.event.inputs.drift_to }}
+          DRIFT_LOOKBACK_DAYS: ${{ github.event.inputs.drift_lookback_days }}
+          DRIFT_REPAIR_CHUNK_DAYS: ${{ github.event.inputs.repair_chunk_days || '7' }}
+
+      - name: Repair selected range
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.operation == 'repair'
+        run: bun run repair
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
+          REPAIR_DATE: ${{ github.event.inputs.repair_date }}
+          REPAIR_FROM: ${{ github.event.inputs.repair_from }}
+          REPAIR_TO: ${{ github.event.inputs.repair_to }}
+
+      - name: Run queued maintenance
+        run: bun run maintenance
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
+          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
+          MAINTENANCE_STALE_LOCK_MINUTES: ${{ github.event.inputs.stale_lock_minutes }}
+
+      - name: Render README
+        run: bun run render
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+
+      - name: Print rendered README
+        run: |
+          echo "::group::rendered.md"
+          cat rendered.md
+          echo "::endgroup::"
+
+      - name: Publish rendered README
+        run: bun run publish
+        env:
+          GH_RW_REPO_TOKEN: ${{ secrets.GH_RW_REPO_TOKEN }}
