@@ -11,6 +11,10 @@ import {
   repositoryErrorSummary,
   repositoryLogLabel
 } from '../lib/providers/github/logging.ts'
+import {
+  fetchPullRequestReviews,
+  fetchSearchIssueItems
+} from '../lib/providers/github/pagination.ts'
 import * as queries from '../lib/providers/github/queries.ts'
 import {
   GITHUB_SEARCH_REQUEST_INTERVAL_MS,
@@ -23,10 +27,7 @@ import type {
   GitHubCommitHistory,
   GitHubContributionsCollection,
   GitHubRepositoryNode,
-  GitHubRestRepository,
-  GitHubReviewItem,
-  GitHubSearchPullRequestItem,
-  GitHubSearchResult
+  GitHubRestRepository
 } from '../lib/providers/github/types.ts'
 import type {
   BackfillArgs,
@@ -42,8 +43,6 @@ const BACKFILL_STEP_PULL_REQUESTS = 'pull_requests'
 const BACKFILL_STEP_ISSUES = 'issues'
 const BACKFILL_STEP_PULL_REQUEST_REVIEWS = 'pull_request_reviews'
 const BACKFILL_STEP_SNAPSHOT = 'snapshot'
-const GITHUB_REST_PAGE_SIZE = 100
-const GITHUB_SEARCH_RESULT_LIMIT = 1000
 
 export async function run(args: BackfillArgs): Promise<BackfillResult> {
   const {
@@ -901,43 +900,6 @@ async function ingestPullRequestReviews(
         source: 'self_backfill'
       })
     }
-  }
-}
-
-async function fetchSearchIssueItems(
-  rest: RestClient,
-  query: string
-): Promise<GitHubSearchPullRequestItem[]> {
-  const items: GitHubSearchPullRequestItem[] = []
-
-  for (let page = 1; ; page += 1) {
-    const result = await rest<GitHubSearchResult<GitHubSearchPullRequestItem>>('/search/issues', {
-      q: query,
-      per_page: GITHUB_REST_PAGE_SIZE,
-      page
-    })
-    items.push(...result.items)
-
-    if (result.items.length < GITHUB_REST_PAGE_SIZE) return items
-    if (items.length >= Math.min(result.total_count, GITHUB_SEARCH_RESULT_LIMIT)) return items
-  }
-}
-
-async function fetchPullRequestReviews(
-  rest: RestClient,
-  fullName: string,
-  pullRequestNumber: number
-): Promise<GitHubReviewItem[]> {
-  const reviews: GitHubReviewItem[] = []
-
-  for (let page = 1; ; page += 1) {
-    const pageReviews = await rest<GitHubReviewItem[]>(
-      `/repos/${fullName}/pulls/${pullRequestNumber}/reviews`,
-      { per_page: GITHUB_REST_PAGE_SIZE, page }
-    )
-    reviews.push(...pageReviews)
-
-    if (pageReviews.length < GITHUB_REST_PAGE_SIZE) return reviews
   }
 }
 
