@@ -58,7 +58,10 @@ Save the generated JSON locally as `shiplog.config.json` if you want to run ship
 
 The real `shiplog.config.json` is gitignored. Commit `shiplog.config.example.json`, not your local config.
 
-### Manual fallback
+shiplog stores stable GitHub node IDs in config. That keeps history together when users, organizations, or repositories are renamed. The config builder resolves public GitHub IDs for you. If it cannot resolve a private repository or restricted organization from the browser, it shows the `gh api` command to run with the right local token, then lets you paste the returned node ID back into the builder.
+
+<details>
+<summary>Manual fallback</summary>
 
 If you prefer to build the config by hand, copy the example:
 
@@ -74,8 +77,6 @@ Common config fields:
 - `collect.accounts[0].ignore.organizations[]`: organization IDs to ignore.
 - `collect.accounts[0].ignore.repositories[]`: repository IDs to ignore.
 - `publish.targets[0].tokenEnv`: usually `GH_RW_REPO_TOKEN`.
-
-shiplog stores stable GitHub node IDs in config. That keeps history together when users, organizations, or repositories are renamed. The config builder resolves public GitHub IDs for you. If it cannot resolve a private repository or restricted organization from the browser, it shows the `gh api` command to run with the right local token, then lets you paste the returned node ID back into the builder.
 
 If you are building the config by hand, use the local identity helper commands:
 
@@ -101,6 +102,8 @@ bun run identity github repository <owner/repo>
 ```
 
 These helper lookups work without a token for public users, organizations, and repositories. Set `GH_RO_CLASSIC_TOKEN` locally when the lookup needs authenticated access, such as a private repository.
+
+</details>
 
 ## 4. Configure GitHub Actions
 
