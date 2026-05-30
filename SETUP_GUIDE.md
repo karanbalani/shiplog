@@ -6,12 +6,6 @@ This guide is for people who want to fork shiplog and run it for their own profi
 
 Fork this repository into your GitHub account. The fork will run the bundled GitHub Actions workflows and publish the rendered README to whichever target repository you configure.
 
-Install dependencies if you want to run commands locally:
-
-```bash
-bun install
-```
-
 ## 2. Create a Postgres database
 
 shiplog needs a Postgres database where the application role can create schema objects and read/write the data it owns. Neon is the intended hosted path, but any reachable Postgres database with schema creation permissions works.
@@ -53,15 +47,16 @@ Use it to:
 - copy `shiplog.config.json`
 - copy the Base64 value for GitHub Actions
 - see the exact environment variables your config needs
+- see any organization-specific PAT variables needed for restricted organizations
 
-Save the generated JSON locally as `shiplog.config.json` if you want to run shiplog from your machine.
+The generated JSON is useful for review, but the GitHub Actions setup only needs the Base64 value and the environment variable list from the builder.
 
 The real `shiplog.config.json` is gitignored. Commit `shiplog.config.example.json`, not your local config.
 
 shiplog stores stable GitHub node IDs in config. That keeps history together when users, organizations, or repositories are renamed. The config builder resolves public GitHub IDs for you. If it cannot resolve a private repository or restricted organization from the browser, it shows the `gh api` command to run with the right local token, then lets you paste the returned node ID back into the builder.
 
 <details>
-<summary>Manual fallback</summary>
+<summary>Optional manual config fallback</summary>
 
 If you prefer to build the config by hand, copy the example:
 
@@ -103,19 +98,19 @@ bun run identity github repository <owner/repo>
 
 These helper lookups work without a token for public users, organizations, and repositories. Set `GH_RO_CLASSIC_TOKEN` locally when the lookup needs authenticated access, such as a private repository.
 
+Generate the Base64 workflow value from the local config:
+
+```bash
+base64 < shiplog.config.json | tr -d '\n'
+```
+
 </details>
 
 ## 4. Configure GitHub Actions
 
 Store the Base64 config as a repository variable named `SHIPLOG_CONFIG_BASE64`.
 
-If you used the config builder, copy the Base64 value from the builder.
-
-If you created `shiplog.config.json` manually, generate the value locally:
-
-```bash
-base64 < shiplog.config.json | tr -d '\n'
-```
+Copy this value from the config builder.
 
 Required repository variable:
 
@@ -134,6 +129,8 @@ The default names are usually:
 
 If your config includes organization-specific read tokens or custom publish token names, create secrets with those exact names too.
 
+Organization-specific PATs are for organizations where your default read token cannot see all required repositories. Add the organization in the config builder, use the env var name it gives you, then create a GitHub Actions secret with that exact name. The bundled workflows already expose `GH_RO_RESTRICTED_ORG_PAT_TOKEN`; if you add more custom token names, add them to the relevant workflow `env` blocks too.
+
 Token scopes:
 
 - Collection token: classic GitHub token with `read:user`, `read:org`, and `repo`.
@@ -149,7 +146,16 @@ Run the `freshness` workflow once from GitHub Actions.
 
 After the first run, the scheduled workflows keep recent activity current, make bounded historical progress, repair drift, render `rendered.md`, and publish to your configured target.
 
-## Optional Local Verification
+<details>
+<summary>Optional local verification</summary>
+
+Local verification is optional. The default setup path is GitHub Actions first.
+
+Install dependencies:
+
+```bash
+bun install
+```
 
 Create a local environment file:
 
@@ -178,6 +184,8 @@ bun run init
 bun run render
 ```
 
+</details>
+
 ## Workflows
 
 - `freshness`: runs every 6 hours. Migrates, initializes accounts, collects recent activity, runs queued maintenance, renders, and publishes.
@@ -187,7 +195,8 @@ bun run render
 
 Historical work is progressive. If a history run pauses because of repository or time budget, the workflow still succeeds and resumes remaining work later.
 
-## Common Commands
+<details>
+<summary>Optional local commands</summary>
 
 ```bash
 bun run init
@@ -216,6 +225,8 @@ Rollback the most recent migration:
 ```bash
 bun run migration:down
 ```
+
+</details>
 
 ## More Reference
 
