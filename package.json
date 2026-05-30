@@ -12,6 +12,7 @@
     "collect": "bun bin/collect.ts",
     "repair": "bun bin/repair.ts",
     "drift": "bun bin/drift.ts",
+    "errors:prune": "bun bin/errors.ts prune",
     "maintenance": "bun bin/maintenance.ts",
     "render": "bun bin/render.ts",
     "publish": "bun bin/publish.ts",

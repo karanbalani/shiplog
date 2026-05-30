@@ -29,10 +29,11 @@ The Bun + TypeScript foundation includes:
 - Repair dispatcher in `bin/repair.ts` that reruns specific daily windows without moving checkpoints
 - Drift dispatcher in `bin/drift.ts` that checks stored daily summaries and queues repair work
 - Maintenance dispatcher in `bin/maintenance.ts` that drains queued background repair work
+- Error event housekeeping in `bin/errors.ts` that prunes short-lived diagnostic payloads
 - Init dispatcher in `bin/init.ts` that creates and refreshes `users`/`accounts`
 - Collect dispatcher in `bin/collect.ts` that runs daily catch-up and rolling lookback only
 - README renderer in `bin/render.ts`
-- GitHub Actions lanes for freshness, progressive history, integrity repair, and CI
+- GitHub Actions lanes for freshness, progressive history, integrity repair, housekeeping, and CI
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
@@ -215,6 +216,14 @@ bun run maintenance
 
 `maintenance` drains due `maintenance_tasks` rows, currently starting with queued `repair_range` tasks. It reruns the same daily provider collector used by `repair`, leaves account checkpoints unchanged, records task attempts, and retries failed tasks later until `max_attempts` is reached. It also recovers stale `running` tasks whose worker lock is older than `MAINTENANCE_STALE_LOCK_MINUTES`, which defaults to `120`.
 
+Prune short-lived diagnostic error events:
+
+```bash
+bun run errors:prune
+```
+
+`errors:prune` deletes rows from `error_events` older than `ERROR_EVENT_RETENTION_DAYS`, which defaults to `30`. The `housekeeping` GitHub Actions workflow runs this daily. Error event payloads are stored as full JSON without redaction, so treat database read access as access to provider error details, private names, and any context inserted by the caller. Workflows that record error events include the event id and a copyable lookup query in the GitHub Actions summary.
+
 Render only:
 
 ```bash
@@ -229,7 +238,7 @@ bun run publish
 
 ## Implementation Notes
 
-The v1 architecture is ten Bun-executed TypeScript binaries:
+The v1 architecture is eleven Bun-executed TypeScript binaries:
 
 - `bin/init.ts`
 - `bin/backfill.ts`
@@ -237,6 +246,7 @@ The v1 architecture is ten Bun-executed TypeScript binaries:
 - `bin/repair.ts`
 - `bin/drift.ts`
 - `bin/maintenance.ts`
+- `bin/errors.ts`
 - `bin/collect_github.ts`
 - `bin/backfill_github.ts`
 - `bin/render.ts`
@@ -261,6 +271,8 @@ The repair dispatcher requires `REPAIR_DATE` or `REPAIR_FROM`/`REPAIR_TO`, rerun
 The drift dispatcher checks stored daily provider summary totals against current provider totals, then enqueues maintenance repair ranges for missing or mismatched dates without changing collected activity itself.
 
 The maintenance dispatcher reads due `maintenance_tasks`, atomically claims supported background work such as queued repair ranges, recovers stale running locks, and records success, retry, or permanent failure state.
+
+The errors dispatcher prunes generic diagnostic rows from `error_events`. This table is intentionally not workflow state; callers can write full JSON payloads for investigation, and housekeeping keeps the table bounded by age.
 
 The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `rendered.md`. It does not overwrite this repository's own `README.md`.
 

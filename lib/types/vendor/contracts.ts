@@ -43,6 +43,7 @@ export interface BackfillResult {
   repositoriesDiscovered: number
   repositoriesProcessed: number
   repositoriesDeferred: number
+  errorEventIds?: number[]
 }
 
 export interface VendorModule {
