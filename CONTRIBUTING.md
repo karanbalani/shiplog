@@ -1,6 +1,6 @@
 # Contributing to shiplog
 
-This guide keeps the development, implementation, and operations details that used to live in the README.
+This guide is for people changing shiplog itself. If you want to fork and run shiplog for your own profile README, start with [SETUP_GUIDE.md](SETUP_GUIDE.md).
 
 shiplog takes daily snapshots of your forge activity into your own Postgres, rendered back into a GitHub profile README.
 
@@ -36,15 +36,7 @@ The Bun + TypeScript foundation includes:
 
 Note: Bun 1.3 writes `bun.lock` by default. Older Bun versions wrote `bun.lockb`, which is what the original implementation plan mentions.
 
-## Requirements
-
-- Bun 1.3 or newer
-- TypeScript, installed through `bun install`
-- dbmate through the local migration wrapper
-- A Neon Postgres database
-- A classic GitHub token with `read:user`, `repo`, and `read:org` scopes. The `repo` scope is required for private repository activity.
-
-## Setup
+## Contributor Setup
 
 Install dependencies:
 
@@ -70,126 +62,14 @@ If Bun is installed but not on your shell `PATH`, run it by absolute path or add
 ~/.bun/bin/bun install
 ```
 
-## Postgres Database Setup
+For local database, token, config, and GitHub Actions setup, use [SETUP_GUIDE.md](SETUP_GUIDE.md). The same environment variables are used while developing.
 
-shiplog needs a Postgres database where the application role can create schema objects and then read/write the data it owns.
-
-Create a dedicated role and database before running migrations. Run this as a Postgres admin user:
-
-```sql
-CREATE ROLE shiplog LOGIN PASSWORD 'replace-with-a-strong-password';
-CREATE DATABASE shiplog OWNER shiplog;
-```
-
-Then connect to the new database as an admin and make sure the `shiplog` role can create objects in the `public` schema:
-
-```sql
-\connect shiplog
-
-GRANT CONNECT ON DATABASE shiplog TO shiplog;
-GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
-```
-
-Use the `shiplog` role in `DATABASE_CONNECTION_STRING`:
-
-```bash
-DATABASE_CONNECTION_STRING=postgres://shiplog:replace-with-a-strong-password@host:5432/shiplog?sslmode=verify-full
-```
-
-You can verify the application role can run migrations by connecting with `DATABASE_CONNECTION_STRING` and creating a temporary table:
-
-```sql
-CREATE TABLE shiplog_permission_check (id int);
-DROP TABLE shiplog_permission_check;
-```
-
-On Neon, you can create the database and role from the Neon dashboard or SQL editor. The important requirement is the same: the role used by `DATABASE_CONNECTION_STRING` must be able to run migrations, which means it needs `CREATE` permission on the target schema. The `public` schema does not need to be owned by the `shiplog` role.
-
-Create a local environment file:
-
-```bash
-cp .env.example .env
-```
-
-Then fill in:
-
-```bash
-DATABASE_CONNECTION_STRING=postgres://shiplog:password@host:5432/shiplog?sslmode=verify-full
-GH_RO_CLASSIC_TOKEN=ghp_xxx
-GH_RW_REPO_TOKEN=github_pat_xxx
-# Optional, only when an org requires a separate read token:
-# GH_RO_RESTRICTED_ORG_PAT_TOKEN=github_pat_xxx
-```
-
-Optional logging controls:
+Useful local logging controls:
 
 ```bash
 SHIPLOG_LOG_LEVEL=info # debug, info, warn, error, silent
 NO_COLOR=1             # disable ANSI colors
 ```
-
-Create your shiplog config from the template:
-
-```bash
-cp shiplog.config.example.json shiplog.config.json
-```
-
-Then edit `shiplog.config.json`:
-
-- Set `profile.displayName`.
-- Run `bun run identity github <your-github-login>` and paste the returned account object into `collect.accounts[0]`.
-- Set `collect.accounts[0].tokenEnv` to the read token env var, usually `GH_RO_CLASSIC_TOKEN`.
-- Optionally run `bun run identity github organization-pat-token <org-login>` and add the returned object to `collect.accounts[0].organizationPatTokens[]` for organizations that need a separately authorized PAT.
-- Run `bun run identity github publish-target <owner/repo>` and paste the returned object into `publish.targets[0]`.
-- Set `publish.targets[0].tokenEnv` to `GH_RW_REPO_TOKEN`.
-
-Config uses stable provider IDs for collect accounts, organization PAT tokens, ignored organizations, ignored repositories, and publish targets. shiplog resolves the current provider names at runtime so GitHub username, organization, and repository renames do not split history.
-
-For ignore entries, use `bun run identity github organization <org-login>` for `collect.accounts[0].ignore.organizations[]` and `bun run identity github repository <owner/repo>` for `collect.accounts[0].ignore.repositories[]`. These helper lookups work without a token for public users, organizations, and repositories. Set `GH_RO_CLASSIC_TOKEN` only when the lookup needs authenticated access, such as a private repository.
-
-The upstream org/template repo commits `shiplog.config.example.json`, not a real `shiplog.config.json`. `shiplog.config.json` is gitignored so local config does not accidentally get committed.
-
-For GitHub Actions, store the config as a repository variable named `SHIPLOG_CONFIG_BASE64`. Generate the value from your local config:
-
-```bash
-base64 < shiplog.config.json | tr -d '\n'
-```
-
-Then decode it inside the workflow before running shiplog commands:
-
-```yaml
-- name: Write shiplog config
-  run: printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > shiplog.config.json
-  env:
-    SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
-```
-
-`SHIPLOG_CONFIG_BASE64` is configuration, not a secret. Keep `DATABASE_CONNECTION_STRING` and provider tokens in GitHub Secrets.
-
-Required GitHub repository settings:
-
-- Repository variable: `SHIPLOG_CONFIG_BASE64`
-- Repository secret: `DATABASE_CONNECTION_STRING`
-- Repository secret: `GH_RO_CLASSIC_TOKEN`
-- Repository secret: `GH_RW_REPO_TOKEN`
-
-Token responsibilities:
-
-- `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion. Use a classic token with `read:user`, `repo`, and `read:org` so private repository activity is available.
-- `GH_RW_REPO_TOKEN` authenticates README publishing commits for configured publish targets.
-
-If an organization requires a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_PAT_TOKEN` and add the stable organization PAT token entry to `collect.accounts[0].organizationPatTokens`. The bundled workflows expose that example secret next to `GH_RO_CLASSIC_TOKEN`; add more env mappings if your config uses additional token names.
-
-The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step env as well.
-
-After setting those values, run the `freshness` workflow once from GitHub Actions. It migrates, initializes accounts, collects current activity, runs queued maintenance, renders `rendered.md`, and publishes it. From there, the default lanes keep the database improving:
-
-- `freshness` runs every 6 hours and keeps normal recent activity current.
-- `history` runs every 2 hours, defaults to `deep`, and makes bounded historical progress with `repository_limit=10` and `max_minutes=45`.
-- `integrity` runs daily to detect drift, queue repair work, run maintenance, render, and publish. It can also be dispatched manually for explicit `repair` ranges.
-- `ci` handles formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
-
-Historical work is intentionally progressive. If `history` pauses because of its repository or time budget, the workflow still succeeds, writes a GitHub Actions summary, renders the best current database state, and resumes remaining repository work on the next scheduled run. Completed repository sub-steps are skipped on rerun, retryable repository failures are recorded for later, and historical progress is tracked in `repository_backfill_state`.
 
 ## Development Commands
 
