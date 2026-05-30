@@ -5,6 +5,7 @@ import type {
   CommitRow,
   DailyRepositoryActivityRow,
   DailyUserSummaryRow,
+  ErrorEventRow,
   IssueRow,
   MaintenanceTaskRow,
   OrganizationRow,
@@ -81,6 +82,28 @@ export interface NewMaintenanceRepairTaskRow {
   priority?: number
   max_attempts?: number
   next_run_at?: Date | string
+}
+
+export async function recordErrorEvent(payload: unknown): Promise<ErrorEventRow> {
+  const result = await db.query<ErrorEventRow>(
+    `INSERT INTO error_events (payload)
+     VALUES ($1::jsonb)
+     RETURNING *`,
+    [JSON.stringify(payload)]
+  )
+
+  return result.rows[0]!
+}
+
+export async function pruneErrorEventsBefore(before: Date | string): Promise<number> {
+  const result = await db.query<{ id: number }>(
+    `DELETE FROM error_events
+     WHERE created_at < $1::timestamptz
+     RETURNING id`,
+    [before]
+  )
+
+  return result.rowCount ?? result.rows.length
 }
 
 export async function upsertUser(row: NewUserRow): Promise<UserRow> {

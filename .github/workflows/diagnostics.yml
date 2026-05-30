@@ -1,0 +1,53 @@
+name: diagnostics
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: 'Number of days of error events to keep'
+        required: false
+        default: '30'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shiplog-diagnostics-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  prune-error-events:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dbmate
+        run: |
+          curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+          chmod +x /usr/local/bin/dbmate
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Wait for database
+        run: bun run db:wait
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+
+      - name: Run migrations
+        run: bun run migrate
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+
+      - name: Prune error events
+        run: bun run errors:prune
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+          ERROR_EVENT_RETENTION_DAYS: ${{ github.event.inputs.retention_days || '30' }}

@@ -153,6 +153,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
   let visitedRepositories = 0
   let processedRepositories = 0
   let deferredRepositories = 0
+  const errorEventIds: number[] = []
   let pausedByTimeBudget = false
 
   for (const repositoryPlan of repositoriesByExternalId.values()) {
@@ -174,11 +175,12 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
 
     let repositoryStatus = 'complete'
     let repository: RepositoryRow | null = null
+    let isUnpromotedCandidate = false
     try {
       const existingRepository = repositoryPlan.candidateOnly
         ? await existingRepositoryByExternalId(repositoryNode.id)
         : null
-      const isUnpromotedCandidate = repositoryPlan.candidateOnly && !existingRepository
+      isUnpromotedCandidate = repositoryPlan.candidateOnly && !existingRepository
 
       if (
         !pausedByTimeBudget &&
@@ -296,6 +298,20 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
       } else if (isRetryableRepositoryBackfillError(error)) {
         repositoryStatus = 'retry later'
         deferredRepositories += 1
+        const errorEvent = await recordBackfillErrorEvent({
+          identity,
+          repository,
+          repositoryNode,
+          fullName,
+          name,
+          observedOn,
+          phase: isUnpromotedCandidate ? 'private_candidate_activity_probe' : 'repository_backfill',
+          backfillMode,
+          commitScanMode,
+          repositoryPosition,
+          error
+        })
+        errorEventIds.push(errorEvent.id)
         if (repository) {
           await upserts.markRepositoryBackfillRetryWait(
             identity.accountId,
@@ -328,7 +344,8 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     complete: deferredRepositories === 0,
     repositoriesDiscovered: repositoryCount,
     repositoriesProcessed: processedRepositories,
-    repositoriesDeferred: deferredRepositories
+    repositoriesDeferred: deferredRepositories,
+    errorEventIds
   }
 
   if (result.complete) {
@@ -353,6 +370,67 @@ function formatRepositoryCount(count: number): string {
 
 function repositoryStatusCountsAsProcessed(status: string): boolean {
   return status !== 'already complete' && status !== 'already skipped'
+}
+
+interface RecordBackfillErrorEventOptions {
+  identity: VendorIdentity
+  repository: RepositoryRow | null
+  repositoryNode: GitHubRepositoryNode
+  fullName: string
+  name: string
+  observedOn: string
+  phase: string
+  backfillMode: BackfillMode
+  commitScanMode: CommitScanMode
+  repositoryPosition: string
+  error: unknown
+}
+
+async function recordBackfillErrorEvent({
+  identity,
+  repository,
+  repositoryNode,
+  fullName,
+  name,
+  observedOn,
+  phase,
+  backfillMode,
+  commitScanMode,
+  repositoryPosition,
+  error
+}: RecordBackfillErrorEventOptions): Promise<{ id: number }> {
+  return upserts.recordErrorEvent({
+    source: 'backfill',
+    operation: 'backfill',
+    provider: 'github',
+    phase,
+    account: {
+      id: identity.accountId,
+      externalLogin: identity.externalLogin,
+      externalId: identity.externalId
+    },
+    subject: {
+      type: 'repository',
+      id: repository?.id ?? null,
+      externalId: repositoryNode.id,
+      owner: repositoryNode.owner.login,
+      name,
+      fullName,
+      private: repositoryNode.isPrivate,
+      position: repositoryPosition
+    },
+    error: {
+      kind: errorKind(error),
+      retryable: true,
+      message: errorMessage(error),
+      details: errorDetails(error)
+    },
+    context: {
+      backfillThroughOn: observedOn,
+      backfillMode,
+      commitScanMode
+    }
+  })
 }
 
 function logRepositoryStep(
@@ -1039,6 +1117,50 @@ function isSkippableAccessMessage(message: string): boolean {
     normalized.includes('repository not found') ||
     normalized.includes('not found')
   )
+}
+
+function errorKind(error: unknown): string {
+  if (error instanceof HttpError) return `http_${error.status}`
+  if (error instanceof GitHubGraphQLError) return 'github_graphql'
+  if (error instanceof Error) {
+    const normalized = error.message.toLowerCase()
+    if (normalized.includes('timed out') || normalized.includes('timeout')) return 'timeout'
+    if (normalized.includes('network')) return 'network'
+    if (normalized.includes('socket')) return 'socket'
+    return error.name || 'error'
+  }
+  return 'unknown'
+}
+
+function errorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof HttpError) {
+    return {
+      name: error.name,
+      status: error.status,
+      message: error.message,
+      body: error.body,
+      headers: Object.fromEntries(error.headers.entries())
+    }
+  }
+
+  if (error instanceof GitHubGraphQLError) {
+    return {
+      name: error.name,
+      message: error.message,
+      messages: error.messages,
+      stack: error.stack
+    }
+  }
+
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    }
+  }
+
+  return { value: error }
 }
 
 function errorMessage(error: unknown): string {

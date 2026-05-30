@@ -133,6 +133,38 @@ test('run writes a GitHub Actions progress summary when requested', async () => 
   expect(summary).toContain('| github/octocat | complete | 1 | 1 | 0 |')
 })
 
+test('run writes error event lookup SQL to the GitHub Actions summary', async () => {
+  await seedAccount()
+  const summaryPath = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-summary-')),
+    'step.md'
+  )
+  process.env.GITHUB_STEP_SUMMARY = summaryPath
+
+  await backfill.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
+    backfillMode: 'deep',
+    fetch: mockGitHubFetch({
+      includePrivateRepository: true,
+      privateProbeRetryableFailure: true
+    })
+  })
+
+  const events = await db.query<{
+    id: number
+    payload: { error?: { message?: string } }
+  }>('SELECT id, payload FROM error_events')
+  const summary = fs.readFileSync(summaryPath, 'utf8')
+
+  expect(events.rows).toHaveLength(1)
+  expect(events.rows[0]!.payload.error?.message).toContain('service unavailable')
+  expect(summary).toContain('## Diagnostics')
+  expect(summary).toContain(`Recorded error event \`${events.rows[0]!.id}\`.`)
+  expect(summary).toContain('SELECT created_at, jsonb_pretty(payload)')
+  expect(summary).toContain(`WHERE id = ${events.rows[0]!.id};`)
+})
+
 test('run can require completion before exiting successfully', async () => {
   await seedAccount()
   const fetch = mockGitHubFetch({ includePrivateRepository: true })
@@ -215,7 +247,9 @@ function shiplogConfig(): ShiplogConfig {
   }
 }
 
-function mockGitHubFetch(options: { includePrivateRepository?: boolean } = {}): typeof fetch {
+function mockGitHubFetch(
+  options: { includePrivateRepository?: boolean; privateProbeRetryableFailure?: boolean } = {}
+): typeof fetch {
   return (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
       const body = JSON.parse(String(init?.body)) as {
@@ -246,6 +280,9 @@ function mockGitHubFetch(options: { includePrivateRepository?: boolean } = {}): 
           expect(body.variables?.author).toEqual({ id: 'U_TEST_1' })
         } else {
           expect(body.variables?.author).toBeUndefined()
+        }
+        if (options.privateProbeRetryableFailure && body.variables?.name === 'secret') {
+          return new Response('service unavailable', { status: 503 })
         }
         const name = body.variables?.name
         return jsonResponse({

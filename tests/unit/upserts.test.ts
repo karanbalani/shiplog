@@ -379,6 +379,51 @@ test('markCollectSuccess advances the checkpoint', async () => {
   expect(dateOnly(second.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
 })
 
+test('recordErrorEvent stores full payload and returns the event id', async () => {
+  const event = await upserts.recordErrorEvent({
+    source: 'backfill',
+    phase: 'private_candidate_activity_probe',
+    token: 'unredacted-test-token',
+    error: {
+      message: 'private repository octocat/secret failed'
+    }
+  })
+
+  const stored = await db.query<{ payload: Record<string, unknown> }>(
+    'SELECT payload FROM error_events WHERE id = $1',
+    [event.id]
+  )
+
+  expect(event.id).toBeGreaterThan(0)
+  expect(stored.rows[0]!.payload).toMatchObject({
+    source: 'backfill',
+    phase: 'private_candidate_activity_probe',
+    token: 'unredacted-test-token',
+    error: {
+      message: 'private repository octocat/secret failed'
+    }
+  })
+})
+
+test('pruneErrorEventsBefore deletes only older diagnostic events', async () => {
+  await db.query(
+    `INSERT INTO error_events (created_at, payload)
+     VALUES
+       ('2026-04-30T00:00:00Z', '{"source":"old"}'::jsonb),
+       ('2026-05-15T00:00:00Z', '{"source":"new"}'::jsonb)`
+  )
+
+  const deleted = await upserts.pruneErrorEventsBefore('2026-05-01T00:00:00Z')
+  const remaining = await db.query<{ source: string }>(
+    `SELECT payload->>'source' AS source
+     FROM error_events
+     ORDER BY created_at`
+  )
+
+  expect(deleted).toBe(1)
+  expect(remaining.rows.map((row) => row.source)).toEqual(['new'])
+})
+
 async function seedAccountAndRepository(): Promise<{
   account: AccountRow
   repository: RepositoryRow

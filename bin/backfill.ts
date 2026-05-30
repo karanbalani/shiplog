@@ -167,7 +167,8 @@ function normalizeBackfillResult(result: void | BackfillResult): BackfillResult 
       complete: true,
       repositoriesDiscovered: 0,
       repositoriesProcessed: 0,
-      repositoriesDeferred: 0
+      repositoriesDeferred: 0,
+      errorEventIds: []
     }
   )
 }
@@ -208,10 +209,42 @@ function writeBackfillStepSummary(
     '| Account | Status | Discovered | Processed | Deferred |',
     '| --- | --- | ---: | ---: | ---: |',
     rows || '| none | complete | 0 | 0 | 0 |',
-    ''
+    '',
+    ...diagnosticSummaryLines(summaries)
   ]
 
   fs.appendFileSync(summaryPath, `${lines.join('\n')}\n`)
+}
+
+function diagnosticSummaryLines(summaries: BackfillRunSummary[]): string[] {
+  const eventIds = summaries.flatMap((summary) => summary.errorEventIds ?? [])
+  if (eventIds.length === 0) return []
+
+  const uniqueEventIds = [...new Set(eventIds)]
+  const idList = uniqueEventIds.join(', ')
+  const recordedLine =
+    uniqueEventIds.length === 1
+      ? `Recorded error event \`${uniqueEventIds[0]}\`.`
+      : `Recorded error events \`${idList}\`.`
+  const whereClause =
+    uniqueEventIds.length === 1
+      ? `WHERE id = ${uniqueEventIds[0]};`
+      : `WHERE id IN (${idList})\nORDER BY created_at DESC;`
+
+  return [
+    '## Diagnostics',
+    '',
+    recordedLine,
+    '',
+    'Query directly with:',
+    '',
+    '```sql',
+    'SELECT created_at, jsonb_pretty(payload)',
+    'FROM error_events',
+    whereClause,
+    '```',
+    ''
+  ]
 }
 
 export async function findAccount(accountConfig: ShiplogCollectAccountConfig): Promise<AccountRow> {
