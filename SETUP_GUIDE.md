@@ -40,24 +40,7 @@ DATABASE_CONNECTION_STRING=postgres://shiplog:replace-with-a-strong-password@hos
 
 On Neon, you can create the database and role from the dashboard or SQL editor. The important part is that the role used by `DATABASE_CONNECTION_STRING` can run migrations.
 
-## 3. Create GitHub tokens
-
-Create one read token for collecting activity:
-
-- `GH_RO_CLASSIC_TOKEN`
-- classic GitHub token
-- scopes: `read:user`, `read:org`, and `repo`
-
-The `repo` scope is required if you want private repository activity.
-
-Create one write token for publishing the rendered README:
-
-- `GH_RW_REPO_TOKEN`
-- GitHub token with write access to each configured publish target repository
-
-If an organization needs a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_PAT_TOKEN` and reference that token in the config.
-
-## 4. Build the config
+## 3. Build the config
 
 Open the [shiplog config builder](https://shiplog.karanbalani.tech/config-builder/).
 
@@ -69,6 +52,7 @@ Use it to:
 - resolve public GitHub IDs in the browser
 - copy `shiplog.config.json`
 - copy the Base64 value for GitHub Actions
+- see the exact environment variables your config needs
 
 Save the generated JSON locally as `shiplog.config.json` if you want to run shiplog from your machine.
 
@@ -118,7 +102,7 @@ bun run identity github repository <owner/repo>
 
 These helper lookups work without a token for public users, organizations, and repositories. Set `GH_RO_CLASSIC_TOKEN` locally when the lookup needs authenticated access, such as a private repository.
 
-## 5. Configure GitHub Actions
+## 4. Configure GitHub Actions
 
 Store the Base64 config as a repository variable named `SHIPLOG_CONFIG_BASE64`.
 
@@ -137,21 +121,26 @@ Required repository variable:
 Required repository secrets:
 
 - `DATABASE_CONNECTION_STRING`
-- `GH_RO_CLASSIC_TOKEN`
-- `GH_RW_REPO_TOKEN`
 
-Optional repository secrets:
+Then create the GitHub token secrets listed by the config builder.
 
-- Extra organization read tokens, such as `GH_RO_RESTRICTED_ORG_PAT_TOKEN`, if configured.
+The default names are usually:
 
-Token responsibilities:
+- `GH_RO_CLASSIC_TOKEN`: reads GitHub activity for ingestion.
+- `GH_RW_REPO_TOKEN`: publishes the rendered README to configured targets.
 
-- `GH_RO_CLASSIC_TOKEN` reads GitHub activity for ingestion.
-- `GH_RW_REPO_TOKEN` publishes the rendered README to configured targets.
+If your config includes organization-specific read tokens or custom publish token names, create secrets with those exact names too.
+
+Token scopes:
+
+- Collection token: classic GitHub token with `read:user`, `read:org`, and `repo`.
+- Publish token: GitHub token with write access to each configured publish target repository.
+
+The `repo` scope is required if you want private repository activity.
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step environment.
 
-## 6. Run the first workflow
+## 5. Run the first workflow
 
 Run the `freshness` workflow once from GitHub Actions.
 
@@ -174,6 +163,8 @@ GH_RW_REPO_TOKEN=github_pat_xxx
 # Optional, only when an org requires a separate read token:
 # GH_RO_RESTRICTED_ORG_PAT_TOKEN=github_pat_xxx
 ```
+
+Use the exact token environment variable names from the config builder if you changed the defaults.
 
 Then run:
 
