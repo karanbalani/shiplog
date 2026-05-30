@@ -15,6 +15,7 @@ shiplog gives you your own contribution archive and one umbrella for activity ac
 ## Start Here
 
 - [Setup guide](SETUP_GUIDE.md): fork the repo, create the database, configure tokens, and run the workflows.
+- [Config builder](https://shiplog.karanbalani.tech/config-builder/): generate `shiplog.config.json` and the Base64 value for workflows.
 - [Example config](shiplog.config.example.json): copy this when creating your own `shiplog.config.json`.
 - [Config schema](schemas/shiplog.config.schema.json): full JSON schema for the config file.
 - [FAQ](docs/FAQ.md): common setup and operations questions.

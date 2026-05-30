@@ -57,15 +57,30 @@ Create one write token for publishing the rendered README:
 
 If an organization needs a separate read token, create another secret such as `GH_RO_RESTRICTED_ORG_PAT_TOKEN` and reference that token in the config.
 
-## 4. Create the config file
+## 4. Build the config
 
-Copy the example:
+Open the [shiplog config builder](https://shiplog.karanbalani.tech/config-builder/).
+
+Use it to:
+
+- enter your display name and GitHub username
+- add collection sources
+- add publish targets
+- resolve public GitHub IDs in the browser
+- copy `shiplog.config.json`
+- copy the Base64 value for GitHub Actions
+
+Save the generated JSON locally as `shiplog.config.json` if you want to run shiplog from your machine.
+
+The real `shiplog.config.json` is gitignored. Commit `shiplog.config.example.json`, not your local config.
+
+### Manual fallback
+
+If you prefer to build the config by hand, copy the example:
 
 ```bash
 cp shiplog.config.example.json shiplog.config.json
 ```
-
-The real `shiplog.config.json` is gitignored. Commit `shiplog.config.example.json`, not your local config.
 
 Common config fields:
 
@@ -76,9 +91,9 @@ Common config fields:
 - `collect.accounts[0].ignore.repositories[]`: repository IDs to ignore.
 - `publish.targets[0].tokenEnv`: usually `GH_RW_REPO_TOKEN`.
 
-## 5. Resolve stable GitHub IDs
+shiplog stores stable GitHub node IDs in config. That keeps history together when users, organizations, or repositories are renamed. The config builder resolves public GitHub IDs for you. If it cannot resolve a private repository or restricted organization from the browser, it shows the `gh api` command to run with the right local token, then lets you paste the returned node ID back into the builder.
 
-shiplog stores stable GitHub node IDs in config. That keeps history together when users, organizations, or repositories are renamed.
+If you are building the config by hand, use the local identity helper commands:
 
 Resolve your GitHub account:
 
@@ -103,51 +118,13 @@ bun run identity github repository <owner/repo>
 
 These helper lookups work without a token for public users, organizations, and repositories. Set `GH_RO_CLASSIC_TOKEN` locally when the lookup needs authenticated access, such as a private repository.
 
-## 6. Verify locally
+## 5. Configure GitHub Actions
 
-Create a local environment file:
+Store the Base64 config as a repository variable named `SHIPLOG_CONFIG_BASE64`.
 
-```bash
-cp .env.example .env
-```
+If you used the config builder, copy the Base64 value from the builder.
 
-Fill in the values you need:
-
-```bash
-DATABASE_CONNECTION_STRING=postgres://shiplog:password@host:5432/shiplog?sslmode=verify-full
-GH_RO_CLASSIC_TOKEN=ghp_xxx
-GH_RW_REPO_TOKEN=github_pat_xxx
-# Optional, only when an org requires a separate read token:
-# GH_RO_RESTRICTED_ORG_PAT_TOKEN=github_pat_xxx
-```
-
-Warm the database connection:
-
-```bash
-bun run db:wait
-```
-
-Run migrations:
-
-```bash
-bun run migrate
-```
-
-Initialize configured accounts:
-
-```bash
-bun run init
-```
-
-Render locally:
-
-```bash
-bun run render
-```
-
-## 7. Configure GitHub Actions
-
-Store the config as a repository variable named `SHIPLOG_CONFIG_BASE64`:
+If you created `shiplog.config.json` manually, generate the value locally:
 
 ```bash
 base64 < shiplog.config.json | tr -d '\n'
@@ -174,11 +151,38 @@ Token responsibilities:
 
 The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step environment.
 
-## 8. Run the first workflow
+## 6. Run the first workflow
 
 Run the `freshness` workflow once from GitHub Actions.
 
 After the first run, the scheduled workflows keep recent activity current, make bounded historical progress, repair drift, render `rendered.md`, and publish to your configured target.
+
+## Optional Local Verification
+
+Create a local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Fill in the values you need:
+
+```bash
+DATABASE_CONNECTION_STRING=postgres://shiplog:password@host:5432/shiplog?sslmode=verify-full
+GH_RO_CLASSIC_TOKEN=ghp_xxx
+GH_RW_REPO_TOKEN=github_pat_xxx
+# Optional, only when an org requires a separate read token:
+# GH_RO_RESTRICTED_ORG_PAT_TOKEN=github_pat_xxx
+```
+
+Then run:
+
+```bash
+bun run db:wait
+bun run migrate
+bun run init
+bun run render
+```
 
 ## Workflows
 
