@@ -24,7 +24,8 @@ shiplog gives you your own contribution archive and one umbrella for activity ac
 
 - Collects GitHub commits, pull requests, reviews, issues, repositories, languages, and organization context.
 - Stores activity in Postgres with historical tables and daily rollups.
-- Runs scheduled GitHub Actions for freshness, history, integrity repair, rendering, and publishing.
+- Runs scheduled GitHub Actions for freshness, history, integrity repair, housekeeping, rendering, and publishing.
+- Records short-lived diagnostic error events in Postgres for workflow investigation.
 - Uses stable GitHub IDs so username, organization, and repository renames do not split history.
 
 ## Useful Docs
@@ -43,6 +44,7 @@ bun run backfill
 bun run collect
 bun run drift
 bun run maintenance
+bun run errors:prune
 bun run render
 bun run publish
 ```

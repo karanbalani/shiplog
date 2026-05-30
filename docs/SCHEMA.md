@@ -211,6 +211,32 @@ Constraints and indexes:
 - `idx_maintenance_tasks_status_due` speeds due-task scans by status, run time, priority, and id.
 - Maintenance workers claim only pending or retry-wait tasks that are due. Running tasks whose lock exceeds `MAINTENANCE_STALE_LOCK_MINUTES` are recovered on a later maintenance run.
 
+## error_events
+
+Short-lived diagnostic event dump for workflow and provider errors. This table is intentionally generic and is not used as workflow state.
+
+| Column       | Type          | Notes                                                                                   |
+| ------------ | ------------- | --------------------------------------------------------------------------------------- |
+| `id`         | `BIGSERIAL`   | Primary key.                                                                            |
+| `created_at` | `TIMESTAMPTZ` | Timestamp when shiplog inserted the diagnostic event. Defaults to `now()`.              |
+| `payload`    | `JSONB`       | Full caller-provided error payload. Stored without redaction and without a fixed shape. |
+
+Indexes:
+
+- `idx_error_events_created_at` speeds age-based retention cleanup and recent-event inspection.
+
+Retention:
+
+- `bun run errors:prune` deletes rows older than `ERROR_EVENT_RETENTION_DAYS`, which defaults to 30 days.
+- The `housekeeping` GitHub Actions workflow runs this pruning daily.
+- Workflow summaries can include an error event id and SQL for querying the full payload, for example:
+
+```sql
+SELECT created_at, jsonb_pretty(payload)
+FROM error_events
+WHERE id = 12345;
+```
+
 ## repository_languages
 
 Language breakdown snapshots for repositories.

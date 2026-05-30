@@ -191,9 +191,11 @@ bun run render
 - `freshness`: runs every 6 hours. Migrates, initializes accounts, collects recent activity, runs queued maintenance, renders, and publishes.
 - `history`: runs every 2 hours. Makes bounded historical progress with deep-mode defaults.
 - `integrity`: runs daily. Detects drift, queues repair work, runs maintenance, renders, and publishes.
+- `housekeeping`: runs daily. Prunes diagnostic `error_events` older than 30 days.
 - `ci`: runs formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
 
 Historical work is progressive. If a history run pauses because of repository or time budget, the workflow still succeeds and resumes remaining work later.
+If a workflow records diagnostic error events, its GitHub Actions summary includes the event id and copyable SQL for querying the full JSON payload.
 
 <details>
 <summary>Optional local commands</summary>
@@ -204,6 +206,7 @@ bun run backfill
 bun run collect
 bun run drift
 bun run maintenance
+bun run errors:prune
 bun run render
 bun run publish
 ```
