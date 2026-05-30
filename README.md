@@ -4,6 +4,14 @@ Daily GitHub activity snapshots into your own Postgres, rendered back into a pro
 
 shiplog is a forkable profile-README pipeline. You own the database, GitHub Actions keeps it fresh, and the renderer publishes the generated README to the repository you choose.
 
+## Why shiplog?
+
+Why not?
+
+People care about control over their own data. Your contribution history is part of that data too, and it should not only live inside a platform-owned graph.
+
+shiplog gives you your own contribution archive and one umbrella for activity across platforms. GitHub is supported first, and the shape is built so more providers can fit later.
+
 ## Start Here
 
 - [Setup guide](SETUP_GUIDE.md): fork the repo, create the database, configure tokens, and run the workflows.
