@@ -1,4 +1,4 @@
-name: diagnostics
+name: housekeeping
 
 on:
   schedule:
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: shiplog-diagnostics-${{ github.repository }}
+  group: shiplog-housekeeping-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
