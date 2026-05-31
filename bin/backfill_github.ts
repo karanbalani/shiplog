@@ -31,6 +31,7 @@ import type {
   BackfillArgs,
   BackfillMode,
   BackfillResult,
+  PrivateRepositoryProbeStateRow,
   RepositoryBackfillStateRow,
   RepositoryRow,
   VendorIdentity,
@@ -47,6 +48,7 @@ const DEFAULT_BACKFILL_MODE: BackfillMode = 'fast'
 const PRIVATE_CANDIDATE_CREDITED_PROBE_PAGE_LIMIT = 2
 
 type CommitScanMode = 'authored' | 'credited'
+type PrivateCandidateActivityResult = 'matched' | 'no_match' | 'incomplete'
 
 export async function run(args: BackfillArgs): Promise<BackfillResult> {
   const {
@@ -202,7 +204,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
 
         if (isUnpromotedCandidate) {
           logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'activity probe')
-          const hasActivity = await privateCandidateHasActivity(
+          const activity = await privateCandidateHasActivity(
             clients,
             repositoryPlan,
             displayRepositoryInput.owner_login,
@@ -215,7 +217,10 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
             commitScanMode
           )
 
-          if (!hasActivity) {
+          if (activity === 'incomplete') {
+            repositoryStatus = 'probe incomplete'
+            deferredRepositories += 1
+          } else if (activity === 'no_match') {
             repositoryStatus = 'no matching activity'
             processedRepositories -= 1
           } else {
@@ -469,6 +474,20 @@ function commitBackfillStepCompleted(
 function repositoryCompletedSteps(state: RepositoryBackfillStateRow | null): Set<string> {
   if (!state?.completed_steps.trim()) return new Set()
   return new Set(state.completed_steps.split(',').filter(Boolean))
+}
+
+function privateProbeCompletedYears(state: PrivateRepositoryProbeStateRow | null): Set<number> {
+  if (!state?.completed_commit_years.trim()) return new Set()
+  return new Set(
+    state.completed_commit_years
+      .split(',')
+      .map((year) => Number(year))
+      .filter((year) => Number.isInteger(year))
+  )
+}
+
+function serializePrivateProbeCompletedYears(years: Set<number>): string {
+  return [...years].sort((a, b) => a - b).join(',')
 }
 
 function repositoryBackfillCompleteForMode(
@@ -1027,6 +1046,12 @@ function dateOnlyFromIso(value: string | null | undefined): string | null {
   return date.toISOString().slice(0, 10)
 }
 
+function dateOnlyFromValue(value: Date | string | null | undefined): string | null {
+  if (!value) return null
+  if (value instanceof Date) return value.toISOString().slice(0, 10)
+  return dateOnlyFromIso(value)
+}
+
 function shouldSearchPullRequests(plan: RepositoryBackfillPlan): boolean {
   return plan.fullScan || plan.pullRequests
 }
@@ -1053,6 +1078,25 @@ async function repositoryBackfillState(
        ORDER BY backfill_through_on DESC
        LIMIT 1`,
     [accountId, repositoryId, backfillThroughOn]
+  )
+
+  return result.rows[0] ?? null
+}
+
+async function privateRepositoryProbeState(
+  accountId: number,
+  repositoryExternalId: string,
+  backfillThroughOn: string
+): Promise<PrivateRepositoryProbeStateRow | null> {
+  const result = await db.query<PrivateRepositoryProbeStateRow>(
+    `SELECT *
+       FROM private_repository_probe_state
+       WHERE account_id = $1
+         AND repository_external_id = $2
+         AND backfill_through_on <= $3::date
+       ORDER BY backfill_through_on DESC
+       LIMIT 1`,
+    [accountId, repositoryExternalId, backfillThroughOn]
   )
 
   return result.rows[0] ?? null
@@ -1226,31 +1270,48 @@ async function privateCandidateHasActivity(
   dateSplit: GitHubSearchDateSplit,
   observedOn: string,
   commitScanMode: CommitScanMode
-): Promise<boolean> {
+): Promise<PrivateCandidateActivityResult> {
+  const probeState = await privateRepositoryProbeState(
+    identity.accountId,
+    repositoryPlan.node.id,
+    observedOn
+  )
+  if (probeState?.status === 'matched') return 'matched'
+  if (
+    probeState?.status === 'no_match' &&
+    dateOnlyFromValue(probeState.backfill_through_on) === observedOn
+  ) {
+    return 'no_match'
+  }
+
+  const resumableProbeState = probeState?.status === 'running' ? probeState : null
+  const completedCommitYears = privateProbeCompletedYears(resumableProbeState)
+
   for (const year of commitYearsForPlan(repositoryPlan, years)) {
     const { from, to } = dates.yearWindow(year)
-    if (await repositoryHasAuthoredCommit(clients.graphQL, owner, name, identity, from, to))
-      return true
+    if (await repositoryHasAuthoredCommit(clients.graphQL, owner, name, identity, from, to)) {
+      await upserts.markPrivateRepositoryProbeMatched(
+        identity.accountId,
+        repositoryPlan.node.id,
+        observedOn
+      )
+      return 'matched'
+    }
   }
 
   if (commitScanMode === 'credited') {
-    for (const year of commitYearsForPlan(repositoryPlan, years)) {
-      const { from, to } = dates.yearWindow(year)
-      if (
-        await repositoryHasMatchingCommit(
-          clients.graphQL,
-          owner,
-          name,
-          identity,
-          from,
-          to,
-          commitScanMode,
-          PRIVATE_CANDIDATE_CREDITED_PROBE_PAGE_LIMIT
-        )
-      ) {
-        return true
-      }
-    }
+    const commitProbeResult = await probePrivateCandidateCreditedCommits(
+      clients.graphQL,
+      repositoryPlan,
+      owner,
+      name,
+      identity,
+      years,
+      observedOn,
+      resumableProbeState,
+      completedCommitYears
+    )
+    if (commitProbeResult !== 'no_match') return commitProbeResult
   }
 
   if (shouldSearchPullRequests(repositoryPlan)) {
@@ -1259,7 +1320,14 @@ async function privateCandidateHasActivity(
       `repo:${fullName} type:pr author:${identity.externalLogin}`,
       { dateSplit }
     )
-    if (pullRequests.length > 0) return true
+    if (pullRequests.length > 0) {
+      await upserts.markPrivateRepositoryProbeMatched(
+        identity.accountId,
+        repositoryPlan.node.id,
+        observedOn
+      )
+      return 'matched'
+    }
   }
 
   if (shouldSearchIssues(repositoryPlan)) {
@@ -1268,7 +1336,14 @@ async function privateCandidateHasActivity(
       `repo:${fullName} type:issue author:${identity.externalLogin}`,
       { dateSplit }
     )
-    if (issues.length > 0) return true
+    if (issues.length > 0) {
+      await upserts.markPrivateRepositoryProbeMatched(
+        identity.accountId,
+        repositoryPlan.node.id,
+        observedOn
+      )
+      return 'matched'
+    }
   }
 
   if (shouldSearchPullRequestReviews(repositoryPlan)) {
@@ -1282,11 +1357,22 @@ async function privateCandidateHasActivity(
         (pullRequest) => !pullRequest.closed_at || pullRequest.closed_at.slice(0, 10) <= observedOn
       )
     ) {
-      return true
+      await upserts.markPrivateRepositoryProbeMatched(
+        identity.accountId,
+        repositoryPlan.node.id,
+        observedOn
+      )
+      return 'matched'
     }
   }
 
-  return false
+  await upserts.markPrivateRepositoryProbeNoMatch(
+    identity.accountId,
+    repositoryPlan.node.id,
+    observedOn,
+    serializePrivateProbeCompletedYears(completedCommitYears)
+  )
+  return 'no_match'
 }
 
 async function repositoryHasAuthoredCommit(
@@ -1319,37 +1405,73 @@ interface RepositoryCommitExistsResponse {
   } | null
 }
 
-async function repositoryHasMatchingCommit(
+async function probePrivateCandidateCreditedCommits(
   graphQL: GraphQLClient,
+  repositoryPlan: RepositoryBackfillPlan,
   owner: string,
   name: string,
   identity: VendorIdentity,
-  since: string,
-  until: string,
-  commitScanMode: CommitScanMode,
-  maxPages = Number.POSITIVE_INFINITY
-): Promise<boolean> {
-  let cursor: string | null = null
+  years: number[],
+  observedOn: string,
+  probeState: PrivateRepositoryProbeStateRow | null,
+  completedYears: Set<number>
+): Promise<PrivateCandidateActivityResult> {
   let pages = 0
 
-  for (;;) {
-    if (pages >= maxPages) return false
-    pages += 1
-    const history = await fetchCommitHistory(
-      graphQL,
-      owner,
-      name,
-      identity,
-      since,
-      until,
-      cursor,
-      commitScanMode
-    )
-    if (!history) return false
-    if (history.nodes.some((node) => translate.commitIncludesIdentity(node, identity))) return true
-    if (!history.pageInfo.hasNextPage) return false
-    cursor = history.pageInfo.endCursor
+  for (const year of commitYearsForPlan(repositoryPlan, years)) {
+    if (completedYears.has(year)) continue
+
+    const { from, to } = dates.yearWindow(year)
+    let cursor =
+      probeState?.status === 'running' && probeState.commit_year === year
+        ? probeState.commit_cursor
+        : null
+
+    for (;;) {
+      if (pages >= PRIVATE_CANDIDATE_CREDITED_PROBE_PAGE_LIMIT) {
+        await upserts.markPrivateRepositoryProbeRunning(
+          identity.accountId,
+          repositoryPlan.node.id,
+          observedOn,
+          year,
+          cursor,
+          serializePrivateProbeCompletedYears(completedYears)
+        )
+        return 'incomplete'
+      }
+
+      pages += 1
+      const history = await fetchCommitHistory(
+        graphQL,
+        owner,
+        name,
+        identity,
+        from,
+        to,
+        cursor,
+        'credited'
+      )
+      if (!history) {
+        completedYears.add(year)
+        break
+      }
+      if (history.nodes.some((node) => translate.commitIncludesIdentity(node, identity))) {
+        await upserts.markPrivateRepositoryProbeMatched(
+          identity.accountId,
+          repositoryPlan.node.id,
+          observedOn
+        )
+        return 'matched'
+      }
+      if (!history.pageInfo.hasNextPage) {
+        completedYears.add(year)
+        break
+      }
+      cursor = history.pageInfo.endCursor
+    }
   }
+
+  return 'no_match'
 }
 
 async function fetchCommitHistory(
