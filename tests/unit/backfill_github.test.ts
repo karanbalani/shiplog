@@ -546,6 +546,105 @@ test('run deep mode resumes private candidate commit probes across runs', async 
   expect(logs.some((line) => line.includes('probe incomplete'))).toBe(true)
 })
 
+test('run deep mode crunches incomplete private candidate probes while time remains', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2026-01-01T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  const probe = mockGitHubFetchWithPrivateCandidateCommitAfterProbePages()
+
+  const result = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    backfillMode: 'deep',
+    maxRuntimeMs: 30 * 60 * 1000,
+    repoBudgetMs: 5 * 60 * 1000,
+    fetch: probe.fetch
+  })
+  const repositories = await db.query<{ count: number }>(
+    "SELECT COUNT(*)::int AS count FROM repositories WHERE visibility = 'private'"
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+  const probeState = await db.query<{ status: string; commit_cursor: string | null }>(
+    'SELECT status, commit_cursor FROM private_repository_probe_state'
+  )
+
+  expect(result).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 1,
+    repositoriesProcessed: 1,
+    repositoriesDeferred: 0
+  })
+  expect(repositories.rows[0]!.count).toBe(1)
+  expect(commits.rows[0]!.count).toBe(1)
+  expect(probeState.rows[0]).toMatchObject({
+    status: 'matched',
+    commit_cursor: null
+  })
+  expect(probe.cursors).toEqual([null, 'probe-page-1', 'probe-page-2'])
+  expect(logs.some((line) => line.includes('crunching 1 incomplete private probe'))).toBe(true)
+})
+
+test('run deep mode defers private candidate after retryable crunch error', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2026-01-01T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  const probe = mockGitHubFetchWithPrivateCandidateCommitAfterProbePages({
+    failFirstCrunchProbe: true
+  })
+
+  const result = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    backfillMode: 'deep',
+    maxRuntimeMs: 30 * 60 * 1000,
+    repoBudgetMs: 5 * 60 * 1000,
+    fetch: probe.fetch
+  })
+  const repositories = await db.query<{ count: number }>(
+    "SELECT COUNT(*)::int AS count FROM repositories WHERE visibility = 'private'"
+  )
+  const errorEvents = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM error_events'
+  )
+
+  expect(result).toMatchObject({
+    complete: false,
+    repositoriesDiscovered: 1,
+    repositoriesProcessed: 1,
+    repositoriesDeferred: 1
+  })
+  expect(repositories.rows[0]!.count).toBe(0)
+  expect(errorEvents.rows[0]!.count).toBe(1)
+  expect(probe.cursors).toEqual([null, 'probe-page-1', 'probe-page-2'])
+  expect(logs.some((line) => line.includes('hit a retryable provider error'))).toBe(true)
+})
+
 test('run deep mode restarts private candidate probes after older no-match state', async () => {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
@@ -1780,12 +1879,15 @@ function mockGitHubFetchWithPrivateRepository(): typeof fetch {
   }) as typeof fetch
 }
 
-function mockGitHubFetchWithPrivateCandidateCommitAfterProbePages(): {
+function mockGitHubFetchWithPrivateCandidateCommitAfterProbePages(
+  options: { failFirstCrunchProbe?: boolean } = {}
+): {
   fetch: typeof fetch
   cursors: Array<string | null>
 } {
   const cursors: Array<string | null> = []
   let matchedProbe = false
+  let failedCrunchProbe = false
 
   return {
     cursors,
@@ -1849,6 +1951,12 @@ function mockGitHubFetchWithPrivateCandidateCommitAfterProbePages(): {
         if (isRepositoryCommitsQuery(body.query)) {
           const cursor = body.variables?.cursor ?? null
           if (!matchedProbe) cursors.push(cursor)
+          if (options.failFirstCrunchProbe && cursor === 'probe-page-2' && !failedCrunchProbe) {
+            failedCrunchProbe = true
+            return jsonResponse({
+              errors: [{ message: 'Something went wrong while executing your query.' }]
+            })
+          }
           const page =
             cursor === null ? 1 : cursor === 'probe-page-1' ? 2 : cursor === 'probe-page-2' ? 3 : 4
           if (page === 3) matchedProbe = true

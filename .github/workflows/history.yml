@@ -16,7 +16,7 @@ on:
       max_minutes:
         description: 'Maximum run time before pausing between repositories'
         required: false
-        default: '60'
+        default: '30'
         type: string
       repo_budget_minutes:
         description: 'Time budget reserved before starting another repository'
@@ -83,7 +83,7 @@ jobs:
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
           GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
           BACKFILL_MODE: ${{ github.event.inputs.mode || 'deep' }}
-          BACKFILL_MAX_MINUTES: ${{ github.event.inputs.max_minutes || '60' }}
+          BACKFILL_MAX_MINUTES: ${{ github.event.inputs.max_minutes || '30' }}
           BACKFILL_REPO_BUDGET_MINUTES: ${{ github.event.inputs.repo_budget_minutes || '5' }}
 
       - name: Render README

@@ -158,6 +158,13 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
   let deferredRepositories = 0
   const errorEventIds: number[] = []
   let pausedByTimeBudget = false
+  const repositoryPositions = new Map(
+    [...repositoriesByExternalId.values()].map((plan, index) => [
+      plan.node.id,
+      `${index + 1}/${repositoryCount}`
+    ])
+  )
+  const incompletePrivateProbePlans = new Map<string, RepositoryBackfillPlan>()
 
   for (const repositoryPlan of repositoriesByExternalId.values()) {
     const repositoryNode = repositoryPlan.node
@@ -167,7 +174,8 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     const name = requiredString(displayRepositoryInput.name, 'repository name')
     const visibility = repositoryNode.isPrivate ? 'private' : 'public'
     const logLabel = repositoryLogLabel(repositoryNode, fullName)
-    const repositoryPosition = `${visitedRepositories + 1}/${repositoryCount}`
+    const repositoryPosition =
+      repositoryPositions.get(repositoryNode.id) ?? `${visitedRepositories + 1}/${repositoryCount}`
     const searchDateSplit = repositoryCreatedSearchDateSplit(
       repositoryNode,
       firstDiscoveryYear,
@@ -220,6 +228,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
           if (activity === 'incomplete') {
             repositoryStatus = 'probe incomplete'
             deferredRepositories += 1
+            incompletePrivateProbePlans.set(repositoryNode.id, repositoryPlan)
           } else if (activity === 'no_match') {
             repositoryStatus = 'no matching activity'
             processedRepositories -= 1
@@ -344,6 +353,148 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     logger.info(repositoryCompleteMessage)
   }
 
+  while (
+    maxRuntimeMs !== undefined &&
+    incompletePrivateProbePlans.size > 0 &&
+    !pausedByTimeBudget
+  ) {
+    if (backfillTimeBudgetExceeded(startedAt, maxRuntimeMs, repoBudgetMs)) {
+      pausedByTimeBudget = true
+      break
+    }
+
+    logger.info(
+      `[backfill] github/${identity.externalLogin}: crunching ${formatIncompletePrivateProbeCount(incompletePrivateProbePlans.size)}`
+    )
+
+    for (const repositoryPlan of incompletePrivateProbePlans.values()) {
+      if (backfillTimeBudgetExceeded(startedAt, maxRuntimeMs, repoBudgetMs)) {
+        pausedByTimeBudget = true
+        break
+      }
+
+      const repositoryNode = repositoryPlan.node
+      const clients = clientsForRepository(repositoryNode, defaultClients, organizationClients)
+      const displayRepositoryInput = translate.repositoryFromGraphQLNode(repositoryNode, observedOn)
+      const fullName = requiredString(displayRepositoryInput.full_name, 'repository full name')
+      const name = requiredString(displayRepositoryInput.name, 'repository name')
+      const visibility = repositoryNode.isPrivate ? 'private' : 'public'
+      const logLabel = repositoryLogLabel(repositoryNode, fullName)
+      const repositoryPosition =
+        repositoryPositions.get(repositoryNode.id) ??
+        `${visitedRepositories + 1}/${repositoryCount}`
+      const searchDateSplit = repositoryCreatedSearchDateSplit(
+        repositoryNode,
+        firstDiscoveryYear,
+        observedOn
+      )
+
+      let repositoryStatus = 'probe incomplete'
+      let repository: RepositoryRow | null = null
+      try {
+        logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'activity probe')
+        const activity = await privateCandidateHasActivity(
+          clients,
+          repositoryPlan,
+          displayRepositoryInput.owner_login,
+          name,
+          fullName,
+          identity,
+          years,
+          searchDateSplit,
+          observedOn,
+          commitScanMode
+        )
+
+        if (activity === 'incomplete') {
+          repositoryStatus = 'probe incomplete'
+        } else if (activity === 'no_match') {
+          incompletePrivateProbePlans.delete(repositoryNode.id)
+          deferredRepositories -= 1
+          processedRepositories -= 1
+          repositoryStatus = 'no matching activity'
+        } else {
+          incompletePrivateProbePlans.delete(repositoryNode.id)
+          logRepositoryStep(
+            identity,
+            repositoryPosition,
+            visibility,
+            logLabel,
+            'promote private candidate'
+          )
+          const promoted = await upsertRepositoryForPlan(repositoryNode, observedOn)
+          repository = promoted.repository
+          repositoryStatus = await processRepositoryBackfill({
+            clients,
+            repositoryPlan,
+            repository,
+            repositoryInput: promoted.repositoryInput,
+            fullName,
+            name,
+            identity,
+            years,
+            observedOn,
+            searchDateSplit,
+            repositoryPosition,
+            visibility,
+            logLabel,
+            commitScanMode
+          })
+          if (!repositoryStatusCountsAsProcessed(repositoryStatus)) processedRepositories -= 1
+          deferredRepositories -= 1
+        }
+      } catch (error) {
+        const errorSummary = repositoryErrorSummary(repositoryNode, error)
+
+        if (isGitHubRepositoryUnavailableError(error) || isSkippableAccessError(error)) {
+          incompletePrivateProbePlans.delete(repositoryNode.id)
+          repositoryStatus = 'skipped for now'
+          logger.warn(
+            `[backfill] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel} is inaccessible in this run; skipping without recording a permanent state (${errorSummary})`
+          )
+        } else if (isRetryableRepositoryBackfillError(error)) {
+          repositoryStatus = 'retry later'
+          incompletePrivateProbePlans.delete(repositoryNode.id)
+          const errorEvent = await recordBackfillErrorEvent({
+            identity,
+            repository,
+            repositoryNode,
+            fullName,
+            name,
+            observedOn,
+            phase: repository ? 'repository_backfill' : 'private_candidate_activity_probe',
+            backfillMode,
+            commitScanMode,
+            repositoryPosition,
+            error
+          })
+          errorEventIds.push(errorEvent.id)
+          if (repository) {
+            await upserts.markRepositoryBackfillRetryWait(
+              identity.accountId,
+              repository.id,
+              observedOn,
+              errorSummary
+            )
+          }
+          logger.warn(
+            `[backfill] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel} hit a retryable provider error; will retry on a later run (${errorSummary})`
+          )
+        } else {
+          throw error
+        }
+      }
+
+      const progress = progressPercent(visitedRepositories, repositoryCount)
+      const elapsed = formatDuration(Date.now() - repositoriesStartedAt)
+      const eta = formatDuration(
+        estimatedRemainingMs(repositoriesStartedAt, visitedRepositories, repositoryCount)
+      )
+      const repositoryCompleteMessage = `[backfill] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel} ${repositoryStatus} (${progress}%, elapsed ${elapsed}, eta ${eta})`
+      logger.info(repositoryCompleteMessage)
+    }
+  }
+
   logger.info(`[backfill] github/${identity.externalLogin}: rolling up activity dates`)
   await rollupDistinctActivityDates(identity.accountId)
   const result = {
@@ -379,6 +530,10 @@ function backfillTimeBudgetExceeded(
 
 function formatRepositoryCount(count: number): string {
   return `${count} ${count === 1 ? 'repository' : 'repositories'}`
+}
+
+function formatIncompletePrivateProbeCount(count: number): string {
+  return `${count} incomplete private ${count === 1 ? 'probe' : 'probes'}`
 }
 
 function repositoryStatusCountsAsProcessed(status: string): boolean {
