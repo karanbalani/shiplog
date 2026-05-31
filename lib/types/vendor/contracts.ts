@@ -35,6 +35,7 @@ export interface BackfillArgs {
   backfillMode?: BackfillMode
   repositoryLimit?: number
   maxRuntimeMs?: number
+  repoBudgetMs?: number
   fetch?: Fetcher
 }
 

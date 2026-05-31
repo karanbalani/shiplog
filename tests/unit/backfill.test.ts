@@ -15,6 +15,7 @@ const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
 const originalGitHubToken = process.env.GH_RO_CLASSIC_TOKEN
 const originalBackfillMode = process.env.BACKFILL_MODE
 const originalBackfillRequireComplete = process.env.BACKFILL_REQUIRE_COMPLETE
+const originalBackfillRepoBudgetMinutes = process.env.BACKFILL_REPO_BUDGET_MINUTES
 const originalGitHubStepSummary = process.env.GITHUB_STEP_SUMMARY
 
 beforeEach(() => {
@@ -41,6 +42,11 @@ afterEach(async () => {
     delete process.env.BACKFILL_REQUIRE_COMPLETE
   } else {
     process.env.BACKFILL_REQUIRE_COMPLETE = originalBackfillRequireComplete
+  }
+  if (originalBackfillRepoBudgetMinutes === undefined) {
+    delete process.env.BACKFILL_REPO_BUDGET_MINUTES
+  } else {
+    process.env.BACKFILL_REPO_BUDGET_MINUTES = originalBackfillRepoBudgetMinutes
   }
   if (originalGitHubStepSummary === undefined) {
     delete process.env.GITHUB_STEP_SUMMARY
@@ -131,6 +137,26 @@ test('run writes a GitHub Actions progress summary when requested', async () => 
   expect(summary).toContain('Mode: fast')
   expect(summary).toContain('Through: 2026-05-07')
   expect(summary).toContain('| github/octocat | complete | 1 | 1 | 0 |')
+})
+
+test('run writes time-slice budget to GitHub Actions progress summary', async () => {
+  await seedAccount()
+  const summaryPath = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-summary-')),
+    'step.md'
+  )
+  process.env.GITHUB_STEP_SUMMARY = summaryPath
+
+  await backfill.run({
+    config: shiplogConfig(),
+    now: new Date('2026-05-08T00:00:00Z'),
+    maxRuntimeMinutes: 60,
+    repoBudgetMinutes: 5,
+    fetch: mockGitHubFetch()
+  })
+
+  const summary = fs.readFileSync(summaryPath, 'utf8')
+  expect(summary).toContain('Budget: time limit: 1h, repo budget: 5m')
 })
 
 test('run writes error event lookup SQL to the GitHub Actions summary', async () => {
