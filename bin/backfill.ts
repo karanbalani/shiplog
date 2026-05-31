@@ -30,6 +30,7 @@ export interface BackfillRunOptions {
   backfillMode?: BackfillMode
   repositoryLimit?: number
   maxRuntimeMinutes?: number
+  repoBudgetMinutes?: number
   requireComplete?: boolean
 }
 
@@ -39,6 +40,7 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
   const backfillMode = backfillModeOption(options)
   const repositoryLimit = backfillRepositoryLimit(options)
   const maxRuntimeMs = backfillMaxRuntimeMs(options)
+  const repoBudgetMs = backfillRepoBudgetMs(options)
   const requireComplete = backfillRequireComplete(options)
   const incompleteRuns: string[] = []
   const summaries: BackfillRunSummary[] = []
@@ -65,6 +67,7 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
       backfillMode,
       repositoryLimit,
       maxRuntimeMs,
+      repoBudgetMs,
       fetch: options.fetch
     } satisfies BackfillArgs)
     const summary = normalizeBackfillResult(result)
@@ -83,7 +86,14 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
     }
   }
 
-  writeBackfillStepSummary(throughDate, backfillMode, repositoryLimit, maxRuntimeMs, summaries)
+  writeBackfillStepSummary(
+    throughDate,
+    backfillMode,
+    repositoryLimit,
+    maxRuntimeMs,
+    repoBudgetMs,
+    summaries
+  )
 
   if (requireComplete && incompleteRuns.length > 0) {
     throw new Error(incompleteRuns.join('; '))
@@ -121,6 +131,17 @@ function backfillMaxRuntimeMs(options: BackfillRunOptions): number | undefined {
   if (!envValue) return undefined
 
   return minutesToMs(assertPositiveNumber(Number(envValue), 'BACKFILL_MAX_MINUTES'))
+}
+
+function backfillRepoBudgetMs(options: BackfillRunOptions): number | undefined {
+  if (options.repoBudgetMinutes !== undefined) {
+    return minutesToMs(assertPositiveNumber(options.repoBudgetMinutes, 'repoBudgetMinutes'))
+  }
+
+  const envValue = process.env.BACKFILL_REPO_BUDGET_MINUTES?.trim()
+  if (!envValue) return undefined
+
+  return minutesToMs(assertPositiveNumber(Number(envValue), 'BACKFILL_REPO_BUDGET_MINUTES'))
 }
 
 function backfillRequireComplete(options: BackfillRunOptions): boolean {
@@ -182,6 +203,7 @@ function writeBackfillStepSummary(
   backfillMode: BackfillMode,
   repositoryLimit: number | undefined,
   maxRuntimeMs: number | undefined,
+  repoBudgetMs: number | undefined,
   summaries: BackfillRunSummary[]
 ): void {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY
@@ -195,7 +217,8 @@ function writeBackfillStepSummary(
     .join('\n')
   const budget = [
     repositoryLimit ? `repository limit: ${repositoryLimit}` : null,
-    maxRuntimeMs ? `time limit: ${formatDuration(maxRuntimeMs)}` : null
+    maxRuntimeMs ? `time limit: ${formatDuration(maxRuntimeMs)}` : null,
+    repoBudgetMs ? `repo budget: ${formatDuration(repoBudgetMs)}` : null
   ]
     .filter(Boolean)
     .join(', ')

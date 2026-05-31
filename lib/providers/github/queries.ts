@@ -122,7 +122,7 @@ query RepositoryCommits($owner: String!, $name: String!, $since: GitTimestamp!, 
     defaultBranchRef {
       target {
         ... on Commit {
-          history(first: 100, after: $cursor, since: $since, until: $until) {
+          history(first: 50, after: $cursor, since: $since, until: $until) {
             totalCount
             pageInfo { hasNextPage endCursor }
             nodes {
@@ -148,7 +148,7 @@ query RepositoryAuthoredCommits($owner: String!, $name: String!, $author: Commit
     defaultBranchRef {
       target {
         ... on Commit {
-          history(first: 100, after: $cursor, author: $author, since: $since, until: $until) {
+          history(first: 50, after: $cursor, author: $author, since: $since, until: $until) {
             totalCount
             pageInfo { hasNextPage endCursor }
             nodes {

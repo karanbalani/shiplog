@@ -59,6 +59,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     backfillMode = DEFAULT_BACKFILL_MODE,
     repositoryLimit,
     maxRuntimeMs,
+    repoBudgetMs,
     fetch
   } = args
   if (!identity) throw new Error('backfill_github: missing identity')
@@ -185,7 +186,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
       if (
         !pausedByTimeBudget &&
         processedRepositories > 0 &&
-        backfillTimeBudgetExceeded(startedAt, maxRuntimeMs)
+        backfillTimeBudgetExceeded(startedAt, maxRuntimeMs, repoBudgetMs)
       ) {
         pausedByTimeBudget = true
         repositoryStatus = 'deferred by time budget'
@@ -360,8 +361,15 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
   return result
 }
 
-function backfillTimeBudgetExceeded(startedAt: number, maxRuntimeMs: number | undefined): boolean {
-  return maxRuntimeMs !== undefined && Date.now() - startedAt >= maxRuntimeMs
+function backfillTimeBudgetExceeded(
+  startedAt: number,
+  maxRuntimeMs: number | undefined,
+  repoBudgetMs = 0
+): boolean {
+  if (maxRuntimeMs === undefined) return false
+  const elapsedMs = Date.now() - startedAt
+  if (repoBudgetMs <= 0) return elapsedMs >= maxRuntimeMs
+  return elapsedMs + repoBudgetMs > maxRuntimeMs
 }
 
 function formatRepositoryCount(count: number): string {

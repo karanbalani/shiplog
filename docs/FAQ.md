@@ -224,7 +224,7 @@ Historical backfill is designed to be resumable:
 - `accounts.last_successful_collect_on` stays null until the complete historical collect succeeds.
 - Most writes use database upserts or uniqueness constraints.
 - Repeated rows are deduplicated on rerun.
-- Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_MODE`, `BACKFILL_REPOSITORY_LIMIT`, `BACKFILL_MAX_MINUTES`, or the history workflow's matching inputs to choose the fast or deep path and process large accounts in smaller chunks. The scheduled history workflow defaults to `mode=deep`, `repository_limit=10`, and `max_minutes=45`.
+- Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_MODE`, `BACKFILL_MAX_MINUTES`, `BACKFILL_REPO_BUDGET_MINUTES`, or the history workflow's matching inputs to choose the fast or deep path and process large accounts in smaller chunks. `BACKFILL_REPOSITORY_LIMIT` remains available for custom local runs that need a hard cap. The scheduled history workflow defaults to `mode=deep`, `max_minutes=60`, and `repo_budget_minutes=5`.
 - A budgeted history run that pauses is still useful progress. In GitHub Actions it writes a step summary, renders the best current database state, publishes it, and resumes the remaining repositories on the next scheduled run.
 - If a single repository still gets a retryable provider error after request retries are exhausted, shiplog marks that repository `retry_wait`, continues with other repositories, and lets a later run retry the incomplete repository. Reruns skip completed repository sub-steps before retrying the failed work.
 - If a private repository or organization token loses access, shiplog warns and skips that scope for the current run without marking it permanently blocked.

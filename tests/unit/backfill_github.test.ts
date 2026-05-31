@@ -1044,6 +1044,60 @@ test('run can pause after a time budget before starting another repository', asy
   }
 })
 
+test('run stops before starting a repository without a full repo budget left', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+
+  const originalDateNow = Date.now
+  let nowCalls = 0
+  Date.now = () => {
+    nowCalls += 1
+    return nowCalls <= 2 ? 0 : 20
+  }
+
+  try {
+    const result = await backfillGitHub.run({
+      identity: {
+        accountId: account.id,
+        externalLogin: account.external_login,
+        externalId: account.external_id
+      },
+      token: 'test-token',
+      backfillMode: 'deep',
+      maxRuntimeMs: 60,
+      repoBudgetMs: 50,
+      fetch: mockGitHubFetchWithTwoRepositories()
+    })
+
+    const state = await db.query<{ count: number }>(
+      'SELECT COUNT(*)::int AS count FROM repository_backfill_state'
+    )
+    const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+
+    expect(result).toMatchObject({
+      complete: false,
+      repositoriesDiscovered: 2,
+      repositoriesProcessed: 1,
+      repositoriesDeferred: 1
+    })
+    expect(state.rows[0]!.count).toBe(1)
+    expect(commits.rows[0]!.count).toBe(1)
+    expect(logs.some((line) => line.includes('deferred by time budget'))).toBe(true)
+  } finally {
+    Date.now = originalDateNow
+  }
+})
+
 test('estimatedSearchPacingMs estimates minimum GitHub search throttle time', () => {
   expect(backfillGitHub.estimatedSearchPacingMs(0)).toBe(0)
   expect(backfillGitHub.estimatedSearchPacingMs(1)).toBe(5000)

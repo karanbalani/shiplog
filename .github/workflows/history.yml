@@ -13,15 +13,15 @@ on:
         options:
           - fast
           - deep
-      repository_limit:
-        description: 'Maximum unfinished repositories to improve in this run'
-        required: false
-        default: '10'
-        type: string
       max_minutes:
         description: 'Maximum run time before pausing between repositories'
         required: false
-        default: '45'
+        default: '60'
+        type: string
+      repo_budget_minutes:
+        description: 'Time budget reserved before starting another repository'
+        required: false
+        default: '5'
         type: string
 
 permissions:
@@ -83,8 +83,8 @@ jobs:
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
           GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
           BACKFILL_MODE: ${{ github.event.inputs.mode || 'deep' }}
-          BACKFILL_REPOSITORY_LIMIT: ${{ github.event.inputs.repository_limit || '10' }}
-          BACKFILL_MAX_MINUTES: ${{ github.event.inputs.max_minutes || '45' }}
+          BACKFILL_MAX_MINUTES: ${{ github.event.inputs.max_minutes || '60' }}
+          BACKFILL_REPO_BUDGET_MINUTES: ${{ github.event.inputs.repo_budget_minutes || '5' }}
 
       - name: Render README
         run: bun run render
