@@ -1041,7 +1041,8 @@ async function repositoryBackfillState(
        FROM repository_backfill_state
        WHERE account_id = $1
          AND repository_id = $2
-         AND backfill_through_on = $3::date
+         AND backfill_through_on <= $3::date
+       ORDER BY backfill_through_on DESC
        LIMIT 1`,
     [accountId, repositoryId, backfillThroughOn]
   )
