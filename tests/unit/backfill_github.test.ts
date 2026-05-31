@@ -932,6 +932,64 @@ test('run can pause after a repository budget and resume remaining work', async 
   expect(logs.some((line) => line.includes('already complete'))).toBe(true)
 })
 
+test('run carries completed repository history forward when the through date moves', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+  const args = {
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    backfillMode: 'deep' as const,
+    fetch: mockGitHubFetchWithTwoRepositories()
+  }
+
+  const first = await backfillGitHub.run({ ...args, throughDate: '2026-05-07' })
+  const second = await backfillGitHub.run({
+    ...args,
+    throughDate: '2026-05-08',
+    repositoryLimit: 1
+  })
+  const state = await db.query<{
+    count: number
+    latest_through_on: Date | string
+  }>(
+    `SELECT COUNT(*)::int AS count,
+            MAX(backfill_through_on) AS latest_through_on
+       FROM repository_backfill_state`
+  )
+
+  expect(first).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 2,
+    repositoriesProcessed: 2,
+    repositoriesDeferred: 0
+  })
+  expect(second).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 2,
+    repositoriesProcessed: 0,
+    repositoriesDeferred: 0
+  })
+  expect(state.rows[0]).toMatchObject({
+    count: 2
+  })
+  expect(dateOnly(state.rows[0]!.latest_through_on)).toBe('2026-05-07')
+  expect(logs.filter((line) => line.includes('already complete')).length).toBeGreaterThanOrEqual(2)
+})
+
 test('run can pause after a time budget before starting another repository', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
@@ -2342,4 +2400,8 @@ function loadMigration(filename: string): string {
     .readFileSync(path.join(MIGRATIONS, filename), 'utf8')
     .split(/-- migrate:down/)[0]!
     .replace(/^-- migrate:up\s*/m, '')
+}
+
+function dateOnly(value: Date | string): string {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : value.slice(0, 10)
 }
