@@ -181,6 +181,32 @@ Constraints and indexes:
 - Retryable provider failures are stored with `status = 'retry_wait'`; later backfill runs retry those repositories, skip completed sub-steps, and keep the account checkpoint unchanged until they succeed.
 - `idx_repository_backfill_state_account_status` speeds account-scoped background work queries.
 
+## private_repository_probe_state
+
+Cursor state for deep-mode private repository candidates that have not yet been promoted into `repositories`.
+
+| Column                   | Type          | Notes                                                                         |
+| ------------------------ | ------------- | ----------------------------------------------------------------------------- |
+| `id`                     | `BIGSERIAL`   | Primary key.                                                                  |
+| `account_id`             | `BIGINT`      | Required reference to `accounts.id`.                                          |
+| `repository_external_id` | `TEXT`        | Provider repository node id for the candidate.                                |
+| `backfill_through_on`    | `DATE`        | Historical target date this probe was run for.                                |
+| `status`                 | `TEXT`        | Probe state. Must be `running`, `matched`, or `no_match`.                     |
+| `commit_year`            | `INTEGER`     | Active repository year currently being scanned, when the probe is incomplete. |
+| `commit_cursor`          | `TEXT`        | GitHub commit-history cursor to resume from, when the probe is incomplete.    |
+| `completed_commit_years` | `TEXT`        | Comma-separated active years whose credited commit scan has been exhausted.   |
+| `matched_at`             | `TIMESTAMPTZ` | When matching account activity was found, when available.                     |
+| `completed_at`           | `TIMESTAMPTZ` | When the probe reached `matched` or `no_match`, when available.               |
+| `last_error`             | `TEXT`        | Reserved for the last probe failure message, when available.                  |
+| `created_at`             | `TIMESTAMPTZ` | Audit timestamp for when shiplog inserted the row. Defaults to `now()`.       |
+| `updated_at`             | `TIMESTAMPTZ` | Audit timestamp for when shiplog last updated the row. Defaults to `now()`.   |
+
+Constraints and indexes:
+
+- `UNIQUE (account_id, repository_external_id, backfill_through_on)` stores one candidate-probe row per account, repository node id, and target date.
+- Deep backfill uses `running` rows to resume bounded private candidate commit probes instead of restarting from the first commit page on every run.
+- `idx_private_repository_probe_state_account_status` speeds account-scoped inspection of incomplete private candidate probes.
+
 ## maintenance_tasks
 
 Queued background work that should run outside the daily collect lane. Drift detection and future consistency checks write repair work here; `bin/maintenance.ts` drains due tasks.

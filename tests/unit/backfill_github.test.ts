@@ -477,6 +477,125 @@ test('run deep mode promotes accessible private repositories after matching acti
   expect(logs.join('\n')).not.toContain('octocat/secret')
 })
 
+test('run deep mode resumes private candidate commit probes across runs', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2026-01-01T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  const probe = mockGitHubFetchWithPrivateCandidateCommitAfterProbePages()
+  const args = {
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    backfillMode: 'deep' as const,
+    fetch: probe.fetch
+  }
+
+  const first = await backfillGitHub.run(args)
+  const firstRepositories = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM repositories'
+  )
+  const probeStateAfterFirst = await db.query<{
+    status: string
+    commit_cursor: string | null
+  }>('SELECT status, commit_cursor FROM private_repository_probe_state')
+
+  const second = await backfillGitHub.run(args)
+  const repositories = await db.query<{ count: number }>(
+    "SELECT COUNT(*)::int AS count FROM repositories WHERE visibility = 'private'"
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+  const probeStateAfterSecond = await db.query<{ status: string; commit_cursor: string | null }>(
+    'SELECT status, commit_cursor FROM private_repository_probe_state'
+  )
+
+  expect(first).toMatchObject({
+    complete: false,
+    repositoriesDiscovered: 1,
+    repositoriesProcessed: 1,
+    repositoriesDeferred: 1
+  })
+  expect(firstRepositories.rows[0]!.count).toBe(0)
+  expect(probeStateAfterFirst.rows[0]).toMatchObject({
+    status: 'running',
+    commit_cursor: 'probe-page-2'
+  })
+  expect(second).toMatchObject({
+    complete: true,
+    repositoriesDiscovered: 1,
+    repositoriesDeferred: 0
+  })
+  expect(repositories.rows[0]!.count).toBe(1)
+  expect(commits.rows[0]!.count).toBe(1)
+  expect(probeStateAfterSecond.rows[0]).toMatchObject({
+    status: 'matched',
+    commit_cursor: null
+  })
+  expect(probe.cursors).toEqual([null, 'probe-page-1', 'probe-page-2'])
+  expect(logs.some((line) => line.includes('probe incomplete'))).toBe(true)
+})
+
+test('run deep mode restarts private candidate probes after older no-match state', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2026-01-01T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  await db.query(
+    `INSERT INTO private_repository_probe_state
+       (account_id, repository_external_id, backfill_through_on, status, completed_commit_years, completed_at)
+     VALUES ($1, 'R_PRIVATE_1', '2026-05-06', 'no_match', '2026', now())`,
+    [account.id]
+  )
+  const probe = mockGitHubFetchWithPrivateCandidateCommitAfterProbePages()
+
+  const result = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    backfillMode: 'deep',
+    throughDate: '2026-05-07',
+    fetch: probe.fetch
+  })
+  const latestProbeState = await db.query<{ status: string; commit_cursor: string | null }>(
+    `SELECT status, commit_cursor
+     FROM private_repository_probe_state
+     ORDER BY backfill_through_on DESC
+     LIMIT 1`
+  )
+
+  expect(result).toMatchObject({
+    complete: false,
+    repositoriesDiscovered: 1,
+    repositoriesProcessed: 1,
+    repositoriesDeferred: 1
+  })
+  expect(latestProbeState.rows[0]).toMatchObject({
+    status: 'running',
+    commit_cursor: 'probe-page-2'
+  })
+  expect(probe.cursors).toEqual([null, 'probe-page-1'])
+})
+
 test('run deep mode soft-skips private discovery when the default token loses access', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
@@ -1659,6 +1778,149 @@ function mockGitHubFetchWithPrivateRepository(): typeof fetch {
 
     return new Response(`unexpected request: ${url}`, { status: 500 })
   }) as typeof fetch
+}
+
+function mockGitHubFetchWithPrivateCandidateCommitAfterProbePages(): {
+  fetch: typeof fetch
+  cursors: Array<string | null>
+} {
+  const cursors: Array<string | null> = []
+  let matchedProbe = false
+
+  return {
+    cursors,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (url === 'https://api.github.com/graphql') {
+        const body = JSON.parse(String(init?.body)) as {
+          query: string
+          variables?: Record<string, string | null>
+        }
+
+        if (body.query.includes('query UserById')) {
+          return jsonResponse({
+            data: {
+              node: {
+                id: 'U_TEST_1',
+                login: 'octocat',
+                name: 'Octocat',
+                url: 'https://github.com/octocat',
+                createdAt: '2026-01-01T00:00:00Z'
+              }
+            }
+          })
+        }
+
+        if (body.query.includes('query Contributions')) {
+          return jsonResponse({
+            data: {
+              user: {
+                contributionsCollection: {
+                  totalCommitContributions: 1,
+                  totalIssueContributions: 0,
+                  totalPullRequestContributions: 0,
+                  totalPullRequestReviewContributions: 0,
+                  restrictedContributionsCount: 0,
+                  commitContributionsByRepository: [],
+                  pullRequestContributionsByRepository: [],
+                  pullRequestReviewContributionsByRepository: [],
+                  issueContributionsByRepository: []
+                }
+              }
+            }
+          })
+        }
+
+        if (body.query.includes('query RepositoryAuthoredCommitsExist')) {
+          return jsonResponse({
+            data: {
+              repository: {
+                defaultBranchRef: {
+                  target: {
+                    history: {
+                      nodes: []
+                    }
+                  }
+                }
+              }
+            }
+          })
+        }
+
+        if (isRepositoryCommitsQuery(body.query)) {
+          const cursor = body.variables?.cursor ?? null
+          if (!matchedProbe) cursors.push(cursor)
+          const page =
+            cursor === null ? 1 : cursor === 'probe-page-1' ? 2 : cursor === 'probe-page-2' ? 3 : 4
+          if (page === 3) matchedProbe = true
+
+          return jsonResponse({
+            data: {
+              repository: {
+                defaultBranchRef: {
+                  target: {
+                    history: {
+                      totalCount: 151,
+                      pageInfo:
+                        page < 3
+                          ? { hasNextPage: true, endCursor: `probe-page-${page}` }
+                          : { hasNextPage: false, endCursor: null },
+                      nodes: [
+                        {
+                          oid: `private-commit-${page}`,
+                          committedDate: '2026-05-07T12:34:56Z',
+                          additions: 4,
+                          deletions: 1,
+                          changedFiles: 2,
+                          messageHeadline: 'Private work',
+                          author: githubCommitActor({
+                            id: 'U_OTHER_1',
+                            login: 'other'
+                          }),
+                          authors: {
+                            nodes:
+                              page === 3
+                                ? [
+                                    githubCommitActor({
+                                      id: 'U_OTHER_1',
+                                      login: 'other'
+                                    }),
+                                    githubCommitActor()
+                                  ]
+                                : [
+                                    githubCommitActor({
+                                      id: 'U_OTHER_1',
+                                      login: 'other'
+                                    })
+                                  ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          })
+        }
+
+        if (body.query.includes('query RepositoryLanguages')) {
+          return repositoryLanguagesResponse()
+        }
+      }
+
+      const parsed = new URL(url)
+
+      if (parsed.pathname === '/user/repos') {
+        return jsonResponse([privateRepositoryRestFixture()])
+      }
+
+      if (parsed.pathname === '/search/issues') {
+        return jsonResponse({ total_count: 0, items: [] })
+      }
+
+      return new Response(`unexpected request: ${url}`, { status: 500 })
+    }) as typeof fetch
+  }
 }
 
 function mockGitHubFetchWithPrivateDiscoveryFailure(): typeof fetch {

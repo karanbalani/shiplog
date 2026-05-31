@@ -9,6 +9,7 @@ import type {
   IssueRow,
   MaintenanceTaskRow,
   OrganizationRow,
+  PrivateRepositoryProbeStateRow,
   ProfileSnapshotRow,
   PullRequestReviewRow,
   PullRequestRow,
@@ -393,6 +394,95 @@ export async function markRepositoryBackfillSkippedPermanent(
            updated_at = now()
      RETURNING *`,
     [accountId, repositoryId, backfillThroughOn, error]
+  )
+
+  return result.rows[0]!
+}
+
+export async function markPrivateRepositoryProbeRunning(
+  accountId: number,
+  repositoryExternalId: string,
+  backfillThroughOn: string,
+  commitYear: number,
+  commitCursor: string | null,
+  completedCommitYears: string
+): Promise<PrivateRepositoryProbeStateRow> {
+  const result = await db.query<PrivateRepositoryProbeStateRow>(
+    `INSERT INTO private_repository_probe_state
+       (account_id, repository_external_id, backfill_through_on, status, commit_year,
+        commit_cursor, completed_commit_years, matched_at, completed_at, last_error)
+     VALUES ($1, $2, $3, 'running', $4, $5, $6, NULL, NULL, NULL)
+     ON CONFLICT (account_id, repository_external_id, backfill_through_on) DO UPDATE
+       SET status = 'running',
+           commit_year = EXCLUDED.commit_year,
+           commit_cursor = EXCLUDED.commit_cursor,
+           completed_commit_years = EXCLUDED.completed_commit_years,
+           matched_at = NULL,
+           completed_at = NULL,
+           last_error = NULL,
+           updated_at = now()
+     RETURNING *`,
+    [
+      accountId,
+      repositoryExternalId,
+      backfillThroughOn,
+      commitYear,
+      commitCursor,
+      completedCommitYears
+    ]
+  )
+
+  return result.rows[0]!
+}
+
+export async function markPrivateRepositoryProbeMatched(
+  accountId: number,
+  repositoryExternalId: string,
+  backfillThroughOn: string
+): Promise<PrivateRepositoryProbeStateRow> {
+  const result = await db.query<PrivateRepositoryProbeStateRow>(
+    `INSERT INTO private_repository_probe_state
+       (account_id, repository_external_id, backfill_through_on, status, commit_year,
+        commit_cursor, completed_commit_years, matched_at, completed_at, last_error)
+     VALUES ($1, $2, $3, 'matched', NULL, NULL, '', now(), now(), NULL)
+     ON CONFLICT (account_id, repository_external_id, backfill_through_on) DO UPDATE
+       SET status = 'matched',
+           commit_year = NULL,
+           commit_cursor = NULL,
+           completed_commit_years = '',
+           matched_at = now(),
+           completed_at = now(),
+           last_error = NULL,
+           updated_at = now()
+     RETURNING *`,
+    [accountId, repositoryExternalId, backfillThroughOn]
+  )
+
+  return result.rows[0]!
+}
+
+export async function markPrivateRepositoryProbeNoMatch(
+  accountId: number,
+  repositoryExternalId: string,
+  backfillThroughOn: string,
+  completedCommitYears: string
+): Promise<PrivateRepositoryProbeStateRow> {
+  const result = await db.query<PrivateRepositoryProbeStateRow>(
+    `INSERT INTO private_repository_probe_state
+       (account_id, repository_external_id, backfill_through_on, status, commit_year,
+        commit_cursor, completed_commit_years, matched_at, completed_at, last_error)
+     VALUES ($1, $2, $3, 'no_match', NULL, NULL, $4, NULL, now(), NULL)
+     ON CONFLICT (account_id, repository_external_id, backfill_through_on) DO UPDATE
+       SET status = 'no_match',
+           commit_year = NULL,
+           commit_cursor = NULL,
+           completed_commit_years = EXCLUDED.completed_commit_years,
+           matched_at = NULL,
+           completed_at = now(),
+           last_error = NULL,
+           updated_at = now()
+     RETURNING *`,
+    [accountId, repositoryExternalId, backfillThroughOn, completedCommitYears]
   )
 
   return result.rows[0]!
