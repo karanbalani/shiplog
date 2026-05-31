@@ -447,13 +447,14 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
         const errorSummary = repositoryErrorSummary(repositoryNode, error)
 
         if (isGitHubRepositoryUnavailableError(error) || isSkippableAccessError(error)) {
+          incompletePrivateProbePlans.delete(repositoryNode.id)
           repositoryStatus = 'skipped for now'
           logger.warn(
             `[backfill] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel} is inaccessible in this run; skipping without recording a permanent state (${errorSummary})`
           )
         } else if (isRetryableRepositoryBackfillError(error)) {
           repositoryStatus = 'retry later'
-          if (repository) incompletePrivateProbePlans.delete(repositoryNode.id)
+          incompletePrivateProbePlans.delete(repositoryNode.id)
           const errorEvent = await recordBackfillErrorEvent({
             identity,
             repository,
