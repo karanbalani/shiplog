@@ -49,7 +49,7 @@ GRANT USAGE ON SCHEMA public TO shiplog_readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO shiplog_readonly;
 ```
 
-Allow the read-only role to see tables and views created by future Shiplog migrations:
+The `GRANT SELECT ON ALL TABLES` line covers tables and views that already exist. Add default privileges too so future tables and views created by Shiplog migrations are automatically readable by `shiplog_readonly`:
 
 ```sql
 ALTER DEFAULT PRIVILEGES FOR ROLE shiplog IN SCHEMA public
