@@ -39,21 +39,35 @@ On Neon, you can create the database and role from the dashboard or SQL editor. 
 
 If you use a browser-only tool such as shiplog Render Studio to preview README rendering against your database, create a separate read-only role. Do not use the migration/write role in browser tools.
 
-Run this as a Postgres admin user or database owner:
+First, run this as a Postgres admin user or database owner. On Neon, this is often `neondb_owner`:
 
 ```sql
 CREATE ROLE shiplog_readonly LOGIN PASSWORD 'replace-with-a-strong-readonly-password';
 
 GRANT CONNECT ON DATABASE shiplog TO shiplog_readonly;
 GRANT USAGE ON SCHEMA public TO shiplog_readonly;
+```
+
+Then connect as the role that owns the Shiplog tables. In the setup above, that is the `shiplog` role used by `DATABASE_CONNECTION_STRING`. Existing tables and views are owned by the role that ran the migrations, so this `GRANT SELECT` step must be run by that owner:
+
+```sql
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO shiplog_readonly;
 ```
 
-The `GRANT SELECT ON ALL TABLES` line covers tables and views that already exist. Add default privileges too so future tables and views created by Shiplog migrations are automatically readable by `shiplog_readonly`. Run this while connected as the `shiplog` role used by `DATABASE_CONNECTION_STRING`:
+Add default privileges too so future tables and views created by Shiplog migrations are automatically readable by `shiplog_readonly`. Run this while still connected as the `shiplog` migration role:
 
 ```sql
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
 GRANT SELECT ON TABLES TO shiplog_readonly;
+```
+
+If `GRANT SELECT ON ALL TABLES` prints warnings such as `no privileges were granted`, you are probably connected as a role that can use the schema but does not own the Shiplog tables. Check the owner and reconnect as that role:
+
+```sql
+SELECT schemaname, tablename, tableowner
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY tablename;
 ```
 
 Use this role only for read-only preview tools:
