@@ -175,7 +175,7 @@ The workflows run `bun run tokens:export -- --scope read` before ingestion and `
 
 Run `freshness` first. It migrates the database, initializes configured accounts, collects current activity, and runs queued maintenance.
 
-After that, leave the scheduled lanes on. `freshness` keeps recent data current every 6 hours. `history` runs every 2 hours and makes bounded historical improvements. `integrity` runs daily to detect drift, queue repairs, and drain maintenance work. `daily-publish` runs once per day to collect any final current activity, drain queued maintenance, render, and publish only when the target content changed. Dispatch `integrity` manually with `operation=repair` for an explicit one-off date or range repair, then dispatch `daily-publish` manually if you want the repaired state published before the next daily run.
+After that, leave the scheduled lanes on. `freshness` keeps recent data current every 6 hours. `history` runs every 2 hours and makes bounded historical improvements. `integrity` runs daily to detect drift, queue repairs, and drain maintenance work. `publish` runs once per day to render the current database state and publish only when the target content changed. Dispatch `integrity` manually with `operation=repair` for an explicit one-off date or range repair, then dispatch `publish` manually if you want the repaired state published before the next daily run.
 
 ## What happens if daily collect fails for a few days?
 
@@ -232,7 +232,7 @@ Historical backfill is designed to be resumable:
 - Repeated rows are deduplicated on rerun.
 - Completed repositories are tracked in `repository_backfill_state`; set `BACKFILL_MODE`, `BACKFILL_MAX_MINUTES`, `BACKFILL_REPO_BUDGET_MINUTES`, or the history workflow's matching inputs to choose the fast or deep path and process large accounts in smaller chunks. `BACKFILL_REPOSITORY_LIMIT` remains available for custom local runs that need a hard cap. The scheduled history workflow defaults to `mode=deep`, `max_minutes=30`, and `repo_budget_minutes=5`.
 - Incomplete private repository candidate commit probes are tracked in `private_repository_probe_state`, so a large readable private repository can continue from its last commit cursor instead of starting over. Budgeted runs revisit incomplete private probes while there is enough runtime left for another repository budget.
-- A budgeted history run that pauses is still useful progress. In GitHub Actions it writes a step summary and resumes the remaining repositories on the next scheduled run. The next `daily-publish` run renders and publishes the best current database state.
+- A budgeted history run that pauses is still useful progress. In GitHub Actions it writes a step summary and resumes the remaining repositories on the next scheduled run. The next `publish` run renders and publishes the best current database state.
 - If a single repository still gets a retryable provider error after request retries are exhausted, shiplog marks that repository `retry_wait`, continues with other repositories, and lets a later run retry the incomplete repository. Reruns skip completed repository sub-steps before retrying the failed work.
 - If a private repository or organization token loses access, shiplog warns and skips that scope for the current run without marking it permanently blocked.
 
@@ -252,7 +252,7 @@ Only `ci.yml` should run on pushes to `main`. If an ingestion lane has a `push` 
 - `freshness.yml` runs scheduled or manually for current collection and queued maintenance.
 - `history.yml` runs scheduled or manually for progressive historical improvement.
 - `integrity.yml` runs scheduled or manually for drift detection, repair, and queued maintenance.
-- `daily-publish.yml` runs scheduled or manually for final current collection, queued maintenance, render, and publish.
+- `publish.yml` runs scheduled or manually for render and publish.
 
 ## Can I run only the renderer?
 
