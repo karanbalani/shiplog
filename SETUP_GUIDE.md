@@ -49,10 +49,10 @@ GRANT USAGE ON SCHEMA public TO shiplog_readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO shiplog_readonly;
 ```
 
-The `GRANT SELECT ON ALL TABLES` line covers tables and views that already exist. Add default privileges too so future tables and views created by Shiplog migrations are automatically readable by `shiplog_readonly`:
+The `GRANT SELECT ON ALL TABLES` line covers tables and views that already exist. Add default privileges too so future tables and views created by Shiplog migrations are automatically readable by `shiplog_readonly`. Run this while connected as the `shiplog` role used by `DATABASE_CONNECTION_STRING`:
 
 ```sql
-ALTER DEFAULT PRIVILEGES FOR ROLE shiplog IN SCHEMA public
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
 GRANT SELECT ON TABLES TO shiplog_readonly;
 ```
 
