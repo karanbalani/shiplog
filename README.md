@@ -18,6 +18,8 @@ shiplog gives you your own contribution archive and one umbrella for activity ac
 - [Config builder](https://shiplog.karanbalani.tech/config-builder/): generate `shiplog.config.json` and the Base64 value for workflows.
 - [Example config](shiplog.config.example.json): copy this when creating your own `shiplog.config.json`.
 - [Config schema](schemas/shiplog.config.schema.json): full JSON schema for the config file.
+- [Fallback render config](.shiplog/render.json): the default README recipe used when a target repo has no `.shiplog/render.json`.
+- [Render config schema](schemas/render.config.schema.json): JSON schema for target-repo README rendering.
 - [FAQ](docs/FAQ.md): common setup and operations questions.
 
 ## What It Does
@@ -25,6 +27,7 @@ shiplog gives you your own contribution archive and one umbrella for activity ac
 - Collects GitHub commits, pull requests, reviews, issues, repositories, languages, and organization context.
 - Stores activity in Postgres with historical tables and daily rollups.
 - Runs scheduled GitHub Actions for freshness, history, integrity repair, housekeeping, and once-daily publishing.
+- Lets each publish target define its README in `.shiplog/render.json`, with Shiplog's bundled config and footer as the fallback.
 - Records short-lived diagnostic error events in Postgres for workflow investigation.
 - Uses stable GitHub IDs so username, organization, and repository renames do not split history.
 
@@ -32,6 +35,7 @@ shiplog gives you your own contribution archive and one umbrella for activity ac
 
 - [Setup guide](SETUP_GUIDE.md): run shiplog in your own fork.
 - [Schema](docs/SCHEMA.md): database tables, views, and timestamp semantics.
+- [Render config](docs/RENDER_CONFIG.md): target-repo `.shiplog/render.json` format.
 - [GitHub mapping](docs/GITHUB_MAPPING.md): how GitHub data maps into shiplog.
 - [Conventions](docs/CONVENTIONS.md): project naming and implementation conventions.
 - [Contributing](CONTRIBUTING.md): development workflow for changing shiplog itself.

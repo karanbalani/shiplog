@@ -274,8 +274,8 @@ The maintenance dispatcher reads due `maintenance_tasks`, atomically claims supp
 
 The errors dispatcher prunes generic diagnostic rows from `error_events`. This table is intentionally not workflow state; callers can write full JSON payloads for investigation, and housekeeping keeps the table bounded by age.
 
-The renderer reads `TEMPLATE.md`, queries account-scoped activity from the database, fills generic placeholders, and writes `rendered.md`. It does not overwrite this repository's own `README.md`.
+The renderer first tries to fetch `.shiplog/render.json` from a configured publish target, then falls back to this repository's bundled `.shiplog/render.json`. Render configs define read-only SQL queries and Markdown blocks; the renderer runs those queries against the Shiplog database, interpolates the configured block values, appends the required shiplog footer, and writes Markdown. Explicit tests and local calls can still pass a `TEMPLATE.md`-style template for legacy coverage. The renderer does not overwrite this repository's own `README.md`.
 
-The publisher reads `rendered.md`, resolves each configured stable `repositoryId` to its current GitHub `owner/repo`, and writes to the configured `branch` and `path` with the target's `tokenEnv`. When the remote file already matches `rendered.md`, it skips the write so no duplicate README commit is created.
+The publisher resolves each configured stable `repositoryId` to its current GitHub `owner/repo`, renders content independently for each target unless explicit fixed content was provided, and writes to the configured `branch` and `path` with the target's `tokenEnv`. When the remote file already matches the rendered content, it skips the write so no duplicate README commit is created.
 
 CLI logs use `lib/logger.ts`, write to stderr, include ISO timestamps, support log levels, and colorize levels unless `NO_COLOR` is set.

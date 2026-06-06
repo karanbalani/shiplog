@@ -51,6 +51,21 @@ test('tokenEnvNames returns config token env names by scope', () => {
   ])
 })
 
+test('tokenEnvNames can scope publish tokens to one target index', () => {
+  const c = config.validate({
+    version: 1,
+    collect: { accounts: [{ provider: 'github', accountId: 'U_TEST_1' }] },
+    publish: {
+      targets: [
+        { provider: 'github', repositoryId: 'R_PROFILE_1', tokenEnv: 'GH_RW_ONE_TOKEN' },
+        { provider: 'github', repositoryId: 'R_PROFILE_2', tokenEnv: 'GH_RW_TWO_TOKEN' }
+      ]
+    }
+  })
+
+  expect(tokenEnvNames(c, 'publish', { targetIndex: 1 })).toEqual(['GH_RW_TWO_TOKEN'])
+})
+
 test('exportTokenEnv writes only configured tokens for the selected scope', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-token-env-'))
   const configPath = path.join(dir, 'shiplog.config.json')

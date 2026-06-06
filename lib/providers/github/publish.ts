@@ -13,6 +13,14 @@ export interface GitHubPublishFileOptions {
   fetch?: Fetcher
 }
 
+export interface GitHubFileContentOptions {
+  token: string
+  repositoryFullName: string
+  branch: string
+  path: string
+  fetch?: Fetcher
+}
+
 export interface GitHubPublishFileResult {
   repositoryFullName: string
   branch: string
@@ -39,6 +47,13 @@ interface GitHubPutContentResponse {
   commit?: {
     sha?: string
   } | null
+}
+
+export async function fetchGitHubFileContent(
+  options: GitHubFileContentOptions
+): Promise<string | null> {
+  const existingFile = await fetchExistingFile(options)
+  return existingFile?.content ?? null
 }
 
 export async function publishGitHubFile(
@@ -90,7 +105,7 @@ interface ExistingGitHubFile {
 }
 
 async function fetchExistingFile(
-  options: GitHubPublishFileOptions
+  options: GitHubFileContentOptions
 ): Promise<ExistingGitHubFile | null> {
   try {
     const response = await fetchJson<GitHubContentResponse>(

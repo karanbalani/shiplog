@@ -12,12 +12,14 @@ export interface ExportTokenEnvOptions {
   configPath?: string
   githubEnvPath?: string
   scope?: TokenEnvScope
+  targetIndex?: number
   tokenSecretsJson?: string
 }
 
 export function tokenEnvNames(
   shiplogConfig: ShiplogConfig,
-  scope: TokenEnvScope = 'all'
+  scope: TokenEnvScope = 'all',
+  options: Pick<ExportTokenEnvOptions, 'targetIndex'> = {}
 ): string[] {
   const names: string[] = []
   const seen = new Set<string>()
@@ -36,7 +38,7 @@ export function tokenEnvNames(
   }
 
   if (scope === 'publish' || scope === 'all') {
-    for (const target of shiplogConfig.publish.targets) add(target.tokenEnv)
+    for (const target of publishTargets(shiplogConfig, options.targetIndex)) add(target.tokenEnv)
   }
 
   return names
@@ -45,7 +47,7 @@ export function tokenEnvNames(
 export function exportTokenEnv(options: ExportTokenEnvOptions = {}): string[] {
   const scope = options.scope ?? 'all'
   const shiplogConfig = config.load(options.configPath)
-  const names = tokenEnvNames(shiplogConfig, scope)
+  const names = tokenEnvNames(shiplogConfig, scope, { targetIndex: options.targetIndex })
   const secrets = loadTokenSecrets(options)
   const missing = names.filter((name) => !secrets[name])
 
@@ -71,6 +73,24 @@ export function exportTokenEnv(options: ExportTokenEnvOptions = {}): string[] {
   )
 
   return names
+}
+
+function publishTargets(
+  shiplogConfig: ShiplogConfig,
+  targetIndex: number | undefined
+): ShiplogConfig['publish']['targets'] {
+  if (targetIndex === undefined) return shiplogConfig.publish.targets
+
+  assertTargetIndex(targetIndex)
+  const target = shiplogConfig.publish.targets[targetIndex]
+  if (!target) throw new Error(`publish target index ${targetIndex} is out of range`)
+  return [target]
+}
+
+function assertTargetIndex(value: number): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`publish target index must be a non-negative integer`)
+  }
 }
 
 function loadTokenSecrets(options: ExportTokenEnvOptions): Record<string, string> {
@@ -121,8 +141,10 @@ function assertTokenEnvName(name: string): void {
   }
 }
 
-function parseCliArgs(args: string[]): Pick<ExportTokenEnvOptions, 'configPath' | 'scope'> {
-  const options: Pick<ExportTokenEnvOptions, 'configPath' | 'scope'> = {}
+function parseCliArgs(
+  args: string[]
+): Pick<ExportTokenEnvOptions, 'configPath' | 'scope' | 'targetIndex'> {
+  const options: Pick<ExportTokenEnvOptions, 'configPath' | 'scope' | 'targetIndex'> = {}
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]
@@ -133,6 +155,11 @@ function parseCliArgs(args: string[]): Pick<ExportTokenEnvOptions, 'configPath' 
     }
     if (arg === '--scope') {
       options.scope = parseScope(requireValue(args, i, arg))
+      i += 1
+      continue
+    }
+    if (arg === '--target-index') {
+      options.targetIndex = parseTargetIndex(requireValue(args, i, arg))
       i += 1
       continue
     }
@@ -151,6 +178,12 @@ function requireValue(args: string[], index: number, flag: string): string {
 function parseScope(value: string): TokenEnvScope {
   if (value === 'read' || value === 'publish' || value === 'all') return value
   throw new Error(`Invalid token env scope: ${value}`)
+}
+
+function parseTargetIndex(value: string): number {
+  const targetIndex = Number(value)
+  assertTargetIndex(targetIndex)
+  return targetIndex
 }
 
 if (import.meta.main) {

@@ -6,7 +6,7 @@ import path from 'node:path'
 import * as publish from '../../bin/publish.ts'
 import type { Fetcher } from '../../lib/http.ts'
 import * as logger from '../../lib/logger.ts'
-import { publishGitHubFile } from '../../lib/providers/github/publish.ts'
+import { fetchGitHubFileContent, publishGitHubFile } from '../../lib/providers/github/publish.ts'
 import type { ShiplogConfig } from '../../lib/types/index.ts'
 
 let previousWriteToken: string | undefined
@@ -147,6 +147,44 @@ test('publishGitHubFile skips update when target content is unchanged', async ()
   })
 })
 
+test('fetchGitHubFileContent reads and decodes a target file', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = []
+  const fetch: Fetcher = async (url, init) => {
+    calls.push({ url, init })
+    return jsonResponse({
+      type: 'file',
+      sha: 'existing-file-sha',
+      content: Buffer.from('{"version":1}\n', 'utf8').toString('base64'),
+      encoding: 'base64'
+    })
+  }
+
+  const content = await fetchGitHubFileContent({
+    token: 'write-token',
+    repositoryFullName: 'octocat/octocat',
+    branch: 'main',
+    path: '.shiplog/render.json',
+    fetch
+  })
+
+  expect(content).toBe('{"version":1}\n')
+  expect(calls[0]!.url).toBe(
+    'https://api.github.com/repos/octocat/octocat/contents/.shiplog/render.json?ref=main'
+  )
+})
+
+test('fetchGitHubFileContent returns null when the target file is missing', async () => {
+  const content = await fetchGitHubFileContent({
+    token: 'write-token',
+    repositoryFullName: 'octocat/octocat',
+    branch: 'main',
+    path: '.shiplog/render.json',
+    fetch: async () => new Response('{"message":"not found"}', { status: 404 })
+  })
+
+  expect(content).toBeNull()
+})
+
 test('publish uses configured publish targets and token env vars', async () => {
   const logs: string[] = []
   const calls: Array<{ url: string; init?: RequestInit }> = []
@@ -192,7 +230,151 @@ test('publish uses configured publish targets and token env vars', async () => {
   ).toBe(true)
 })
 
-test('publish reads rendered.md by default', async () => {
+test('publish renders each target from that target render config', async () => {
+  process.env.GH_RW_REPO_TOKEN = 'target-write-token'
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-publish-summary-'))
+  const summaryPath = path.join(dir, 'summary.md')
+  const published: Record<string, string> = {}
+
+  const fetch: Fetcher = async (url, init) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { variables?: { id?: string } }
+      const repository =
+        body.variables?.id === 'R_PROFILE_2'
+          ? {
+              id: 'R_PROFILE_2',
+              nameWithOwner: 'octocat/two',
+              url: 'https://github.com/octocat/two'
+            }
+          : {
+              id: 'R_PROFILE_1',
+              nameWithOwner: 'octocat/one',
+              url: 'https://github.com/octocat/one'
+            }
+
+      return jsonResponse({ data: { node: repository } })
+    }
+
+    if (url.includes('/contents/.shiplog/render.json?')) {
+      const title = url.includes('/octocat/two/') ? 'Target Two' : 'Target One'
+      return jsonResponse({
+        type: 'file',
+        content: Buffer.from(
+          JSON.stringify({
+            version: 1,
+            markdown: [
+              {
+                type: 'heading',
+                level: 1,
+                text: title
+              }
+            ]
+          }),
+          'utf8'
+        ).toString('base64'),
+        encoding: 'base64'
+      })
+    }
+
+    if (init?.method === 'PUT') {
+      const body = JSON.parse(String(init.body)) as { content: string }
+      published[url] = Buffer.from(body.content, 'base64').toString('utf8')
+      return jsonResponse({
+        content: { sha: 'file-sha' },
+        commit: { sha: 'commit-sha' }
+      })
+    }
+
+    return new Response('{"message":"not found"}', { status: 404 })
+  }
+
+  const results = await publish.publish({
+    config: multiTargetShiplogConfig(),
+    summaryPath,
+    fetch
+  })
+
+  expect(results).toHaveLength(2)
+  expect(published['https://api.github.com/repos/octocat/one/contents/README.md']).toContain(
+    '# Target One'
+  )
+  expect(published['https://api.github.com/repos/octocat/two/contents/PROFILE.md']).toContain(
+    '# Target Two'
+  )
+  expect(published['https://api.github.com/repos/octocat/one/contents/README.md']).toContain(
+    'Powered by my own activity database via [shiplog](https://shiplog.karanbalani.tech).'
+  )
+  expect(published['https://api.github.com/repos/octocat/two/contents/PROFILE.md']).toContain(
+    'Powered by my own activity database via [shiplog](https://shiplog.karanbalani.tech).'
+  )
+
+  const summary = fs.readFileSync(summaryPath, 'utf8')
+  expect(summary).toContain('## shiplog rendered README previews')
+  expect(summary).toContain('<summary>octocat/one@main:README.md - updated (commit-sha)</summary>')
+  expect(summary).toContain('<summary>octocat/two@main:PROFILE.md - updated (commit-sha)</summary>')
+  expect(summary).toContain('```markdown\n# Target One')
+  expect(summary).toContain('```markdown\n# Target Two')
+})
+
+test('publish can publish only one target index', async () => {
+  process.env.GH_RW_REPO_TOKEN = 'target-write-token'
+  const published: Record<string, string> = {}
+
+  const fetch: Fetcher = async (url, init) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { variables?: { id?: string } }
+      expect(body.variables?.id).toBe('R_PROFILE_2')
+      return jsonResponse({
+        data: {
+          node: {
+            id: 'R_PROFILE_2',
+            nameWithOwner: 'octocat/two',
+            url: 'https://github.com/octocat/two'
+          }
+        }
+      })
+    }
+
+    if (url.includes('/contents/.shiplog/render.json?')) {
+      return jsonResponse({
+        type: 'file',
+        content: Buffer.from(
+          JSON.stringify({
+            version: 1,
+            markdown: [{ type: 'heading', level: 1, text: 'Only Target Two' }]
+          }),
+          'utf8'
+        ).toString('base64'),
+        encoding: 'base64'
+      })
+    }
+
+    if (init?.method === 'PUT') {
+      const body = JSON.parse(String(init.body)) as { content: string }
+      published[url] = Buffer.from(body.content, 'base64').toString('utf8')
+      return jsonResponse({
+        content: { sha: 'file-sha' },
+        commit: { sha: 'commit-sha' }
+      })
+    }
+
+    return new Response('{"message":"not found"}', { status: 404 })
+  }
+
+  const results = await publish.publish({
+    config: multiTargetShiplogConfig(),
+    targetIndex: 1,
+    fetch
+  })
+
+  expect(results).toHaveLength(1)
+  expect(published['https://api.github.com/repos/octocat/two/contents/PROFILE.md']).toContain(
+    '# Only Target Two'
+  )
+  expect(published['https://api.github.com/repos/octocat/one/contents/README.md']).toBeUndefined()
+})
+
+test('publish reads an explicit input path for fixed-content publishing', async () => {
   const previousCwd = process.cwd()
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-publish-default-'))
   fs.writeFileSync(path.join(dir, 'rendered.md'), '# rendered from file\n')
@@ -227,6 +409,7 @@ test('publish reads rendered.md by default', async () => {
     process.chdir(dir)
     await publish.publish({
       config: shiplogConfig(),
+      inputPath: 'rendered.md',
       fetch
     })
   } finally {
@@ -273,6 +456,30 @@ function shiplogConfig(): ShiplogConfig {
           repositoryId: 'R_PROFILE_1',
           branch: 'main',
           path: 'README.md',
+          tokenEnv: 'GH_RW_REPO_TOKEN'
+        }
+      ]
+    }
+  }
+}
+
+function multiTargetShiplogConfig(): ShiplogConfig {
+  return {
+    ...shiplogConfig(),
+    publish: {
+      targets: [
+        {
+          provider: 'github',
+          repositoryId: 'R_PROFILE_1',
+          branch: 'main',
+          path: 'README.md',
+          tokenEnv: 'GH_RW_REPO_TOKEN'
+        },
+        {
+          provider: 'github',
+          repositoryId: 'R_PROFILE_2',
+          branch: 'main',
+          path: 'PROFILE.md',
           tokenEnv: 'GH_RW_REPO_TOKEN'
         }
       ]

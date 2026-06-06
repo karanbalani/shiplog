@@ -141,9 +141,55 @@ Token scopes:
 
 The `repo` scope is required if you want private repository activity.
 
-The `publish` workflow exports publish token names from config immediately before `bun run publish`. If a publish target uses a different `tokenEnv`, create a repository secret with that name; no workflow edit is needed.
+The `publish` workflow exports publish token names from config before rendering and publishing. If a publish target uses a different `tokenEnv`, create a repository secret with that name; no workflow edit is needed.
 
-## 5. Run the first workflow
+## 5. Optional: Customize README rendering
+
+By default, shiplog uses the fallback render config committed in this repository at `.shiplog/render.json`.
+
+To customize the generated README, add a render config to the target profile repository:
+
+```text
+target-profile-repo/
+  .shiplog/
+    render.json
+  README.md
+```
+
+The target `.shiplog/render.json` defines SQL queries and Markdown blocks. During publish, Shiplog renders each configured target independently in its own GitHub Actions matrix job: if that target repository has `.shiplog/render.json`, Shiplog uses it; otherwise Shiplog uses the fallback config bundled in this repository. The generated content is published back to the configured target path. If one target fails, the other target jobs keep running; the workflow still reports a failure so the broken target is visible.
+
+Example block shape:
+
+```json
+{
+  "version": 1,
+  "queries": {
+    "repositories": {
+      "mode": "many",
+      "sql": "SELECT r.full_name, r.web_url, SUM(d.commits)::int AS commits FROM daily_repository_activity d JOIN repositories r ON r.id = d.repository_id GROUP BY r.id, r.full_name, r.web_url ORDER BY commits DESC LIMIT 10"
+    }
+  },
+  "markdown": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Hi, I'm {{ profile.displayName }}"
+    },
+    {
+      "type": "table",
+      "query": "repositories",
+      "columns": [
+        { "label": "Repository", "value": "[{{ full_name }}]({{ web_url }})" },
+        { "label": "Commits", "value": "{{ commits }}" }
+      ]
+    }
+  ]
+}
+```
+
+Render queries are plain read-only Postgres SQL against your Shiplog tables. Use normal SQL for filtering, such as querying `accounts` for one account or using `CURRENT_DATE - INTERVAL '365 days'` for recent activity. Shiplog automatically appends this footer to every rendered README: `<sub>Powered by my own activity database via [shiplog](https://shiplog.karanbalani.tech).</sub>`. See [docs/RENDER_CONFIG.md](docs/RENDER_CONFIG.md) for examples and [schemas/render.config.schema.json](schemas/render.config.schema.json) for the full config shape.
+
+## 6. Run the first workflow
 
 Run the `freshness` workflow once from GitHub Actions to migrate the database, initialize the configured accounts, and collect current activity.
 
@@ -194,7 +240,7 @@ bun run render
 - `freshness`: runs every 6 hours. Migrates, initializes accounts, collects recent activity, and runs queued maintenance.
 - `history`: runs every 2 hours. Makes bounded historical progress with deep-mode defaults.
 - `integrity`: runs daily. Detects drift, queues repair work, and runs maintenance.
-- `publish`: runs daily. Renders `rendered.md` from the current database state and publishes it when the target content changed.
+- `publish`: runs daily. Builds a target matrix, renders each configured publish target from the current database state, and publishes only when that target content changed.
 - `housekeeping`: runs daily. Prunes diagnostic `error_events` older than 30 days.
 - `ci`: runs formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
 

@@ -1,0 +1,115 @@
+{
+  "$schema": "../schemas/render.config.schema.json",
+  "version": 1,
+  "queries": {
+    "profile_stats": {
+      "mode": "many",
+      "sql": "WITH all_time AS (SELECT COALESCE(SUM(commits), 0)::int AS commits, COALESCE(SUM(lines_added), 0)::int AS lines_added, COALESCE(SUM(lines_deleted), 0)::int AS lines_deleted, COALESCE(SUM(prs_opened), 0)::int AS prs_opened, COALESCE(SUM(prs_merged), 0)::int AS prs_merged, COALESCE(SUM(pr_reviews_total), 0)::int AS pr_reviews, COALESCE(SUM(issues_opened), 0)::int AS issues_opened, COALESCE(SUM(issues_closed), 0)::int AS issues_closed FROM daily_repository_activity), recent AS (SELECT COALESCE(SUM(commits), 0)::int AS commits, COALESCE(SUM(lines_added), 0)::int AS lines_added, COALESCE(SUM(lines_deleted), 0)::int AS lines_deleted, COALESCE(SUM(prs_opened), 0)::int AS prs_opened, COALESCE(SUM(prs_merged), 0)::int AS prs_merged, COALESCE(SUM(pr_reviews_total), 0)::int AS pr_reviews, COALESCE(SUM(issues_opened), 0)::int AS issues_opened, COALESCE(SUM(issues_closed), 0)::int AS issues_closed FROM daily_repository_activity WHERE activity_on >= CURRENT_DATE - INTERVAL '365 days') SELECT 'Commits' AS metric, all_time.commits AS all_time, recent.commits AS last_year FROM all_time, recent UNION ALL SELECT 'Lines added', all_time.lines_added, recent.lines_added FROM all_time, recent UNION ALL SELECT 'Lines deleted', all_time.lines_deleted, recent.lines_deleted FROM all_time, recent UNION ALL SELECT 'PRs opened', all_time.prs_opened, recent.prs_opened FROM all_time, recent UNION ALL SELECT 'PRs merged', all_time.prs_merged, recent.prs_merged FROM all_time, recent UNION ALL SELECT 'PR reviews', all_time.pr_reviews, recent.pr_reviews FROM all_time, recent UNION ALL SELECT 'Issues opened', all_time.issues_opened, recent.issues_opened FROM all_time, recent UNION ALL SELECT 'Issues closed', all_time.issues_closed, recent.issues_closed FROM all_time, recent"
+    },
+    "top_repositories": {
+      "mode": "many",
+      "sql": "SELECT r.full_name, r.web_url, COALESCE(SUM(d.commits), 0)::int AS commits, COALESCE(SUM(d.prs_opened), 0)::int AS pull_requests, COALESCE(SUM(d.pr_reviews_total), 0)::int AS reviews FROM daily_repository_activity d JOIN repositories r ON r.id = d.repository_id WHERE d.activity_on >= CURRENT_DATE - INTERVAL '365 days' AND r.visibility = 'public' AND r.redacted = false GROUP BY r.id, r.full_name, r.web_url ORDER BY commits DESC, pull_requests DESC, reviews DESC, full_name ASC LIMIT 10"
+    },
+    "languages": {
+      "mode": "many",
+      "sql": "SELECT r.primary_language AS language, COALESCE(SUM(d.commits), 0)::int AS commits FROM daily_repository_activity d JOIN repositories r ON r.id = d.repository_id WHERE d.activity_on >= CURRENT_DATE - INTERVAL '365 days' AND r.primary_language IS NOT NULL GROUP BY r.primary_language ORDER BY commits DESC, language ASC LIMIT 10"
+    },
+    "accounts": {
+      "mode": "many",
+      "sql": "SELECT provider, external_login, external_url FROM accounts ORDER BY provider, external_login"
+    }
+  },
+  "markdown": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Hi there, I'm {{ profile.displayName }}"
+    },
+    {
+      "type": "paragraph",
+      "text": "Building, learning, and shipping across GitHub."
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Snapshot"
+    },
+    {
+      "type": "table",
+      "query": "profile_stats",
+      "columns": [
+        {
+          "label": "Metric",
+          "value": "{{ metric }}"
+        },
+        {
+          "label": "All time",
+          "value": "{{ all_time }}"
+        },
+        {
+          "label": "Last 365 days",
+          "value": "{{ last_year }}"
+        }
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Most Active Public Projects"
+    },
+    {
+      "type": "table",
+      "query": "top_repositories",
+      "columns": [
+        {
+          "label": "Repository",
+          "value": "[{{ full_name }}]({{ web_url }})"
+        },
+        {
+          "label": "Commits",
+          "value": "{{ commits }}"
+        },
+        {
+          "label": "PRs",
+          "value": "{{ pull_requests }}"
+        },
+        {
+          "label": "Reviews",
+          "value": "{{ reviews }}"
+        }
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Languages"
+    },
+    {
+      "type": "table",
+      "query": "languages",
+      "columns": [
+        {
+          "label": "Language",
+          "value": "{{ language }}"
+        },
+        {
+          "label": "Commits",
+          "value": "{{ commits }}"
+        }
+      ]
+    },
+    {
+      "type": "heading",
+      "level": 2,
+      "text": "Accounts"
+    },
+    {
+      "type": "list",
+      "query": "accounts",
+      "value": "[{{ provider }}/{{ external_login }}]({{ external_url }})"
+    },
+    {
+      "type": "divider"
+    }
+  ]
+}

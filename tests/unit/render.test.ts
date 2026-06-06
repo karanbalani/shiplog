@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { Buffer } from 'node:buffer'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -11,13 +12,21 @@ import type { ShiplogConfig } from '../../lib/types/index.ts'
 import * as upserts from '../../lib/upserts.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
+let previousWriteToken: string | undefined
 
 beforeEach(() => {
+  previousWriteToken = process.env.GH_RW_REPO_TOKEN
+  delete process.env.GH_RW_REPO_TOKEN
   db.__setPoolForTests(createMigratedPool())
   logger.configureLogger({ level: 'silent', write: () => undefined })
 })
 
 afterEach(async () => {
+  if (previousWriteToken === undefined) {
+    delete process.env.GH_RW_REPO_TOKEN
+  } else {
+    process.env.GH_RW_REPO_TOKEN = previousWriteToken
+  }
   await db.close()
   logger.resetLogger()
 })
@@ -46,6 +55,279 @@ test('render replaces template placeholders with database activity', async () =>
   )
   expect(output).toContain('- [github/octocat](https://github.com/octocat) `age: 6 years`')
   expect(output).not.toContain('{{')
+})
+
+test('render builds markdown from target render config', async () => {
+  await seedActivity()
+
+  const output = await render.render({
+    config: shiplogConfig(),
+    targetRenderConfig: {
+      version: 1,
+      queries: {
+        summary: {
+          mode: 'one',
+          sql: `
+            SELECT
+              COALESCE(SUM(d.commits), 0)::int AS commits,
+              COALESCE(SUM(d.prs_opened), 0)::int AS pull_requests
+            FROM daily_repository_activity d
+            WHERE d.activity_on >= CURRENT_DATE - INTERVAL '365 days'
+          `
+        },
+        repositories: {
+          mode: 'many',
+          sql: `
+            SELECT
+              r.full_name,
+              r.web_url,
+              COALESCE(SUM(d.commits), 0)::int AS commits
+            FROM daily_repository_activity d
+            JOIN repositories r ON r.id = d.repository_id
+            WHERE r.visibility = 'public'
+              AND r.redacted = false
+            GROUP BY r.id, r.full_name, r.web_url
+            ORDER BY commits DESC
+          `
+        }
+      },
+      markdown: [
+        {
+          type: 'heading',
+          level: 1,
+          text: "Hi, I'm {{ profile.displayName }}"
+        },
+        {
+          type: 'paragraph',
+          text: 'I shipped {{ summary.commits }} commits and opened {{ summary.pull_requests }} PRs.'
+        },
+        {
+          type: 'table',
+          query: 'repositories',
+          columns: [
+            {
+              label: 'Repository',
+              value: '[{{ full_name }}]({{ web_url }})'
+            },
+            {
+              label: 'Commits',
+              value: '{{ commits }}'
+            }
+          ]
+        },
+        {
+          type: 'divider'
+        },
+        {
+          type: 'rawMarkdown',
+          content: '<sub>Rendered by shiplog.</sub>'
+        }
+      ]
+    },
+    now: new Date('2026-05-10T00:00:00Z')
+  })
+
+  expect(output).toContain("# Hi, I'm Example User")
+  expect(output).toContain('I shipped 5 commits and opened 2 PRs.')
+  expect(output).toContain('| Repository | Commits |')
+  expect(output).toContain('| [octo-org/hello](https://github.com/octo-org/hello) | 5 |')
+  expect(output).toContain('---')
+  expect(output).toContain('<sub>Rendered by shiplog.</sub>')
+  expect(output).not.toContain('{{')
+})
+
+test('render rejects target render queries that are not select statements', async () => {
+  await seedActivity()
+
+  await expect(
+    render.render({
+      config: shiplogConfig(),
+      targetRenderConfig: {
+        version: 1,
+        queries: {
+          bad: {
+            mode: 'many',
+            sql: 'DELETE FROM commits'
+          }
+        },
+        markdown: [
+          {
+            type: 'list',
+            query: 'bad',
+            value: '{{ oid }}'
+          }
+        ]
+      }
+    })
+  ).rejects.toThrow(/must start with SELECT or WITH/)
+})
+
+test('render rejects writable target render queries hidden inside CTEs', async () => {
+  await seedActivity()
+
+  await expect(
+    render.render({
+      config: shiplogConfig(),
+      targetRenderConfig: {
+        version: 1,
+        queries: {
+          bad: {
+            mode: 'many',
+            sql: 'WITH deleted AS (DELETE FROM commits RETURNING oid) SELECT oid FROM deleted'
+          }
+        },
+        markdown: [
+          {
+            type: 'list',
+            query: 'bad',
+            value: '{{ oid }}'
+          }
+        ]
+      }
+    })
+  ).rejects.toThrow(/must not include DELETE/)
+})
+
+test('render does not support built-in SQL parameters in target render queries', async () => {
+  await seedActivity()
+
+  await expect(
+    render.render({
+      config: shiplogConfig(),
+      targetRenderConfig: {
+        version: 1,
+        queries: {
+          summary: {
+            mode: 'one',
+            sql: 'SELECT COUNT(*)::int AS commits FROM daily_repository_activity WHERE account_id = ANY(:account_ids)'
+          }
+        },
+        markdown: [{ type: 'paragraph', text: '{{ summary.commits }} commits' }]
+      }
+    })
+  ).rejects.toThrow(/syntax error|invalid syntax|Unexpected token|account_ids/i)
+})
+
+test('render reports target repository context for invalid remote render config', async () => {
+  await seedActivity()
+  process.env.GH_RW_REPO_TOKEN = 'target-write-token'
+
+  await expect(
+    render.render({
+      config: shiplogConfig(),
+      fetch: async (url) => {
+        if (url === 'https://api.github.com/graphql') {
+          return jsonResponse({
+            data: {
+              node: {
+                id: 'R_PROFILE_1',
+                nameWithOwner: 'octocat/octocat',
+                url: 'https://github.com/octocat/octocat'
+              }
+            }
+          })
+        }
+
+        return jsonResponse({
+          type: 'file',
+          content: Buffer.from('{"version":1,"markdown":[]}', 'utf8').toString('base64'),
+          encoding: 'base64'
+        })
+      }
+    })
+  ).rejects.toThrow(/failed to load \.shiplog\/render\.json from github\/octocat\/octocat@main/i)
+})
+
+test('render reports block context when markdown references a one-row query as a list', async () => {
+  await seedActivity()
+
+  await expect(
+    render.render({
+      config: shiplogConfig(),
+      targetRenderConfig: {
+        version: 1,
+        queries: {
+          summary: {
+            mode: 'one',
+            sql: 'SELECT 1::int AS commits'
+          }
+        },
+        markdown: [
+          {
+            type: 'list',
+            query: 'summary',
+            value: '{{ commits }}'
+          }
+        ]
+      }
+    })
+  ).rejects.toThrow(/render markdown block 1 \(list\) failed/)
+})
+
+test('render loads target render config from the configured publish target', async () => {
+  await seedActivity()
+  process.env.GH_RW_REPO_TOKEN = 'target-write-token'
+  const calls: string[] = []
+
+  const output = await render.render({
+    config: shiplogConfig(),
+    fetch: async (url) => {
+      calls.push(url)
+      if (url === 'https://api.github.com/graphql') {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'R_PROFILE_1',
+              nameWithOwner: 'octocat/octocat',
+              url: 'https://github.com/octocat/octocat'
+            }
+          }
+        })
+      }
+
+      return jsonResponse({
+        type: 'file',
+        content: Buffer.from(
+          JSON.stringify({
+            version: 1,
+            markdown: [
+              {
+                type: 'heading',
+                level: 1,
+                text: 'Remote {{ profile.displayName }}'
+              }
+            ]
+          }),
+          'utf8'
+        ).toString('base64'),
+        encoding: 'base64'
+      })
+    },
+    now: new Date('2026-05-10T00:00:00Z')
+  })
+
+  expect(output).toBe(
+    '# Remote Example User\n\n<sub>Powered by my own activity database via [shiplog](https://shiplog.karanbalani.tech).</sub>\n'
+  )
+  expect(calls).toContain(
+    'https://api.github.com/repos/octocat/octocat/contents/.shiplog/render.json?ref=main'
+  )
+})
+
+test('render uses the shipped fallback render config when target config is unavailable', async () => {
+  await seedActivity()
+
+  const output = await render.render({
+    config: shiplogConfig(),
+    now: new Date('2026-05-10T00:00:00Z')
+  })
+
+  expect(output).toContain("# Hi there, I'm Example User")
+  expect(output).toContain('| Metric | All time | Last 365 days |')
+  expect(output).toContain('| [octo-org/hello](https://github.com/octo-org/hello) | 5 | 2 | 4 |')
+  expect(output).toContain(
+    '<sub>Powered by my own activity database via [shiplog](https://shiplog.karanbalani.tech).</sub>'
+  )
 })
 
 test('run writes rendered markdown to the requested output path', async () => {
@@ -214,4 +496,11 @@ function loadMigration(filename: string): string {
     .readFileSync(path.join(MIGRATIONS, filename), 'utf8')
     .split(/-- migrate:down/)[0]!
     .replace(/^-- migrate:up\s*/m, '')
+}
+
+function jsonResponse(value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { 'content-type': 'application/json' }
+  })
 }
