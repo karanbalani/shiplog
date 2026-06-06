@@ -34,6 +34,38 @@ DATABASE_CONNECTION_STRING=postgres://shiplog:replace-with-a-strong-password@hos
 
 On Neon, you can create the database and role from the dashboard or SQL editor. The important part is that the role used by `DATABASE_CONNECTION_STRING` can run migrations.
 
+<details>
+<summary>Optional read-only role for Render Studio</summary>
+
+If you use a browser-only tool such as shiplog Render Studio to preview README rendering against your database, create a separate read-only role. Do not use the migration/write role in browser tools.
+
+Run this as a Postgres admin user or database owner:
+
+```sql
+CREATE ROLE shiplog_readonly LOGIN PASSWORD 'replace-with-a-strong-readonly-password';
+
+GRANT CONNECT ON DATABASE shiplog TO shiplog_readonly;
+GRANT USAGE ON SCHEMA public TO shiplog_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO shiplog_readonly;
+```
+
+Allow the read-only role to see tables and views created by future Shiplog migrations:
+
+```sql
+ALTER DEFAULT PRIVILEGES FOR ROLE shiplog IN SCHEMA public
+GRANT SELECT ON TABLES TO shiplog_readonly;
+```
+
+Use this role only for read-only preview tools:
+
+```bash
+SHIPLOG_READONLY_DATABASE_CONNECTION_STRING=postgres://shiplog_readonly:replace-with-a-strong-readonly-password@host:5432/shiplog?sslmode=verify-full
+```
+
+Keep GitHub Actions on the normal `DATABASE_CONNECTION_STRING`; Shiplog workflows still need the write role for migrations, collection, maintenance, and publishing.
+
+</details>
+
 ## 3. Build the config
 
 Open the [shiplog config builder](https://shiplog.karanbalani.tech/config-builder/).
