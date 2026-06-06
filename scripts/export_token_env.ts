@@ -4,15 +4,15 @@ import type { ShiplogConfig } from '../lib/types/index.ts'
 
 export type TokenEnvScope = 'read' | 'publish' | 'all'
 
-const TOKEN_SECRETS_ENV = 'SHIPLOG_TOKEN_SECRETS_BASE64'
+const TOKEN_SECRETS_JSON_ENV = 'SHIPLOG_TOKEN_SECRETS_JSON'
 const TOKEN_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 export interface ExportTokenEnvOptions {
   addMask?: (value: string) => void
   configPath?: string
-  encodedTokenSecrets?: string
   githubEnvPath?: string
   scope?: TokenEnvScope
+  tokenSecretsJson?: string
 }
 
 export function tokenEnvNames(
@@ -46,7 +46,7 @@ export function exportTokenEnv(options: ExportTokenEnvOptions = {}): string[] {
   const scope = options.scope ?? 'all'
   const shiplogConfig = config.load(options.configPath)
   const names = tokenEnvNames(shiplogConfig, scope)
-  const secrets = decodeTokenSecrets(options.encodedTokenSecrets ?? process.env[TOKEN_SECRETS_ENV])
+  const secrets = loadTokenSecrets(options)
   const missing = names.filter((name) => !secrets[name])
 
   if (missing.length > 0) {
@@ -73,25 +73,33 @@ export function exportTokenEnv(options: ExportTokenEnvOptions = {}): string[] {
   return names
 }
 
-export function decodeTokenSecrets(encoded: string | undefined): Record<string, string> {
-  if (!encoded) throw new Error(`Missing ${TOKEN_SECRETS_ENV}`)
+function loadTokenSecrets(options: ExportTokenEnvOptions): Record<string, string> {
+  const json = options.tokenSecretsJson ?? process.env[TOKEN_SECRETS_JSON_ENV]
+  if (!json) throw new Error(`Missing ${TOKEN_SECRETS_JSON_ENV}`)
+  return parseTokenSecretsJson(json, TOKEN_SECRETS_JSON_ENV)
+}
 
+function parseTokenSecretsJson(json: string, source: string): Record<string, string> {
   let parsed: unknown
   try {
-    parsed = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'))
+    parsed = JSON.parse(json)
   } catch (error) {
-    throw new Error(`${TOKEN_SECRETS_ENV} must be base64-encoded JSON`, { cause: error })
+    throw new Error(`${source} must be JSON`, { cause: error })
   }
 
+  return parseTokenSecretsObject(parsed, source)
+}
+
+function parseTokenSecretsObject(parsed: unknown, source: string): Record<string, string> {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${TOKEN_SECRETS_ENV} must decode to a JSON object`)
+    throw new Error(`${source} must be a JSON object`)
   }
 
   const secrets: Record<string, string> = {}
   for (const [name, value] of Object.entries(parsed)) {
     assertTokenEnvName(name)
     if (typeof value !== 'string') {
-      throw new Error(`${TOKEN_SECRETS_ENV}.${name} must be a string`)
+      throw new Error(`${source}.${name} must be a string`)
     }
     secrets[name] = value
   }

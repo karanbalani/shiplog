@@ -63,7 +63,7 @@ test('exportTokenEnv writes only configured tokens for the selected scope', () =
     githubEnvPath,
     scope: 'read',
     addMask: (value) => masked.push(value),
-    encodedTokenSecrets: encodedSecrets({
+    tokenSecretsJson: JSON.stringify({
       GH_RO_CLASSIC_TOKEN: 'classic-token',
       GH_RO_ACME_PAT_TOKEN: 'acme-token',
       GH_RO_BETA_PAT_TOKEN: 'beta-token',
@@ -83,6 +83,27 @@ test('exportTokenEnv writes only configured tokens for the selected scope', () =
   )
 })
 
+test('exportTokenEnv can read token values from GitHub secrets JSON', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-token-env-'))
+  const configPath = path.join(dir, 'shiplog.config.json')
+  const githubEnvPath = path.join(dir, 'github-env')
+  fs.writeFileSync(configPath, JSON.stringify(testConfig()))
+
+  const exported = exportTokenEnv({
+    configPath,
+    githubEnvPath,
+    scope: 'publish',
+    tokenSecretsJson: JSON.stringify({
+      DATABASE_CONNECTION_STRING: 'postgres://secret',
+      GH_RO_CLASSIC_TOKEN: 'classic-token',
+      GH_RW_PROFILE_TOKEN: 'write-token'
+    })
+  })
+
+  expect(exported).toEqual(['GH_RW_PROFILE_TOKEN'])
+  expect(fs.readFileSync(githubEnvPath, 'utf8')).toBe('GH_RW_PROFILE_TOKEN=write-token\n')
+})
+
 test('exportTokenEnv reports missing configured token secrets', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-token-env-'))
   const configPath = path.join(dir, 'shiplog.config.json')
@@ -94,7 +115,7 @@ test('exportTokenEnv reports missing configured token secrets', () => {
       configPath,
       githubEnvPath,
       scope: 'read',
-      encodedTokenSecrets: encodedSecrets({
+      tokenSecretsJson: JSON.stringify({
         GH_RO_CLASSIC_TOKEN: 'classic-token',
         GH_RO_ACME_PAT_TOKEN: 'acme-token'
       })
@@ -119,7 +140,3 @@ test('config rejects token env names that cannot be exported', () => {
     })
   ).toThrow(/tokenEnv/)
 })
-
-function encodedSecrets(secrets: Record<string, string>): string {
-  return Buffer.from(JSON.stringify(secrets), 'utf8').toString('base64')
-}
