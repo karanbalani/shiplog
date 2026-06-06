@@ -13,8 +13,8 @@
         "tokenEnv": "GH_RO_CLASSIC_TOKEN",
         "organizationPatTokens": [
           {
-            "organizationId": "restricted-org-node-id",
-            "tokenEnv": "GH_RO_RESTRICTED_ORG_PAT_TOKEN"
+            "organizationId": "acme-org-node-id",
+            "tokenEnv": "GH_RO_ACME_PAT_TOKEN"
           }
         ],
         "ignore": {

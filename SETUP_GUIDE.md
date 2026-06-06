@@ -116,20 +116,37 @@ Required repository variable:
 
 - `SHIPLOG_CONFIG_BASE64`
 
-Required repository secrets:
-
-- `DATABASE_CONNECTION_STRING`
-
-Then create the GitHub token secrets listed by the config builder.
+Then create a token map secret from the GitHub token env names listed by the config builder.
 
 The default names are usually:
 
 - `GH_RO_CLASSIC_TOKEN`: reads GitHub activity for ingestion.
 - `GH_RW_REPO_TOKEN`: publishes the rendered README to configured targets.
 
-If your config includes organization-specific read tokens or custom publish token names, create secrets with those exact names too.
+If your config includes organization-specific read tokens or custom publish token names, include those exact names as additional keys in the same map.
 
-Organization-specific PATs are for organizations where your default read token cannot see all required repositories. Add the organization in the config builder, use the env var name it gives you, then create a GitHub Actions secret with that exact name. The bundled workflows already expose `GH_RO_RESTRICTED_ORG_PAT_TOKEN`; if you add more custom token names, add them to the relevant workflow `env` blocks too.
+Create a local `shiplog.tokens.json` file and do not commit it:
+
+```json
+{
+  "GH_RO_CLASSIC_TOKEN": "ghp_xxx",
+  "GH_RO_ACME_PAT_TOKEN": "github_pat_xxx",
+  "GH_RW_REPO_TOKEN": "github_pat_xxx"
+}
+```
+
+Then store its Base64 value as a repository secret named `SHIPLOG_TOKEN_SECRETS_BASE64`:
+
+```bash
+base64 < shiplog.tokens.json | tr -d '\n'
+```
+
+Required repository secrets:
+
+- `DATABASE_CONNECTION_STRING`
+- `SHIPLOG_TOKEN_SECRETS_BASE64`
+
+Organization-specific PATs are for organizations where your default read token cannot see all required repositories. Add the organization in the config builder and use the env var name it gives you as a key in `shiplog.tokens.json`. The workflows read `shiplog.config.json`, export only the token names needed by the current job, and do not need per-organization edits.
 
 Token scopes:
 
@@ -138,13 +155,13 @@ Token scopes:
 
 The `repo` scope is required if you want private repository activity.
 
-The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step environment.
+The `daily-publish` workflow exports publish token names from `SHIPLOG_TOKEN_SECRETS_BASE64` immediately before `bun run publish`. If a publish target uses a different `tokenEnv`, add it to the token map; no workflow edit is needed.
 
 ## 5. Run the first workflow
 
-Run the `freshness` workflow once from GitHub Actions.
+Run the `freshness` workflow once from GitHub Actions to migrate the database, initialize the configured accounts, and collect current activity.
 
-After the first run, the scheduled workflows keep recent activity current, make bounded historical progress, repair drift, render `rendered.md`, and publish to your configured target.
+After the first run, the scheduled workflows keep recent activity current, make bounded historical progress, repair drift, and publish one rendered README snapshot per day. If you want to publish immediately after the first collection, run `daily-publish` manually once.
 
 <details>
 <summary>Optional local verification</summary>
@@ -170,7 +187,7 @@ DATABASE_CONNECTION_STRING=postgres://shiplog:password@host:5432/shiplog?sslmode
 GH_RO_CLASSIC_TOKEN=ghp_xxx
 GH_RW_REPO_TOKEN=github_pat_xxx
 # Optional, only when an org requires a separate read token:
-# GH_RO_RESTRICTED_ORG_PAT_TOKEN=github_pat_xxx
+# GH_RO_ACME_PAT_TOKEN=github_pat_xxx
 ```
 
 Use the exact token environment variable names from the config builder if you changed the defaults.
@@ -188,9 +205,10 @@ bun run render
 
 ## Workflows
 
-- `freshness`: runs every 6 hours. Migrates, initializes accounts, collects recent activity, runs queued maintenance, renders, and publishes.
+- `freshness`: runs every 6 hours. Migrates, initializes accounts, collects recent activity, and runs queued maintenance.
 - `history`: runs every 2 hours. Makes bounded historical progress with deep-mode defaults.
-- `integrity`: runs daily. Detects drift, queues repair work, runs maintenance, renders, and publishes.
+- `integrity`: runs daily. Detects drift, queues repair work, and runs maintenance.
+- `daily-publish`: runs daily. Collects any final current activity, runs queued maintenance, renders `rendered.md`, and publishes it when the target content changed.
 - `housekeeping`: runs daily. Prunes diagnostic `error_events` older than 30 days.
 - `ci`: runs formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
 

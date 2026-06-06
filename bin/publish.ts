@@ -29,8 +29,11 @@ export async function publish(options: PublishOptions = {}): Promise<GitHubPubli
 
   for (const target of shiplogConfig.publish.targets) {
     const result = await publishTarget(target, content, message, options.fetch)
+    const status = result.skipped
+      ? `unchanged (${result.sha ?? 'unknown sha'})`
+      : `updated (${result.commitSha ?? result.sha ?? 'unknown sha'})`
     logger.info(
-      `[publish] ${target.provider}/${result.repositoryFullName}@${target.branch}:${target.path} updated (${result.commitSha ?? result.sha ?? 'unknown sha'})`
+      `[publish] ${target.provider}/${result.repositoryFullName}@${target.branch}:${target.path} ${status}`
     )
     results.push(result)
   }

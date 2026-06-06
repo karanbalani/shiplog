@@ -1,28 +1,9 @@
-name: history
+name: daily-publish
 
 on:
   schedule:
-    - cron: '41 */2 * * *'
+    - cron: '0 9 * * *'
   workflow_dispatch:
-    inputs:
-      mode:
-        description: 'History mode: fast for authored commits, deep for co-authored/private contribution repair'
-        required: false
-        default: 'deep'
-        type: choice
-        options:
-          - fast
-          - deep
-      max_minutes:
-        description: 'Maximum run time before pausing between repositories'
-        required: false
-        default: '30'
-        type: string
-      repo_budget_minutes:
-        description: 'Time budget reserved before starting another repository'
-        required: false
-        default: '5'
-        type: string
 
 permissions:
   contents: read
@@ -32,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  history:
+  daily-publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -79,10 +60,31 @@ jobs:
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
-      - name: Improve historical activity
-        run: bun run backfill
+      - name: Collect current activity
+        run: bun run collect
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-          BACKFILL_MODE: ${{ github.event.inputs.mode || 'deep' }}
-          BACKFILL_MAX_MINUTES: ${{ github.event.inputs.max_minutes || '30' }}
-          BACKFILL_REPO_BUDGET_MINUTES: ${{ github.event.inputs.repo_budget_minutes || '5' }}
+
+      - name: Run queued maintenance
+        run: bun run maintenance
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+
+      - name: Render README
+        run: bun run render
+        env:
+          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+
+      - name: Print rendered README
+        run: |
+          echo "::group::rendered.md"
+          cat rendered.md
+          echo "::endgroup::"
+
+      - name: Export publish token env
+        run: bun run tokens:export -- --scope publish
+        env:
+          SHIPLOG_TOKEN_SECRETS_BASE64: ${{ secrets.SHIPLOG_TOKEN_SECRETS_BASE64 }}
+
+      - name: Publish rendered README
+        run: bun run publish

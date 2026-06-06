@@ -37,23 +37,23 @@ test('identity helper emits user config without requiring a token', async () => 
 test('identity helper emits organization PAT token config', async () => {
   const output: string[] = []
   const fetch: Fetcher = async (url) => {
-    expect(url).toBe('https://api.github.com/orgs/restricted-org')
+    expect(url).toBe('https://api.github.com/orgs/acme')
     return jsonResponse({
-      node_id: 'O_RESTRICTED_1',
-      login: 'restricted-org',
-      html_url: 'https://github.com/restricted-org'
+      node_id: 'O_ACME_1',
+      login: 'acme',
+      html_url: 'https://github.com/acme'
     })
   }
 
-  await identity.run(['github', 'organization-pat-token', 'restricted-org'], {
+  await identity.run(['github', 'organization-pat-token', 'acme'], {
     fetch,
     token: undefined,
     write: (text) => output.push(text)
   })
 
   expect(JSON.parse(output.join(''))).toEqual({
-    organizationId: 'O_RESTRICTED_1',
-    tokenEnv: 'GH_RO_RESTRICTED_ORG_PAT_TOKEN'
+    organizationId: 'O_ACME_1',
+    tokenEnv: 'GH_RO_ACME_PAT_TOKEN'
   })
 })
 

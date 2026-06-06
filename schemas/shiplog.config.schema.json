@@ -52,6 +52,7 @@
               "tokenEnv": {
                 "type": "string",
                 "minLength": 1,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                 "default": "GH_RO_CLASSIC_TOKEN"
               },
               "organizationPatTokens": {
@@ -68,7 +69,8 @@
                     },
                     "tokenEnv": {
                       "type": "string",
-                      "minLength": 1
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
                     }
                   }
                 }
@@ -137,6 +139,7 @@
               "tokenEnv": {
                 "type": "string",
                 "minLength": 1,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                 "default": "GH_RW_REPO_TOKEN"
               }
             }

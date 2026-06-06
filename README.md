@@ -2,7 +2,7 @@
 
 Daily GitHub activity snapshots into your own Postgres, rendered back into a profile README.
 
-shiplog is a forkable profile-README pipeline. You own the database, GitHub Actions keeps it fresh, and the renderer publishes the generated README to the repository you choose.
+shiplog is a forkable profile-README pipeline. You own the database, GitHub Actions keeps it fresh, and a daily publisher writes the generated README to the repository you choose.
 
 ## Why shiplog?
 
@@ -24,7 +24,7 @@ shiplog gives you your own contribution archive and one umbrella for activity ac
 
 - Collects GitHub commits, pull requests, reviews, issues, repositories, languages, and organization context.
 - Stores activity in Postgres with historical tables and daily rollups.
-- Runs scheduled GitHub Actions for freshness, history, integrity repair, housekeeping, rendering, and publishing.
+- Runs scheduled GitHub Actions for freshness, history, integrity repair, housekeeping, and once-daily publishing.
 - Records short-lived diagnostic error events in Postgres for workflow investigation.
 - Uses stable GitHub IDs so username, organization, and repository renames do not split history.
 
