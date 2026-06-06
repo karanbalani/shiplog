@@ -17,6 +17,7 @@
     "render": "bun bin/render.ts",
     "publish": "bun bin/publish.ts",
     "db:wait": "bun scripts/wait_for_db.ts",
+    "tokens:export": "bun scripts/export_token_env.ts",
     "migrate": "bun scripts/dbmate.ts up",
     "migration:new": "bun scripts/dbmate.ts new",
     "migration:down": "bun scripts/dbmate.ts rollback",

@@ -82,6 +82,11 @@ jobs:
         env:
           SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
 
+      - name: Export read token env
+        run: bun run tokens:export -- --scope read
+        env:
+          SHIPLOG_TOKEN_SECRETS_BASE64: ${{ secrets.SHIPLOG_TOKEN_SECRETS_BASE64 }}
+
       - name: Wait for database
         run: bun run db:wait
         env:
@@ -96,16 +101,12 @@ jobs:
         run: bun run init
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
-          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
 
       - name: Detect drift
         if: github.event_name == 'schedule' || github.event.inputs.operation == 'drift'
         run: bun run drift
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
-          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
           DRIFT_FROM: ${{ github.event.inputs.drift_from }}
           DRIFT_TO: ${{ github.event.inputs.drift_to }}
           DRIFT_LOOKBACK_DAYS: ${{ github.event.inputs.drift_lookback_days }}
@@ -116,8 +117,6 @@ jobs:
         run: bun run repair
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
-          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
           REPAIR_DATE: ${{ github.event.inputs.repair_date }}
           REPAIR_FROM: ${{ github.event.inputs.repair_from }}
           REPAIR_TO: ${{ github.event.inputs.repair_to }}
@@ -126,6 +125,4 @@ jobs:
         run: bun run maintenance
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
-          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
           MAINTENANCE_STALE_LOCK_MINUTES: ${{ github.event.inputs.stale_lock_minutes }}

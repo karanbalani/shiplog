@@ -104,7 +104,7 @@ The tokens have different jobs:
 
 Keeping them separate limits what each token can do.
 
-If a publish target uses a `tokenEnv` other than `GH_RW_REPO_TOKEN`, expose that secret in the `daily-publish` workflow's `Publish rendered README` step env. The bundled ingestion steps already expose the example `GH_RO_RESTRICTED_ORG_PAT_TOKEN` secret for organization-specific reads; add more env mappings if your config uses additional read-token names. GitHub Actions secrets are not available to scripts unless the workflow maps them into environment variables.
+GitHub Actions secrets are not automatically visible to scripts, and GitHub does not let a runner fetch arbitrary secret values by name. shiplog handles dynamic token names with one secret map: store a Base64-encoded JSON object in `SHIPLOG_TOKEN_SECRETS_BASE64`, where each key is a `tokenEnv` name from `shiplog.config.json`. The workflows read config, export the read token names before ingestion, and export the publish token names immediately before publishing.
 
 ## How does shiplog collect private repository activity?
 
@@ -121,13 +121,13 @@ If an organization blocks or requires separate authorization for the default cla
   "organizationPatTokens": [
     {
       "organizationId": "O_kgDO...",
-      "tokenEnv": "GH_RO_RESTRICTED_ORG_PAT_TOKEN"
+      "tokenEnv": "GH_RO_ACME_PAT_TOKEN"
     }
   ]
 }
 ```
 
-Find the stable organization PAT token config with `bun run identity github organization-pat-token restricted-org`. Repository metadata, commits, pull requests, issues, and reviews for that organization will use the organization-specific token, even if the organization is later renamed.
+Find the stable organization PAT token config with `bun run identity github organization-pat-token acme`. Repository metadata, commits, pull requests, issues, and reviews for that organization will use the organization-specific token, even if the organization is later renamed.
 
 Private repository names are stored in the database when your token can read them and matching activity exists, but they are not printed in workflow logs. Log lines use the provider repository id for private repositories, for example `id:R_abc123`, so a public Actions run does not leak private repository names.
 
@@ -139,9 +139,9 @@ GitHub can include a repository in historical contribution groups even when that
 
 shiplog treats this as a repository-level skip. It keeps the repository row discovered from contribution metadata, logs that enrichment was skipped, and continues collecting the rest of the account. Rerunning later is safe because database writes are deduplicated with upserts and unique keys.
 
-## Why not name the secrets `GITHUB_*`?
+## Why not name token env vars `GITHUB_*`?
 
-GitHub reserves the `GITHUB_` prefix for built-in Actions environment variables. shiplog uses `GH_*` so user-defined secrets are clearly project-owned.
+GitHub reserves the `GITHUB_` prefix for built-in Actions environment variables. shiplog uses `GH_*` token env names so user-defined runtime variables are clearly project-owned.
 
 ## Should I commit `shiplog.config.json`?
 
@@ -164,6 +164,20 @@ The workflows decode that value back into `shiplog.config.json` before running s
 Usually no. It is configuration, not a credential. Keep tokens and the database connection string in GitHub Secrets.
 
 If your config contains private repository names or other sensitive metadata, you may choose to store it as a secret instead and update the workflow reference accordingly.
+
+## How do GitHub Actions get the token values from config?
+
+Config stores token env names, not token values. Create a repository secret named `SHIPLOG_TOKEN_SECRETS_BASE64` whose decoded JSON maps those names to token values:
+
+```json
+{
+  "GH_RO_CLASSIC_TOKEN": "ghp_xxx",
+  "GH_RO_ACME_PAT_TOKEN": "github_pat_xxx",
+  "GH_RW_REPO_TOKEN": "github_pat_xxx"
+}
+```
+
+The workflows run `bun run tokens:export -- --scope read` before ingestion and `bun run tokens:export -- --scope publish` before publishing. That script reads `shiplog.config.json`, finds the matching keys in the token map, and writes them to `$GITHUB_ENV` for later steps.
 
 ## Which workflow should I run first?
 

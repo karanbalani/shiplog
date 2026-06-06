@@ -86,7 +86,7 @@ This document captures project conventions that should stay consistent across im
 - The upstream org/template repo should commit `shiplog.config.example.json`, not a real `shiplog.config.json`.
 - `shiplog.config.json` is gitignored and should stay local.
 - GitHub Actions should create `shiplog.config.json` by decoding the `SHIPLOG_CONFIG_BASE64` repository variable before running shiplog commands.
-- Config must not contain secrets; database URLs and provider tokens belong in secrets.
+- Config must not contain secrets; database URLs and provider tokens belong in secrets. GitHub Actions token values live in `SHIPLOG_TOKEN_SECRETS_BASE64` and are exported from config-declared `tokenEnv` names with `bun run tokens:export`.
 - Keep `lib/types/config/` aligned with the schema return shape.
 - Keep `lib/config.ts` focused on loading, schema validation, default application, and typed return values.
 

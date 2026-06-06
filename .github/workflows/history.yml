@@ -59,6 +59,11 @@ jobs:
         env:
           SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
 
+      - name: Export read token env
+        run: bun run tokens:export -- --scope read
+        env:
+          SHIPLOG_TOKEN_SECRETS_BASE64: ${{ secrets.SHIPLOG_TOKEN_SECRETS_BASE64 }}
+
       - name: Wait for database
         run: bun run db:wait
         env:
@@ -73,15 +78,11 @@ jobs:
         run: bun run init
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
-          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
 
       - name: Improve historical activity
         run: bun run backfill
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-          GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
-          GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
           BACKFILL_MODE: ${{ github.event.inputs.mode || 'deep' }}
           BACKFILL_MAX_MINUTES: ${{ github.event.inputs.max_minutes || '30' }}
           BACKFILL_REPO_BUDGET_MINUTES: ${{ github.event.inputs.repo_budget_minutes || '5' }}
