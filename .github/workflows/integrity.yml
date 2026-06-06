@@ -129,19 +129,3 @@ jobs:
           GH_RO_CLASSIC_TOKEN: ${{ secrets.GH_RO_CLASSIC_TOKEN }}
           GH_RO_RESTRICTED_ORG_PAT_TOKEN: ${{ secrets.GH_RO_RESTRICTED_ORG_PAT_TOKEN }}
           MAINTENANCE_STALE_LOCK_MINUTES: ${{ github.event.inputs.stale_lock_minutes }}
-
-      - name: Render README
-        run: bun run render
-        env:
-          DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
-
-      - name: Print rendered README
-        run: |
-          echo "::group::rendered.md"
-          cat rendered.md
-          echo "::endgroup::"
-
-      - name: Publish rendered README
-        run: bun run publish
-        env:
-          GH_RW_REPO_TOKEN: ${{ secrets.GH_RW_REPO_TOKEN }}

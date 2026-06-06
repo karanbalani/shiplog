@@ -20,11 +20,15 @@ export interface GitHubPublishFileResult {
   sha: string | null
   commitSha: string | null
   webUrl: string | null
+  skipped: boolean
 }
 
 interface GitHubContentResponse {
   sha?: string
   type?: string
+  content?: string
+  encoding?: string
+  html_url?: string
 }
 
 interface GitHubPutContentResponse {
@@ -40,7 +44,19 @@ interface GitHubPutContentResponse {
 export async function publishGitHubFile(
   options: GitHubPublishFileOptions
 ): Promise<GitHubPublishFileResult> {
-  const existingSha = await fetchExistingFileSha(options)
+  const existingFile = await fetchExistingFile(options)
+  if (existingFile && existingFile.content === options.content) {
+    return {
+      repositoryFullName: options.repositoryFullName,
+      branch: options.branch,
+      path: options.path,
+      sha: existingFile.sha,
+      commitSha: null,
+      webUrl: existingFile.webUrl,
+      skipped: true
+    }
+  }
+
   const response = await fetchJson<GitHubPutContentResponse>(
     contentsUrl(options.repositoryFullName, options.path),
     {
@@ -50,7 +66,7 @@ export async function publishGitHubFile(
         message: options.message,
         content: Buffer.from(options.content, 'utf8').toString('base64'),
         branch: options.branch,
-        ...(existingSha ? { sha: existingSha } : {})
+        ...(existingFile?.sha ? { sha: existingFile.sha } : {})
       })
     },
     options.fetch ? { fetch: options.fetch } : {}
@@ -62,11 +78,20 @@ export async function publishGitHubFile(
     path: options.path,
     sha: response.content?.sha ?? null,
     commitSha: response.commit?.sha ?? null,
-    webUrl: response.content?.html_url ?? null
+    webUrl: response.content?.html_url ?? null,
+    skipped: false
   }
 }
 
-async function fetchExistingFileSha(options: GitHubPublishFileOptions): Promise<string | null> {
+interface ExistingGitHubFile {
+  sha: string | null
+  content: string | null
+  webUrl: string | null
+}
+
+async function fetchExistingFile(
+  options: GitHubPublishFileOptions
+): Promise<ExistingGitHubFile | null> {
   try {
     const response = await fetchJson<GitHubContentResponse>(
       contentsUrl(options.repositoryFullName, options.path, options.branch),
@@ -82,11 +107,20 @@ async function fetchExistingFileSha(options: GitHubPublishFileOptions): Promise<
       )
     }
 
-    return response.sha ?? null
+    return {
+      sha: response.sha ?? null,
+      content: decodeContent(response),
+      webUrl: response.html_url ?? null
+    }
   } catch (error) {
     if (error instanceof HttpError && error.status === 404) return null
     throw error
   }
+}
+
+function decodeContent(response: GitHubContentResponse): string | null {
+  if (response.encoding !== 'base64' || !response.content) return null
+  return Buffer.from(response.content.replace(/\s/g, ''), 'base64').toString('utf8')
 }
 
 function contentsUrl(repositoryFullName: string, filePath: string, ref?: string): string {

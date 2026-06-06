@@ -138,13 +138,13 @@ Token scopes:
 
 The `repo` scope is required if you want private repository activity.
 
-The default workflows expose `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step environment.
+The `daily-publish` workflow exposes `GH_RW_REPO_TOKEN` to `bun run publish`. If a publish target uses a different `tokenEnv`, add that secret to the `Publish rendered README` step environment.
 
 ## 5. Run the first workflow
 
-Run the `freshness` workflow once from GitHub Actions.
+Run the `freshness` workflow once from GitHub Actions to migrate the database, initialize the configured accounts, and collect current activity.
 
-After the first run, the scheduled workflows keep recent activity current, make bounded historical progress, repair drift, render `rendered.md`, and publish to your configured target.
+After the first run, the scheduled workflows keep recent activity current, make bounded historical progress, repair drift, and publish one rendered README snapshot per day. If you want to publish immediately after the first collection, run `daily-publish` manually once.
 
 <details>
 <summary>Optional local verification</summary>
@@ -188,9 +188,10 @@ bun run render
 
 ## Workflows
 
-- `freshness`: runs every 6 hours. Migrates, initializes accounts, collects recent activity, runs queued maintenance, renders, and publishes.
+- `freshness`: runs every 6 hours. Migrates, initializes accounts, collects recent activity, and runs queued maintenance.
 - `history`: runs every 2 hours. Makes bounded historical progress with deep-mode defaults.
-- `integrity`: runs daily. Detects drift, queues repair work, runs maintenance, renders, and publishes.
+- `integrity`: runs daily. Detects drift, queues repair work, and runs maintenance.
+- `daily-publish`: runs daily. Collects any final current activity, runs queued maintenance, renders `rendered.md`, and publishes it when the target content changed.
 - `housekeeping`: runs daily. Prunes diagnostic `error_events` older than 30 days.
 - `ci`: runs formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
 

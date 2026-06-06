@@ -107,6 +107,46 @@ test('publishGitHubFile updates target file when it already exists', async () =>
   expect(body.sha).toBe('existing-file-sha')
 })
 
+test('publishGitHubFile skips update when target content is unchanged', async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = []
+  const content = '# already current\n'
+  const fetch: Fetcher = async (url, init) => {
+    calls.push({ url, init })
+    return jsonResponse({
+      type: 'file',
+      sha: 'existing-file-sha',
+      content: Buffer.from(content, 'utf8').toString('base64'),
+      encoding: 'base64',
+      html_url: 'https://github.com/octocat/octocat/blob/main/README.md'
+    })
+  }
+
+  const result = await publishGitHubFile({
+    token: 'write-token',
+    repositoryFullName: 'octocat/octocat',
+    branch: 'main',
+    path: 'README.md',
+    content,
+    message: 'chore: update rendered readme',
+    fetch
+  })
+
+  expect(calls).toHaveLength(1)
+  expect(calls[0]!.url).toBe(
+    'https://api.github.com/repos/octocat/octocat/contents/README.md?ref=main'
+  )
+  expect(calls[0]!.init?.method).toBeUndefined()
+  expect(result).toMatchObject({
+    repositoryFullName: 'octocat/octocat',
+    branch: 'main',
+    path: 'README.md',
+    sha: 'existing-file-sha',
+    commitSha: null,
+    webUrl: 'https://github.com/octocat/octocat/blob/main/README.md',
+    skipped: true
+  })
+})
+
 test('publish uses configured publish targets and token env vars', async () => {
   const logs: string[] = []
   const calls: Array<{ url: string; init?: RequestInit }> = []
