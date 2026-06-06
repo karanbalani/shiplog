@@ -104,7 +104,7 @@ The tokens have different jobs:
 
 Keeping them separate limits what each token can do.
 
-GitHub Actions secrets are not automatically visible to scripts, and GitHub does not let a runner fetch arbitrary secret values by name. shiplog handles dynamic token names with one secret map: store a Base64-encoded JSON object in `SHIPLOG_TOKEN_SECRETS_BASE64`, where each key is a `tokenEnv` name from `shiplog.config.json`. The workflows read config, export the read token names before ingestion, and export the publish token names immediately before publishing.
+GitHub Actions secrets are not automatically visible to scripts. shiplog handles dynamic token names by passing GitHub's secrets context to one short export step. That step reads `shiplog.config.json`, exports only the matching `tokenEnv` names to `$GITHUB_ENV`, and masks the values for later logs.
 
 ## How does shiplog collect private repository activity?
 
@@ -167,17 +167,9 @@ If your config contains private repository names or other sensitive metadata, yo
 
 ## How do GitHub Actions get the token values from config?
 
-Config stores token env names, not token values. Create a repository secret named `SHIPLOG_TOKEN_SECRETS_BASE64` whose decoded JSON maps those names to token values:
+Config stores token env names, not token values. Create GitHub repository secrets with the exact same names, such as `GH_RO_CLASSIC_TOKEN`, `GH_RO_ACME_PAT_TOKEN`, and `GH_RW_REPO_TOKEN`.
 
-```json
-{
-  "GH_RO_CLASSIC_TOKEN": "ghp_xxx",
-  "GH_RO_ACME_PAT_TOKEN": "github_pat_xxx",
-  "GH_RW_REPO_TOKEN": "github_pat_xxx"
-}
-```
-
-The workflows run `bun run tokens:export -- --scope read` before ingestion and `bun run tokens:export -- --scope publish` before publishing. That script reads `shiplog.config.json`, finds the matching keys in the token map, and writes them to `$GITHUB_ENV` for later steps.
+The workflows run `bun run tokens:export -- --scope read` before ingestion and `bun run tokens:export -- --scope publish` before publishing. That script reads `shiplog.config.json`, finds the matching keys from GitHub's secrets context, and writes only those token env vars to `$GITHUB_ENV` for later steps.
 
 ## Which workflow should I run first?
 

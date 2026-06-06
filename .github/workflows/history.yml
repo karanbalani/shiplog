@@ -62,7 +62,7 @@ jobs:
       - name: Export read token env
         run: bun run tokens:export -- --scope read
         env:
-          SHIPLOG_TOKEN_SECRETS_BASE64: ${{ secrets.SHIPLOG_TOKEN_SECRETS_BASE64 }}
+          SHIPLOG_TOKEN_SECRETS_JSON: ${{ toJSON(secrets) }}
 
       - name: Wait for database
         run: bun run db:wait

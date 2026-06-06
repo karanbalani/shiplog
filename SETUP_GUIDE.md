@@ -116,37 +116,23 @@ Required repository variable:
 
 - `SHIPLOG_CONFIG_BASE64`
 
-Then create a token map secret from the GitHub token env names listed by the config builder.
+Then create GitHub repository secrets for the token env names listed by the config builder.
 
 The default names are usually:
 
 - `GH_RO_CLASSIC_TOKEN`: reads GitHub activity for ingestion.
 - `GH_RW_REPO_TOKEN`: publishes the rendered README to configured targets.
 
-If your config includes organization-specific read tokens or custom publish token names, include those exact names as additional keys in the same map.
-
-Create a local `shiplog.tokens.json` file and do not commit it:
-
-```json
-{
-  "GH_RO_CLASSIC_TOKEN": "ghp_xxx",
-  "GH_RO_ACME_PAT_TOKEN": "github_pat_xxx",
-  "GH_RW_REPO_TOKEN": "github_pat_xxx"
-}
-```
-
-Then store its Base64 value as a repository secret named `SHIPLOG_TOKEN_SECRETS_BASE64`:
-
-```bash
-base64 < shiplog.tokens.json | tr -d '\n'
-```
+If your config includes organization-specific read tokens or custom publish token names, create repository secrets with those exact names too.
 
 Required repository secrets:
 
 - `DATABASE_CONNECTION_STRING`
-- `SHIPLOG_TOKEN_SECRETS_BASE64`
+- `GH_RO_CLASSIC_TOKEN`
+- `GH_RW_REPO_TOKEN`
+- any extra `tokenEnv` names from your config
 
-Organization-specific PATs are for organizations where your default read token cannot see all required repositories. Add the organization in the config builder and use the env var name it gives you as a key in `shiplog.tokens.json`. The workflows read `shiplog.config.json`, export only the token names needed by the current job, and do not need per-organization edits.
+Organization-specific PATs are for organizations where your default read token cannot see all required repositories. Add the organization in the config builder and create a repository secret with the env var name it gives you. The workflows read `shiplog.config.json`, export only the token names needed by the current job from GitHub's normal secrets context, and do not need per-organization edits.
 
 Token scopes:
 
@@ -155,7 +141,7 @@ Token scopes:
 
 The `repo` scope is required if you want private repository activity.
 
-The `daily-publish` workflow exports publish token names from `SHIPLOG_TOKEN_SECRETS_BASE64` immediately before `bun run publish`. If a publish target uses a different `tokenEnv`, add it to the token map; no workflow edit is needed.
+The `daily-publish` workflow exports publish token names from config immediately before `bun run publish`. If a publish target uses a different `tokenEnv`, create a repository secret with that name; no workflow edit is needed.
 
 ## 5. Run the first workflow
 
