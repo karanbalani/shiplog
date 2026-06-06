@@ -8,18 +8,14 @@ import { graphQLClient } from '../lib/providers/github/graphql.ts'
 import { fetchGitHubRepositoryById } from '../lib/providers/github/identity.ts'
 import { fetchGitHubFileContent } from '../lib/providers/github/publish.ts'
 import * as renderConfig from '../lib/render_config.ts'
+import { appendShiplogFooter, renderTargetConfigWithRunner } from '../lib/target_render.ts'
 import type {
   ShiplogConfig,
   ShiplogPublishTargetConfig,
-  TargetRenderBlock,
-  TargetRenderConfig,
-  TargetRenderTableColumn
+  TargetRenderConfig
 } from '../lib/types/index.ts'
 
 const DEFAULT_OUTPUT_PATH = 'rendered.md'
-const SHIPLOG_FOOTER_TEXT =
-  'Powered by my own activity database via [shiplog](https://shiplog.karanbalani.tech).'
-const SHIPLOG_FOOTER = `<sub>${SHIPLOG_FOOTER_TEXT}</sub>`
 const INLINE_BADGE_STYLE = 'flat-square'
 const LANGUAGE_COLORS: Record<string, string> = {
   Astro: 'ff5d01',
@@ -98,10 +94,6 @@ interface LanguageActivityRow {
 interface AccountFilter {
   sql: string
   params: unknown[]
-}
-
-interface RenderQueryRow {
-  [column: string]: unknown
 }
 
 export async function render(options: RenderOptions = {}): Promise<string> {
@@ -220,291 +212,20 @@ async function renderTargetConfig(
   shiplogConfig: ShiplogConfig,
   targetRenderConfig: TargetRenderConfig
 ): Promise<string> {
-  const context: Record<string, unknown> = {
+  return renderTargetConfigWithRunner({
+    config: targetRenderConfig,
     profile: {
       displayName: displayName(shiplogConfig)
     },
-    ...(await runTargetRenderQueries(targetRenderConfig))
-  }
-
-  return appendShiplogFooter(`${renderTargetBlocks(targetRenderConfig.markdown, context)}\n`)
-}
-
-function appendShiplogFooter(markdown: string): string {
-  const trimmed = markdown.trimEnd()
-  if (trimmed.includes(SHIPLOG_FOOTER_TEXT)) return `${trimmed}\n`
-  return `${trimmed}\n\n${SHIPLOG_FOOTER}\n`
-}
-
-async function runTargetRenderQueries(
-  targetRenderConfig: TargetRenderConfig
-): Promise<Record<string, unknown>> {
-  const queries = Object.entries(targetRenderConfig.queries ?? {})
-  if (queries.length === 0) return {}
-
-  const results: Record<string, unknown> = {}
-
-  for (const [name, query] of queries) {
-    try {
-      assertSelectQuery(query.sql, name)
-      const result = await db.query<RenderQueryRow>(query.sql)
-      results[name] = query.mode === 'one' ? (result.rows[0] ?? {}) : result.rows
-    } catch (error) {
-      throw new Error(`render query ${name} failed: ${errorMessage(error)}`, { cause: error })
+    queryRunner: async (sql) => {
+      const result = await db.query<Record<string, unknown>>(sql)
+      return result.rows
     }
-  }
-
-  return results
-}
-
-function renderTargetBlocks(blocks: TargetRenderBlock[], context: Record<string, unknown>): string {
-  return blocks
-    .map((block, index) => {
-      try {
-        return renderTargetBlock(block, context)
-      } catch (error) {
-        throw new Error(
-          `render markdown block ${index + 1} (${block.type}) failed: ${errorMessage(error)}`,
-          { cause: error }
-        )
-      }
-    })
-    .join('\n\n')
+  })
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function assertSelectQuery(sql: string, name: string): void {
-  const stripped = stripLeadingSqlComments(sql).trim()
-  if (!/^(SELECT|WITH)\b/i.test(stripped)) {
-    throw new Error(`render query ${name} must start with SELECT or WITH`)
-  }
-
-  if (hasStatementSeparator(stripped.replace(/;+[\s\n\r]*$/, ''))) {
-    throw new Error(`render query ${name} must contain only one SELECT statement`)
-  }
-
-  const writableKeyword = firstWritableSqlKeyword(stripped)
-  if (writableKeyword) {
-    throw new Error(`render query ${name} must not include ${writableKeyword}`)
-  }
-}
-
-function stripLeadingSqlComments(sql: string): string {
-  let value = sql.trimStart()
-
-  while (value.startsWith('--') || value.startsWith('/*')) {
-    if (value.startsWith('--')) {
-      const index = value.indexOf('\n')
-      value = index === -1 ? '' : value.slice(index + 1).trimStart()
-      continue
-    }
-
-    const index = value.indexOf('*/')
-    value = index === -1 ? '' : value.slice(index + 2).trimStart()
-  }
-
-  return value
-}
-
-function hasStatementSeparator(sql: string): boolean {
-  return scanSql(sql, {
-    onNormalChar: (char) => char === ';'
-  })
-}
-
-function firstWritableSqlKeyword(sql: string): string | null {
-  const match = sqlNormalText(sql).match(
-    /\b(INSERT|UPDATE|DELETE|MERGE|ALTER|DROP|CREATE|TRUNCATE|GRANT|REVOKE|CALL|DO|COPY|VACUUM)\b/i
-  )
-  return match?.[1]?.toUpperCase() ?? null
-}
-
-function sqlNormalText(sql: string): string {
-  let text = ''
-  scanSql(sql, {
-    onNormalChar: (char) => {
-      text += char
-      return false
-    }
-  })
-  return text
-}
-
-function scanSql(
-  sql: string,
-  options: {
-    onNormalChar?: (char: string, index: number) => boolean | number
-    onCopiedText?: (text: string) => void
-  }
-): boolean {
-  let state: 'normal' | 'singleQuote' | 'doubleQuote' | 'lineComment' | 'blockComment' = 'normal'
-
-  for (let index = 0; index < sql.length; index += 1) {
-    const char = sql[index]!
-    const next = sql[index + 1]
-
-    if (state === 'singleQuote') {
-      options.onCopiedText?.(char)
-      if (char === "'" && next === "'") {
-        options.onCopiedText?.(next)
-        index += 1
-        continue
-      }
-      if (char === "'") state = 'normal'
-      continue
-    }
-
-    if (state === 'doubleQuote') {
-      options.onCopiedText?.(char)
-      if (char === '"') state = 'normal'
-      continue
-    }
-
-    if (state === 'lineComment') {
-      options.onCopiedText?.(char)
-      if (char === '\n') state = 'normal'
-      continue
-    }
-
-    if (state === 'blockComment') {
-      options.onCopiedText?.(char)
-      if (char === '*' && next === '/') {
-        options.onCopiedText?.(next)
-        index += 1
-        state = 'normal'
-      }
-      continue
-    }
-
-    if (char === "'") {
-      options.onCopiedText?.(char)
-      state = 'singleQuote'
-      continue
-    }
-
-    if (char === '"') {
-      options.onCopiedText?.(char)
-      state = 'doubleQuote'
-      continue
-    }
-
-    if (char === '-' && next === '-') {
-      options.onCopiedText?.(char)
-      options.onCopiedText?.(next)
-      index += 1
-      state = 'lineComment'
-      continue
-    }
-
-    if (char === '/' && next === '*') {
-      options.onCopiedText?.(char)
-      options.onCopiedText?.(next)
-      index += 1
-      state = 'blockComment'
-      continue
-    }
-
-    const result = options.onNormalChar?.(char, index)
-    if (result === true) return true
-    if (typeof result === 'number') {
-      index += result - 1
-      continue
-    }
-    if (result === false) continue
-
-    options.onCopiedText?.(char)
-  }
-
-  return false
-}
-
-function renderTargetBlock(block: TargetRenderBlock, context: Record<string, unknown>): string {
-  if (block.type === 'heading') {
-    return `${'#'.repeat(block.level)} ${interpolate(block.text, context)}`
-  }
-
-  if (block.type === 'paragraph') {
-    return interpolate(block.text, context)
-  }
-
-  if (block.type === 'rawMarkdown') {
-    return interpolate(block.content, context)
-  }
-
-  if (block.type === 'divider') {
-    return '---'
-  }
-
-  if (block.type === 'table') {
-    return renderTableBlock(block.query, block.columns, context)
-  }
-
-  return renderListBlock(block.query, block.value, context)
-}
-
-function renderTableBlock(
-  queryName: string,
-  columns: TargetRenderTableColumn[],
-  context: Record<string, unknown>
-): string {
-  const rows = rowsForQuery(queryName, context)
-  const header = `| ${columns.map((column) => escapeTableCell(interpolate(column.label, context))).join(' | ')} |`
-  const separator = `| ${columns.map(() => '---').join(' | ')} |`
-  const body = rows.map((row) => {
-    const rowContext = { ...context, ...row, row }
-    return `| ${columns.map((column) => escapeTableCell(interpolate(column.value, rowContext))).join(' | ')} |`
-  })
-
-  return [header, separator, ...body].join('\n')
-}
-
-function renderListBlock(
-  queryName: string,
-  valueTemplate: string,
-  context: Record<string, unknown>
-): string {
-  return rowsForQuery(queryName, context)
-    .map((row) => `- ${interpolate(valueTemplate, { ...context, ...row, row })}`)
-    .join('\n')
-}
-
-function rowsForQuery(queryName: string, context: Record<string, unknown>): RenderQueryRow[] {
-  const value = context[queryName]
-  if (!Array.isArray(value)) {
-    throw new Error(`render block query ${queryName} must use mode "many"`)
-  }
-
-  return value as RenderQueryRow[]
-}
-
-function interpolate(template: string, context: Record<string, unknown>): string {
-  return template.replaceAll(/{{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*}}/g, (_, path: string) =>
-    formatTemplateValue(resolvePath(context, path))
-  )
-}
-
-function resolvePath(context: Record<string, unknown>, valuePath: string): unknown {
-  let value: unknown = context
-  for (const part of valuePath.split('.')) {
-    if (!value || typeof value !== 'object') return undefined
-    value = (value as Record<string, unknown>)[part]
-  }
-
-  return value
-}
-
-function formatTemplateValue(value: unknown): string {
-  if (value === null || value === undefined) return ''
-  if (value instanceof Date) return value.toISOString()
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
-}
-
-function escapeTableCell(value: string): string {
-  return value.replaceAll('|', '\\|').replaceAll(/\s*\n\s*/g, '<br>')
 }
 
 async function profileStatsRows(shiplogConfig: ShiplogConfig, now: Date): Promise<string> {
