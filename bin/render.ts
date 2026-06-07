@@ -191,7 +191,9 @@ async function fetchTargetRenderConfig(
     )
     if (!fs.existsSync(fallbackPath)) return null
 
-    logger.info(`[render] using fallback ${renderConfig.DEFAULT_TARGET_RENDER_CONFIG_PATH}`)
+    logger.info(
+      `[render] ${renderConfig.DEFAULT_TARGET_RENDER_CONFIG_PATH} not found at ${target.provider}/${repository.nameWithOwner}@${target.branch}:${renderConfig.DEFAULT_TARGET_RENDER_CONFIG_PATH}; using fallback`
+    )
     return renderConfig.load(fallbackPath)
   }
 

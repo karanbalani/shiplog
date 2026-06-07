@@ -14,12 +14,15 @@ test('publish workflow is named publish and only renders/publishes existing data
   expect(publish).toContain('name: publish')
   expect(publish).toContain('  prepare:')
   expect(publish).toContain('  publish:')
-  expect(publish).toContain('fail-fast: false')
-  expect(publish).toContain('target_index: ${{ fromJSON(needs.prepare.outputs.target_indexes) }}')
   expect(publish).toContain(
-    'bun run tokens:export -- --scope publish --target-index "${{ matrix.target_index }}"'
+    'name: publish (${{ matrix.target.provider }}) (${{ matrix.target.owner }})'
   )
-  expect(publish).toContain('bun run publish -- --target-index "${{ matrix.target_index }}"')
+  expect(publish).toContain('fail-fast: false')
+  expect(publish).toContain('target: ${{ fromJSON(needs.prepare.outputs.target_matrix) }}')
+  expect(publish).toContain(
+    'bun run tokens:export -- --scope publish --target-index "${{ matrix.target.target_index }}"'
+  )
+  expect(publish).toContain('bun run publish -- --target-index "${{ matrix.target.target_index }}"')
   expect(publish).not.toContain('bun run render')
   expect(publish).not.toContain('daily-publish')
   expect(publish).not.toContain('bun run init')

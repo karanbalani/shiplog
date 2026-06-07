@@ -16,7 +16,7 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      target_indexes: ${{ steps.targets.outputs.target_indexes }}
+      target_matrix: ${{ steps.targets.outputs.target_matrix }}
     steps:
       - uses: actions/checkout@v6
 
@@ -54,36 +54,19 @@ jobs:
 
       - name: Build publish target matrix
         id: targets
-        run: |
-          node <<'NODE'
-          const fs = require('node:fs')
-
-          const encoded = process.env.SHIPLOG_CONFIG_BASE64
-          if (!encoded) {
-            console.error('missing repository variable: SHIPLOG_CONFIG_BASE64')
-            process.exit(1)
-          }
-
-          const config = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'))
-          const targets = config.publish?.targets
-          if (!Array.isArray(targets) || targets.length === 0) {
-            console.error('shiplog config must define at least one publish target')
-            process.exit(1)
-          }
-
-          const indexes = targets.map((_, index) => index)
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `target_indexes=${JSON.stringify(indexes)}\n`)
-          NODE
+        run: bun scripts/build_publish_matrix.ts
         env:
           SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
+          SHIPLOG_TOKEN_SECRETS_JSON: ${{ toJSON(secrets) }}
 
   publish:
     needs: prepare
+    name: publish (${{ matrix.target.provider }}) (${{ matrix.target.owner }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target_index: ${{ fromJSON(needs.prepare.outputs.target_indexes) }}
+        target: ${{ fromJSON(needs.prepare.outputs.target_matrix) }}
     steps:
       - uses: actions/checkout@v6
 
@@ -110,11 +93,11 @@ jobs:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
       - name: Export publish token env
-        run: bun run tokens:export -- --scope publish --target-index "${{ matrix.target_index }}"
+        run: bun run tokens:export -- --scope publish --target-index "${{ matrix.target.target_index }}"
         env:
           SHIPLOG_TOKEN_SECRETS_JSON: ${{ toJSON(secrets) }}
 
       - name: Publish rendered README
-        run: bun run publish -- --target-index "${{ matrix.target_index }}"
+        run: bun run publish -- --target-index "${{ matrix.target.target_index }}"
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
