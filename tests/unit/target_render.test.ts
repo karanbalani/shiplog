@@ -89,6 +89,139 @@ test('renderTargetMarkdown preserves interpolation and table escaping behavior',
   )
 })
 
+test('renderTargetMarkdown repeats a template for each query row', () => {
+  const markdown = renderTargetMarkdown(
+    [
+      {
+        type: 'repeat',
+        query: 'languages',
+        template: '{{ language }}: {{ commits }}'
+      }
+    ],
+    {
+      languages: [
+        { language: 'TypeScript', commits: 12 },
+        { language: 'Rust', commits: 8 }
+      ]
+    }
+  )
+
+  expect(markdown).toBe(['TypeScript: 12', 'Rust: 8'].join('\n'))
+})
+
+test('renderTargetMarkdown repeats blocks with a custom separator', () => {
+  const markdown = renderTargetMarkdown(
+    [
+      {
+        type: 'repeat',
+        query: 'languages',
+        template: '![{{ language }}](https://img.shields.io/badge/{{ language }}-{{ color }})',
+        separator: ' '
+      }
+    ],
+    {
+      languages: [
+        { language: 'TypeScript', color: '3178c6' },
+        { language: 'Rust', color: 'dea584' }
+      ]
+    }
+  )
+
+  expect(markdown).toBe(
+    '![TypeScript](https://img.shields.io/badge/TypeScript-3178c6) ![Rust](https://img.shields.io/badge/Rust-dea584)'
+  )
+})
+
+test('renderTargetMarkdown repeats empty query rows as an empty string', () => {
+  const markdown = renderTargetMarkdown(
+    [
+      {
+        type: 'repeat',
+        query: 'languages',
+        template: '{{ language }}'
+      }
+    ],
+    {
+      languages: []
+    }
+  )
+
+  expect(markdown).toBe('')
+})
+
+test('renderTargetMarkdown hides visibleWhen hasRows true blocks when rows are empty', () => {
+  const markdown = renderTargetMarkdown(
+    [
+      {
+        type: 'heading',
+        level: 2,
+        text: 'Top Languages',
+        visibleWhen: { query: 'languages', hasRows: true }
+      },
+      {
+        type: 'paragraph',
+        text: 'Always visible.'
+      }
+    ],
+    {
+      languages: []
+    }
+  )
+
+  expect(markdown).toBe('Always visible.')
+})
+
+test('renderTargetMarkdown renders visibleWhen hasRows true blocks when rows exist', () => {
+  const markdown = renderTargetMarkdown(
+    [
+      {
+        type: 'heading',
+        level: 2,
+        text: 'Top Languages',
+        visibleWhen: { query: 'languages', hasRows: true }
+      }
+    ],
+    {
+      languages: [{ language: 'TypeScript' }]
+    }
+  )
+
+  expect(markdown).toBe('## Top Languages')
+})
+
+test('renderTargetMarkdown renders visibleWhen hasRows false fallback blocks for empty rows', () => {
+  const markdown = renderTargetMarkdown(
+    [
+      {
+        type: 'paragraph',
+        text: 'No languages yet.',
+        visibleWhen: { query: 'languages', hasRows: false }
+      }
+    ],
+    {
+      languages: []
+    }
+  )
+
+  expect(markdown).toBe('No languages yet.')
+})
+
+test('renderTargetMarkdown reports missing visibleWhen queries with block context', () => {
+  expect(() =>
+    renderTargetMarkdown(
+      [
+        {
+          type: 'heading',
+          level: 2,
+          text: 'Top Languages',
+          visibleWhen: { query: 'languages', hasRows: true }
+        }
+      ],
+      {}
+    )
+  ).toThrow(/render markdown block 1 \(heading\) failed: visibleWhen query languages was not found/)
+})
+
 test('appendShiplogFooter appends the footer once', () => {
   const markdown = appendShiplogFooter('# Hello\n')
 

@@ -50,6 +50,9 @@
               },
               "text": {
                 "type": "string"
+              },
+              "visibleWhen": {
+                "$ref": "#/definitions/visibleWhen"
               }
             }
           },
@@ -63,6 +66,9 @@
               },
               "text": {
                 "type": "string"
+              },
+              "visibleWhen": {
+                "$ref": "#/definitions/visibleWhen"
               }
             }
           },
@@ -94,6 +100,9 @@
                     }
                   }
                 }
+              },
+              "visibleWhen": {
+                "$ref": "#/definitions/visibleWhen"
               }
             }
           },
@@ -111,6 +120,32 @@
               },
               "value": {
                 "type": "string"
+              },
+              "visibleWhen": {
+                "$ref": "#/definitions/visibleWhen"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "query", "template"],
+            "properties": {
+              "type": {
+                "const": "repeat"
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1
+              },
+              "template": {
+                "type": "string"
+              },
+              "separator": {
+                "type": "string"
+              },
+              "visibleWhen": {
+                "$ref": "#/definitions/visibleWhen"
               }
             }
           },
@@ -124,6 +159,9 @@
               },
               "content": {
                 "type": "string"
+              },
+              "visibleWhen": {
+                "$ref": "#/definitions/visibleWhen"
               }
             }
           },
@@ -134,10 +172,29 @@
             "properties": {
               "type": {
                 "const": "divider"
+              },
+              "visibleWhen": {
+                "$ref": "#/definitions/visibleWhen"
               }
             }
           }
         ]
+      }
+    }
+  },
+  "definitions": {
+    "visibleWhen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query", "hasRows"],
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hasRows": {
+          "type": "boolean"
+        }
       }
     }
   }

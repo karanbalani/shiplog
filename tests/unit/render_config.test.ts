@@ -27,6 +27,41 @@ test('validate defaults missing queries to an empty object', () => {
   expect(c.queries).toEqual({})
 })
 
+test('validate accepts repeat blocks and block visibility conditions', () => {
+  const c = renderConfig.validate({
+    version: 1,
+    queries: {
+      languages: {
+        mode: 'many',
+        sql: 'SELECT language, percentage FROM language_stats'
+      }
+    },
+    markdown: [
+      {
+        type: 'heading',
+        level: 2,
+        text: 'Top Languages',
+        visibleWhen: {
+          query: 'languages',
+          hasRows: true
+        }
+      },
+      {
+        type: 'repeat',
+        query: 'languages',
+        template: '{{ language }} {{ percentage }}%',
+        separator: ' ',
+        visibleWhen: {
+          query: 'languages',
+          hasRows: true
+        }
+      }
+    ]
+  })
+
+  expect(c.markdown).toHaveLength(2)
+})
+
 test('validate rejects empty markdown blocks', () => {
   expect(() =>
     renderConfig.validate({

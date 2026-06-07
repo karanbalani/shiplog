@@ -52,18 +52,21 @@ export function renderTargetMarkdown(
   blocks: TargetRenderBlock[],
   context: Record<string, unknown>
 ): string {
-  return blocks
-    .map((block, index) => {
-      try {
-        return renderTargetBlock(block, context)
-      } catch (error) {
-        throw new Error(
-          `render markdown block ${index + 1} (${block.type}) failed: ${errorMessage(error)}`,
-          { cause: error }
-        )
-      }
-    })
-    .join('\n\n')
+  const renderedBlocks: string[] = []
+
+  for (const [index, block] of blocks.entries()) {
+    try {
+      if (!isTargetBlockVisible(block, context)) continue
+      renderedBlocks.push(renderTargetBlock(block, context))
+    } catch (error) {
+      throw new Error(
+        `render markdown block ${index + 1} (${block.type}) failed: ${errorMessage(error)}`,
+        { cause: error }
+      )
+    }
+  }
+
+  return renderedBlocks.join('\n\n')
 }
 
 export function validateTargetRenderSql(sql: string, queryName: string): void {
@@ -125,7 +128,23 @@ function renderTargetBlock(block: TargetRenderBlock, context: Record<string, unk
     return renderTableBlock(block.query, block.columns, context)
   }
 
-  return renderListBlock(block.query, block.value, context)
+  if (block.type === 'list') {
+    return renderListBlock(block.query, block.value, context)
+  }
+
+  return renderRepeatBlock(block.query, block.template, block.separator ?? '\n', context)
+}
+
+function isTargetBlockVisible(block: TargetRenderBlock, context: Record<string, unknown>): boolean {
+  if (!block.visibleWhen) return true
+
+  const queryName = block.visibleWhen.query
+  if (!Object.prototype.hasOwnProperty.call(context, queryName)) {
+    throw new Error(`visibleWhen query ${queryName} was not found`)
+  }
+
+  const rows = rowsForQuery(queryName, context)
+  return rows.length > 0 === block.visibleWhen.hasRows
 }
 
 function renderTableBlock(
@@ -152,6 +171,17 @@ function renderListBlock(
   return rowsForQuery(queryName, context)
     .map((row) => `- ${interpolate(valueTemplate, { ...context, ...row, row })}`)
     .join('\n')
+}
+
+function renderRepeatBlock(
+  queryName: string,
+  template: string,
+  separator: string,
+  context: Record<string, unknown>
+): string {
+  return rowsForQuery(queryName, context)
+    .map((row) => interpolate(template, { ...context, ...row, row }))
+    .join(separator)
 }
 
 function rowsForQuery(queryName: string, context: Record<string, unknown>): TargetRenderQueryRow[] {
