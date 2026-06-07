@@ -7,6 +7,7 @@ import type {
 export const SHIPLOG_FOOTER_TEXT =
   'Powered by my own activity database via [shiplog](https://shiplog.karanbalani.tech).'
 export const SHIPLOG_FOOTER = `<sub>${SHIPLOG_FOOTER_TEXT}</sub>`
+const DEFAULT_REPEAT_SEPARATOR = '  \n'
 
 export type TargetRenderQueryRow = Record<string, unknown>
 export type TargetRenderQueryRunner = (
@@ -132,7 +133,12 @@ function renderTargetBlock(block: TargetRenderBlock, context: Record<string, unk
     return renderListBlock(block.query, block.value, context)
   }
 
-  return renderRepeatBlock(block.query, block.template, block.separator ?? '\n', context)
+  return renderRepeatBlock(
+    block.query,
+    block.template,
+    block.separator ?? DEFAULT_REPEAT_SEPARATOR,
+    context
+  )
 }
 
 function isTargetBlockVisible(block: TargetRenderBlock, context: Record<string, unknown>): boolean {

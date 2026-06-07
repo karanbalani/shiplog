@@ -89,7 +89,7 @@ test('renderTargetMarkdown preserves interpolation and table escaping behavior',
   )
 })
 
-test('renderTargetMarkdown repeats a template for each query row', () => {
+test('renderTargetMarkdown repeats a template with markdown line breaks by default', () => {
   const markdown = renderTargetMarkdown(
     [
       {
@@ -106,7 +106,7 @@ test('renderTargetMarkdown repeats a template for each query row', () => {
     }
   )
 
-  expect(markdown).toBe(['TypeScript: 12', 'Rust: 8'].join('\n'))
+  expect(markdown).toBe(['TypeScript: 12', 'Rust: 8'].join('  \n'))
 })
 
 test('renderTargetMarkdown repeats blocks with a custom separator', () => {

@@ -139,7 +139,7 @@ LIMIT 10;
 }
 ```
 
-`repeat` renders `template` once per row from a `mode: "many"` query. The row fields are available exactly like `list` and `table` rows, including `{{ row.field_name }}`. `separator` is optional and defaults to a newline.
+`repeat` renders `template` once per row from a `mode: "many"` query. The row fields are available exactly like `list` and `table` rows, including `{{ row.field_name }}`. `separator` is optional and defaults to a Markdown line break.
 
 `rawMarkdown`:
 
