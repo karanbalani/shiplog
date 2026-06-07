@@ -29,7 +29,7 @@ export function graphQLClient({
     const body = await fetchJson<{
       data: T
       errors?: Array<{ message: string }>
-    }>(
+    } | null>(
       ENDPOINT,
       {
         method: 'POST',
@@ -48,6 +48,10 @@ export function graphQLClient({
         ...(fetch ? { fetch } : {})
       }
     )
+
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new GitHubGraphQLError([{ message: 'empty graphql response' }])
+    }
 
     if (body.errors?.length) {
       throw new GitHubGraphQLError(body.errors)

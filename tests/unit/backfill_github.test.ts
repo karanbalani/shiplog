@@ -1008,6 +1008,49 @@ test('run defers retryable repository errors and continues remaining repositorie
   expect(secondCommits.rows[0]!.count).toBe(2)
 })
 
+test('run defers empty GraphQL repository responses and continues remaining repositories', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+  const emptyGraphQLFetch = mockGitHubFetchWithEmptyGraphQLRepositoryResponse()
+
+  const result = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    backfillMode: 'deep',
+    fetch: emptyGraphQLFetch.fetch
+  })
+  const state = await db.query<{ status: string; last_error: string | null }>(
+    'SELECT status, last_error FROM repository_backfill_state ORDER BY status'
+  )
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+
+  expect(result).toMatchObject({
+    complete: false,
+    repositoriesDiscovered: 2,
+    repositoriesProcessed: 2,
+    repositoriesDeferred: 1
+  })
+  expect(emptyGraphQLFetch.publicCommitAttempts).toBe(1)
+  expect(state.rows.map((row) => row.status).sort()).toEqual(['retry_wait', 'succeeded'])
+  expect(state.rows.some((row) => row.last_error?.includes('empty graphql response'))).toBe(true)
+  expect(commits.rows[0]!.count).toBe(1)
+  expect(logs.some((line) => line.includes('hit a retryable provider error'))).toBe(true)
+})
+
 test('run resumes retry_wait repositories after completed steps', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
@@ -2525,6 +2568,32 @@ function mockGitHubFetchWithTransientRepositoryFailure(): {
         if (isRepositoryCommitsQuery(body.query) && body.variables?.name === 'hello') {
           result.publicCommitAttempts += 1
           return new Response('service unavailable', { status: 503 })
+        }
+      }
+
+      return baseFetch(url, init)
+    }) as typeof fetch
+  }
+
+  return result
+}
+
+function mockGitHubFetchWithEmptyGraphQLRepositoryResponse(): {
+  fetch: typeof fetch
+  publicCommitAttempts: number
+} {
+  const baseFetch = mockGitHubFetchWithTwoRepositories()
+  const result = {
+    publicCommitAttempts: 0,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (url === 'https://api.github.com/graphql') {
+        const body = JSON.parse(String(init?.body)) as {
+          query: string
+          variables?: Record<string, string>
+        }
+        if (isRepositoryCommitsQuery(body.query) && body.variables?.name === 'hello') {
+          result.publicCommitAttempts += 1
+          return new Response('', { status: 200 })
         }
       }
 
