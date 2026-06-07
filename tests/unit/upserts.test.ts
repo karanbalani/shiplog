@@ -106,6 +106,54 @@ test('upsertRepository inserts then updates on provider and external id', async 
   expect(second.description).toBe('second')
 })
 
+test('upsertRepository preserves manual redaction during sync updates', async () => {
+  const first = await upserts.upsertRepository({
+    provider: 'github',
+    external_id: 'R_REDACTED_1',
+    organization_id: null,
+    owner_login: 'octocat',
+    name: 'secret',
+    full_name: 'octocat/secret',
+    web_url: 'https://github.com/octocat/secret',
+    description: 'manual redaction',
+    visibility: 'public',
+    is_fork: false,
+    is_archived: false,
+    primary_language: 'TypeScript',
+    default_branch: 'main',
+    external_created_at: '2020-01-01T00:00:00Z',
+    external_pushed_at: '2026-05-07T12:00:00Z',
+    first_seen_on: '2026-05-07',
+    last_seen_on: '2026-05-07',
+    redacted: true
+  })
+  const second = await upserts.upsertRepository({
+    provider: 'github',
+    external_id: 'R_REDACTED_1',
+    organization_id: null,
+    owner_login: 'octocat',
+    name: 'secret',
+    full_name: 'octocat/secret',
+    web_url: 'https://github.com/octocat/secret',
+    description: 'sync update',
+    visibility: 'public',
+    is_fork: false,
+    is_archived: false,
+    primary_language: 'TypeScript',
+    default_branch: 'main',
+    external_created_at: '2020-01-01T00:00:00Z',
+    external_pushed_at: '2026-05-08T12:00:00Z',
+    first_seen_on: '2026-05-07',
+    last_seen_on: '2026-05-08',
+    redacted: false
+  })
+
+  expect(first.redacted).toBe(true)
+  expect(second.id).toBe(first.id)
+  expect(second.description).toBe('sync update')
+  expect(second.redacted).toBe(true)
+})
+
 test('upsertRepository handles repository renames by stable provider id', async () => {
   const { account, repository } = await seedAccountAndRepository()
   await upserts.upsertCommit({

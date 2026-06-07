@@ -255,7 +255,7 @@ export async function upsertRepository(row: NewRepositoryRow): Promise<Repositor
              WHEN repositories.last_seen_on >= EXCLUDED.last_seen_on THEN repositories.last_seen_on
              ELSE EXCLUDED.last_seen_on
            END,
-           redacted = EXCLUDED.redacted,
+           redacted = repositories.redacted OR EXCLUDED.redacted,
            updated_at = now()
      RETURNING *`,
     [
