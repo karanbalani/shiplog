@@ -8,6 +8,7 @@ import type { Pool } from 'pg'
 import * as render from '../../bin/render.ts'
 import * as db from '../../lib/db.ts'
 import * as logger from '../../lib/logger.ts'
+import * as renderConfig from '../../lib/render_config.ts'
 import type { ShiplogConfig } from '../../lib/types/index.ts'
 import * as upserts from '../../lib/upserts.ts'
 
@@ -315,16 +316,87 @@ test('render loads target render config from the configured publish target', asy
 })
 
 test('render uses the shipped fallback render config when target config is unavailable', async () => {
-  await seedActivity()
+  const fallbackConfig = renderConfig.load(
+    path.join(import.meta.dir, '..', '..', '.shiplog', 'render.json')
+  )
+  const queryNameBySql = new Map(
+    Object.entries(fallbackConfig.queries ?? {}).map(([queryName, query]) => [query.sql, queryName])
+  )
+
+  db.__setPoolForTests({
+    query: async (sql: string) => {
+      const queryName = queryNameBySql.get(sql)
+
+      if (queryName === 'intro') {
+        return {
+          rows: [
+            {
+              github_login: 'octocat',
+              github_url: 'https://github.com/octocat',
+              github_tenure: '6 years',
+              github_years_badge: '6%20years'
+            }
+          ]
+        }
+      }
+
+      if (queryName === 'snapshot') {
+        return {
+          rows: [
+            { metric: '🔥 Commits', all_time: '5', last_365_days: '5' },
+            { metric: '⭐️ Owned stars', all_time: '10', last_365_days: '3' }
+          ]
+        }
+      }
+
+      if (queryName === 'organizations') {
+        return {
+          rows: [
+            {
+              organization: 'Octo Org',
+              web_url: 'https://github.com/octo-org',
+              coverage: '1 repos',
+              commits: '5',
+              prs: '2',
+              lines: '+100 / -20'
+            }
+          ]
+        }
+      }
+
+      if (queryName === 'active_projects') {
+        return {
+          rows: [
+            {
+              full_name: 'octo-org/hello',
+              web_url: 'https://github.com/octo-org/hello',
+              commits: '5',
+              lines_added: '100',
+              lines_removed: '20'
+            }
+          ]
+        }
+      }
+
+      return { rows: [] }
+    },
+    end: async () => undefined
+  } as never)
 
   const output = await render.render({
     config: shiplogConfig(),
     now: new Date('2026-05-10T00:00:00Z')
   })
 
-  expect(output).toContain("# Hi there, I'm Example User")
-  expect(output).toContain('| Metric | All time | Last 365 days |')
-  expect(output).toContain('| [octo-org/hello](https://github.com/octo-org/hello) | 5 | 2 | 4 |')
+  expect(output).toContain('# Hey there! I am Example User. 👋')
+  expect(output).toContain('Joined GitHub 6 years ago.')
+  expect(output).toContain('| Metric | All Time | Last 365 days |')
+  expect(output).toContain(
+    '| [Octo Org](https://github.com/octo-org) | 1 repos | 5 | 2 | +100 / -20 |'
+  )
+  expect(output).toContain(
+    '[octo-org/hello](https://github.com/octo-org/hello) - 🔥 5 commits, +100 -20'
+  )
   expect(output).toContain(
     '<sub>Powered by my own activity database via [shiplog](https://shiplog.karanbalani.tech).</sub>'
   )

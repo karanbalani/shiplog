@@ -2,68 +2,80 @@
   "$schema": "../schemas/render.config.schema.json",
   "version": 1,
   "queries": {
-    "profile_stats": {
-      "mode": "many",
-      "sql": "WITH all_time AS (SELECT COALESCE(SUM(commits), 0)::int AS commits, COALESCE(SUM(lines_added), 0)::int AS lines_added, COALESCE(SUM(lines_deleted), 0)::int AS lines_deleted, COALESCE(SUM(prs_opened), 0)::int AS prs_opened, COALESCE(SUM(prs_merged), 0)::int AS prs_merged, COALESCE(SUM(pr_reviews_total), 0)::int AS pr_reviews, COALESCE(SUM(issues_opened), 0)::int AS issues_opened, COALESCE(SUM(issues_closed), 0)::int AS issues_closed FROM daily_repository_activity), recent AS (SELECT COALESCE(SUM(commits), 0)::int AS commits, COALESCE(SUM(lines_added), 0)::int AS lines_added, COALESCE(SUM(lines_deleted), 0)::int AS lines_deleted, COALESCE(SUM(prs_opened), 0)::int AS prs_opened, COALESCE(SUM(prs_merged), 0)::int AS prs_merged, COALESCE(SUM(pr_reviews_total), 0)::int AS pr_reviews, COALESCE(SUM(issues_opened), 0)::int AS issues_opened, COALESCE(SUM(issues_closed), 0)::int AS issues_closed FROM daily_repository_activity WHERE activity_on >= CURRENT_DATE - INTERVAL '365 days') SELECT 'Commits' AS metric, all_time.commits AS all_time, recent.commits AS last_year FROM all_time, recent UNION ALL SELECT 'Lines added', all_time.lines_added, recent.lines_added FROM all_time, recent UNION ALL SELECT 'Lines deleted', all_time.lines_deleted, recent.lines_deleted FROM all_time, recent UNION ALL SELECT 'PRs opened', all_time.prs_opened, recent.prs_opened FROM all_time, recent UNION ALL SELECT 'PRs merged', all_time.prs_merged, recent.prs_merged FROM all_time, recent UNION ALL SELECT 'PR reviews', all_time.pr_reviews, recent.pr_reviews FROM all_time, recent UNION ALL SELECT 'Issues opened', all_time.issues_opened, recent.issues_opened FROM all_time, recent UNION ALL SELECT 'Issues closed', all_time.issues_closed, recent.issues_closed FROM all_time, recent"
+    "intro": {
+      "mode": "one",
+      "sql": "WITH account_scope AS (SELECT id, external_login, external_url, external_created_at FROM accounts WHERE provider = 'github' ORDER BY id LIMIT 1), tenure AS (SELECT external_login, external_url, GREATEST(0, EXTRACT(YEAR FROM age(CURRENT_DATE, external_created_at::date))::int) AS github_years FROM account_scope) SELECT external_login AS github_login, COALESCE(external_url, 'https://github.com/' || external_login) AS github_url, CASE WHEN github_years = 1 THEN '1 year' ELSE github_years::text || ' years' END AS github_tenure, github_years::text || '%20years' AS github_years_badge FROM tenure"
     },
-    "top_repositories": {
+    "snapshot": {
       "mode": "many",
-      "sql": "SELECT r.full_name, r.web_url, COALESCE(SUM(d.commits), 0)::int AS commits, COALESCE(SUM(d.prs_opened), 0)::int AS pull_requests, COALESCE(SUM(d.pr_reviews_total), 0)::int AS reviews FROM daily_repository_activity d JOIN repositories r ON r.id = d.repository_id WHERE d.activity_on >= CURRENT_DATE - INTERVAL '365 days' AND r.visibility = 'public' AND r.redacted = false GROUP BY r.id, r.full_name, r.web_url ORDER BY commits DESC, pull_requests DESC, reviews DESC, full_name ASC LIMIT 10"
+      "sql": "WITH account_scope AS (SELECT id, external_login FROM accounts WHERE provider = 'github' ORDER BY id LIMIT 1), user_all AS (SELECT COALESCE(SUM(COALESCE(total_commit_contributions, 0)), 0)::bigint AS commits, COALESCE(SUM(COALESCE(total_issue_contributions, 0)), 0)::bigint AS issues, COALESCE(SUM(COALESCE(total_pull_request_contributions, 0)), 0)::bigint AS prs, COALESCE(SUM(COALESCE(total_commit_contributions, 0) + COALESCE(total_issue_contributions, 0) + COALESCE(total_pull_request_contributions, 0) + COALESCE(total_pull_request_review_contributions, 0) + COALESCE(restricted_contributions_count, 0)), 0)::bigint AS total_contributions FROM daily_user_summary s JOIN account_scope a ON a.id = s.account_id), user_recent AS (SELECT COALESCE(SUM(COALESCE(total_commit_contributions, 0)), 0)::bigint AS commits, COALESCE(SUM(COALESCE(total_issue_contributions, 0)), 0)::bigint AS issues, COALESCE(SUM(COALESCE(total_pull_request_contributions, 0)), 0)::bigint AS prs, COALESCE(SUM(COALESCE(total_commit_contributions, 0) + COALESCE(total_issue_contributions, 0) + COALESCE(total_pull_request_contributions, 0) + COALESCE(total_pull_request_review_contributions, 0) + COALESCE(restricted_contributions_count, 0)), 0)::bigint AS total_contributions FROM daily_user_summary s JOIN account_scope a ON a.id = s.account_id WHERE s.activity_on >= CURRENT_DATE - INTERVAL '365 days'), repo_all AS (SELECT COALESCE(SUM(COALESCE(lines_added, 0)), 0)::bigint AS lines_added, COALESCE(SUM(COALESCE(lines_deleted, 0)), 0)::bigint AS lines_removed, COUNT(DISTINCT repository_id)::bigint AS known_repos FROM daily_repository_activity d JOIN account_scope a ON a.id = d.account_id), repo_recent AS (SELECT COALESCE(SUM(COALESCE(lines_added, 0)), 0)::bigint AS lines_added, COALESCE(SUM(COALESCE(lines_deleted, 0)), 0)::bigint AS lines_removed, COUNT(DISTINCT repository_id)::bigint AS known_repos FROM daily_repository_activity d JOIN account_scope a ON a.id = d.account_id WHERE d.activity_on >= CURRENT_DATE - INTERVAL '365 days'), latest_snapshots AS (SELECT repository_id, MAX(captured_on) AS captured_on FROM repository_snapshots GROUP BY repository_id), owned_stars AS (SELECT COALESCE(SUM(COALESCE(rs.star_count, 0)), 0)::bigint AS stars FROM repositories r JOIN latest_snapshots latest ON latest.repository_id = r.id JOIN repository_snapshots rs ON rs.repository_id = latest.repository_id AND rs.captured_on = latest.captured_on JOIN account_scope a ON lower(a.external_login) = lower(r.owner_login) WHERE r.provider = 'github' AND r.redacted = false), owned_recent_stars AS (SELECT COALESCE(SUM(COALESCE(rs.star_count, 0)), 0)::bigint AS stars FROM repositories r JOIN latest_snapshots latest ON latest.repository_id = r.id JOIN repository_snapshots rs ON rs.repository_id = latest.repository_id AND rs.captured_on = latest.captured_on JOIN account_scope a ON lower(a.external_login) = lower(r.owner_login) WHERE r.provider = 'github' AND r.redacted = false AND EXISTS (SELECT 1 FROM daily_repository_activity d WHERE d.repository_id = r.id AND d.account_id = a.id AND d.activity_on >= CURRENT_DATE - INTERVAL '365 days')) SELECT metric, all_time, last_365_days FROM user_all ua, user_recent ur, repo_all ra, repo_recent rr, owned_stars os, owned_recent_stars ors, LATERAL (VALUES ('🔥 Commits', to_char(ua.commits, 'FM999G999G999G990'), to_char(ur.commits, 'FM999G999G999G990')), ('📝 Issues', to_char(ua.issues, 'FM999G999G999G990'), to_char(ur.issues, 'FM999G999G999G990')), ('🔀 PRs', to_char(ua.prs, 'FM999G999G999G990'), to_char(ur.prs, 'FM999G999G999G990')), ('🎉 Total contributions', to_char(ua.total_contributions, 'FM999G999G999G990'), to_char(ur.total_contributions, 'FM999G999G999G990')), ('➕ Lines added', to_char(ra.lines_added, 'FM999G999G999G990'), to_char(rr.lines_added, 'FM999G999G999G990')), ('➖ Lines removed', to_char(ra.lines_removed, 'FM999G999G999G990'), to_char(rr.lines_removed, 'FM999G999G999G990')), ('📦 Known repos', to_char(ra.known_repos, 'FM999G999G999G990'), to_char(rr.known_repos, 'FM999G999G999G990')), ('⭐️ Owned stars', to_char(os.stars, 'FM999G999G999G990'), to_char(ors.stars, 'FM999G999G999G990'))) AS rows(metric, all_time, last_365_days)"
     },
-    "languages": {
+    "organizations": {
       "mode": "many",
-      "sql": "SELECT r.primary_language AS language, COALESCE(SUM(d.commits), 0)::int AS commits FROM daily_repository_activity d JOIN repositories r ON r.id = d.repository_id WHERE d.activity_on >= CURRENT_DATE - INTERVAL '365 days' AND r.primary_language IS NOT NULL GROUP BY r.primary_language ORDER BY commits DESC, language ASC LIMIT 10"
+      "sql": "WITH account_scope AS (SELECT id FROM accounts WHERE provider = 'github' ORDER BY id LIMIT 1), org_rows AS (SELECT COALESCE(o.display_name, o.external_login, r.owner_login) AS organization, COALESCE(o.website_url, 'https://github.com/' || r.owner_login) AS web_url, COUNT(DISTINCT r.id)::bigint AS coverage, COALESCE(SUM(d.commits), 0)::bigint AS commits, COALESCE(SUM(d.prs_opened), 0)::bigint AS prs, COALESCE(SUM(COALESCE(d.lines_added, 0)), 0)::bigint AS lines_added, COALESCE(SUM(COALESCE(d.lines_deleted, 0)), 0)::bigint AS lines_removed FROM daily_repository_activity d JOIN account_scope a ON a.id = d.account_id JOIN repositories r ON r.id = d.repository_id LEFT JOIN organizations o ON o.id = r.organization_id WHERE r.organization_id IS NOT NULL AND d.activity_on >= CURRENT_DATE - INTERVAL '365 days' GROUP BY COALESCE(o.display_name, o.external_login, r.owner_login), COALESCE(o.website_url, 'https://github.com/' || r.owner_login) HAVING COALESCE(SUM(d.commits), 0) + COALESCE(SUM(d.prs_opened), 0) + COALESCE(SUM(COALESCE(d.lines_added, 0)) + SUM(COALESCE(d.lines_deleted, 0)), 0) > 0) SELECT organization, web_url, to_char(coverage, 'FM999G999G999G990') || ' repos' AS coverage, to_char(commits, 'FM999G999G999G990') AS commits, to_char(prs, 'FM999G999G999G990') AS prs, '+' || to_char(lines_added, 'FM999G999G999G990') || ' / -' || to_char(lines_removed, 'FM999G999G999G990') AS lines FROM org_rows ORDER BY commits DESC, prs DESC, organization ASC LIMIT 8"
     },
-    "accounts": {
+    "active_projects": {
       "mode": "many",
-      "sql": "SELECT provider, external_login, external_url FROM accounts ORDER BY provider, external_login"
+      "sql": "WITH account_scope AS (SELECT id FROM accounts WHERE provider = 'github' ORDER BY id LIMIT 1), project_rows AS (SELECT r.full_name, r.web_url, COALESCE(SUM(d.commits), 0)::bigint AS commits, COALESCE(SUM(COALESCE(d.lines_added, 0)), 0)::bigint AS lines_added, COALESCE(SUM(COALESCE(d.lines_deleted, 0)), 0)::bigint AS lines_removed FROM daily_repository_activity d JOIN account_scope a ON a.id = d.account_id JOIN repositories r ON r.id = d.repository_id WHERE d.activity_on >= CURRENT_DATE - INTERVAL '365 days' AND r.visibility = 'public' AND r.redacted = false GROUP BY r.id, r.full_name, r.web_url HAVING COALESCE(SUM(d.commits), 0) + COALESCE(SUM(COALESCE(d.lines_added, 0)) + SUM(COALESCE(d.lines_deleted, 0)), 0) > 0) SELECT full_name, web_url, to_char(commits, 'FM999G999G999G990') AS commits, to_char(lines_added, 'FM999G999G999G990') AS lines_added, to_char(lines_removed, 'FM999G999G999G990') AS lines_removed FROM project_rows ORDER BY commits DESC, lines_added + lines_removed DESC, full_name ASC LIMIT 10"
     }
   },
   "markdown": [
     {
       "type": "heading",
       "level": 1,
-      "text": "Hi there, I'm {{ profile.displayName }}"
+      "text": "Hey there! I am {{ profile.displayName }}. 👋"
     },
     {
       "type": "paragraph",
-      "text": "Building, learning, and shipping across GitHub."
+      "text": "Joined GitHub {{ intro.github_tenure }} ago."
+    },
+    {
+      "type": "rawMarkdown",
+      "content": "[![GitHub](https://img.shields.io/badge/GitHub-{{ intro.github_login }}-111111?style=flat-square&logo=github&logoColor=white)]({{ intro.github_url }}) [![GitHub tenure](https://img.shields.io/badge/Joined-{{ intro.github_years_badge }}%20ago-111111?style=flat-square)]({{ intro.github_url }})"
     },
     {
       "type": "heading",
       "level": 2,
-      "text": "Snapshot"
+      "text": "📊 Snapshot"
     },
     {
       "type": "table",
-      "query": "profile_stats",
+      "query": "snapshot",
       "columns": [
         {
           "label": "Metric",
           "value": "{{ metric }}"
         },
         {
-          "label": "All time",
+          "label": "All Time",
           "value": "{{ all_time }}"
         },
         {
           "label": "Last 365 days",
-          "value": "{{ last_year }}"
+          "value": "{{ last_365_days }}"
         }
       ]
     },
     {
       "type": "heading",
       "level": 2,
-      "text": "Most Active Public Projects"
+      "text": "🏢 Organization Snapshot",
+      "visibleWhen": {
+        "query": "organizations",
+        "hasRows": true
+      }
     },
     {
       "type": "table",
-      "query": "top_repositories",
+      "query": "organizations",
       "columns": [
         {
-          "label": "Repository",
-          "value": "[{{ full_name }}]({{ web_url }})"
+          "label": "Org",
+          "value": "[{{ organization }}]({{ web_url }})"
+        },
+        {
+          "label": "Coverage",
+          "value": "{{ coverage }}"
         },
         {
           "label": "Commits",
@@ -71,45 +83,35 @@
         },
         {
           "label": "PRs",
-          "value": "{{ pull_requests }}"
+          "value": "{{ prs }}"
         },
         {
-          "label": "Reviews",
-          "value": "{{ reviews }}"
+          "label": "Lines",
+          "value": "{{ lines }}"
         }
-      ]
+      ],
+      "visibleWhen": {
+        "query": "organizations",
+        "hasRows": true
+      }
     },
     {
       "type": "heading",
       "level": 2,
-      "text": "Languages"
+      "text": "🚀 Most Active Public Projects (Last Year)",
+      "visibleWhen": {
+        "query": "active_projects",
+        "hasRows": true
+      }
     },
     {
-      "type": "table",
-      "query": "languages",
-      "columns": [
-        {
-          "label": "Language",
-          "value": "{{ language }}"
-        },
-        {
-          "label": "Commits",
-          "value": "{{ commits }}"
-        }
-      ]
-    },
-    {
-      "type": "heading",
-      "level": 2,
-      "text": "Accounts"
-    },
-    {
-      "type": "list",
-      "query": "accounts",
-      "value": "[{{ provider }}/{{ external_login }}]({{ external_url }})"
-    },
-    {
-      "type": "divider"
+      "type": "repeat",
+      "query": "active_projects",
+      "template": "[{{ full_name }}]({{ web_url }}) - 🔥 {{ commits }} commits, +{{ lines_added }} -{{ lines_removed }}",
+      "visibleWhen": {
+        "query": "active_projects",
+        "hasRows": true
+      }
     }
   ]
 }

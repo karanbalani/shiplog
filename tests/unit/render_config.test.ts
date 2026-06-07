@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import path from 'node:path'
 import * as renderConfig from '../../lib/render_config.ts'
+import { validateTargetRenderSql } from '../../lib/target_render.ts'
 
 const ROOT = path.join(import.meta.dir, '..', '..')
 
@@ -9,7 +10,10 @@ test('load accepts the shipped fallback render config', () => {
 
   expect(c.version).toBe(1)
   expect(c.markdown.length).toBeGreaterThan(0)
-  expect(c.queries?.profile_stats?.mode).toBe('many')
+  expect(c.queries).toBeDefined()
+  for (const [queryName, query] of Object.entries(c.queries ?? {})) {
+    expect(() => validateTargetRenderSql(query.sql, queryName)).not.toThrow()
+  }
 })
 
 test('validate defaults missing queries to an empty object', () => {
