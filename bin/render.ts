@@ -2,8 +2,18 @@ import fs from 'node:fs'
 import path from 'node:path'
 import * as config from '../lib/config.ts'
 import * as db from '../lib/db.ts'
+import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
-import type { ShiplogConfig } from '../lib/types/index.ts'
+import { graphQLClient } from '../lib/providers/github/graphql.ts'
+import { fetchGitHubRepositoryById } from '../lib/providers/github/identity.ts'
+import { fetchGitHubFileContent } from '../lib/providers/github/publish.ts'
+import * as renderConfig from '../lib/render_config.ts'
+import { appendShiplogFooter, renderTargetConfigWithRunner } from '../lib/target_render.ts'
+import type {
+  ShiplogConfig,
+  ShiplogPublishTargetConfig,
+  TargetRenderConfig
+} from '../lib/types/index.ts'
 
 const DEFAULT_OUTPUT_PATH = 'rendered.md'
 const INLINE_BADGE_STYLE = 'flat-square'
@@ -28,9 +38,13 @@ const LANGUAGE_COLORS: Record<string, string> = {
 export interface RenderOptions {
   configPath?: string
   config?: ShiplogConfig
+  targetRenderConfig?: TargetRenderConfig
+  targetRenderConfigPath?: string
+  target?: ShiplogPublishTargetConfig
   template?: string
   templatePath?: string
   outputPath?: string
+  fetch?: Fetcher
   now?: Date
 }
 
@@ -84,6 +98,13 @@ interface AccountFilter {
 
 export async function render(options: RenderOptions = {}): Promise<string> {
   const shiplogConfig = options.config ?? config.load(options.configPath)
+  if (!options.template && !options.templatePath) {
+    const targetRenderConfig = await loadTargetRenderConfig(shiplogConfig, options)
+    if (targetRenderConfig) {
+      return renderTargetConfig(shiplogConfig, targetRenderConfig)
+    }
+  }
+
   const template =
     options.template ??
     fs.readFileSync(options.templatePath ?? path.resolve(process.cwd(), 'TEMPLATE.md'), 'utf8')
@@ -106,7 +127,7 @@ export async function render(options: RenderOptions = {}): Promise<string> {
     output = output.replaceAll(`{{ ${key} }}`, value)
   }
 
-  return output
+  return appendShiplogFooter(output)
 }
 
 export async function run(options: RenderOptions = {}): Promise<void> {
@@ -114,6 +135,97 @@ export async function run(options: RenderOptions = {}): Promise<void> {
   const outputPath = options.outputPath ?? path.resolve(process.cwd(), DEFAULT_OUTPUT_PATH)
   fs.writeFileSync(outputPath, output)
   logger.info(`[render] wrote ${outputPath}`)
+}
+
+async function loadTargetRenderConfig(
+  shiplogConfig: ShiplogConfig,
+  options: RenderOptions
+): Promise<TargetRenderConfig | null> {
+  if (options.targetRenderConfig) return options.targetRenderConfig
+  if (options.targetRenderConfigPath) return renderConfig.load(options.targetRenderConfigPath)
+
+  const targetConfig = await fetchTargetRenderConfig(shiplogConfig, options.target, options.fetch)
+  if (targetConfig) return targetConfig
+
+  const fallbackPath = path.resolve(
+    import.meta.dir,
+    '..',
+    renderConfig.DEFAULT_TARGET_RENDER_CONFIG_PATH
+  )
+  if (!fs.existsSync(fallbackPath)) return null
+
+  logger.info(`[render] using fallback ${renderConfig.DEFAULT_TARGET_RENDER_CONFIG_PATH}`)
+  return renderConfig.load(fallbackPath)
+}
+
+async function fetchTargetRenderConfig(
+  shiplogConfig: ShiplogConfig,
+  targetOverride?: ShiplogPublishTargetConfig,
+  fetch?: Fetcher
+): Promise<TargetRenderConfig | null> {
+  const target = targetOverride ?? shiplogConfig.publish.targets[0]
+  if (!target) return null
+  if (target.provider !== 'github')
+    throw new Error(`unsupported publish target provider in v1: ${target.provider}`)
+
+  const token = process.env[target.tokenEnv]
+  if (!token) return null
+
+  const repository = await fetchGitHubRepositoryById(
+    graphQLClient({ token, fetch }),
+    target.repositoryId
+  )
+  const content = await fetchGitHubFileContent({
+    token,
+    repositoryFullName: repository.nameWithOwner,
+    branch: target.branch,
+    path: renderConfig.DEFAULT_TARGET_RENDER_CONFIG_PATH,
+    fetch
+  })
+
+  if (!content) {
+    const fallbackPath = path.resolve(
+      import.meta.dir,
+      '..',
+      renderConfig.DEFAULT_TARGET_RENDER_CONFIG_PATH
+    )
+    if (!fs.existsSync(fallbackPath)) return null
+
+    logger.info(`[render] using fallback ${renderConfig.DEFAULT_TARGET_RENDER_CONFIG_PATH}`)
+    return renderConfig.load(fallbackPath)
+  }
+
+  logger.info(
+    `[render] loaded ${renderConfig.DEFAULT_TARGET_RENDER_CONFIG_PATH} from ${target.provider}/${repository.nameWithOwner}@${target.branch}`
+  )
+  try {
+    return renderConfig.validate(JSON.parse(content) as unknown)
+  } catch (error) {
+    throw new Error(
+      `failed to load ${renderConfig.DEFAULT_TARGET_RENDER_CONFIG_PATH} from ${target.provider}/${repository.nameWithOwner}@${target.branch}: ${errorMessage(error)}`,
+      { cause: error }
+    )
+  }
+}
+
+async function renderTargetConfig(
+  shiplogConfig: ShiplogConfig,
+  targetRenderConfig: TargetRenderConfig
+): Promise<string> {
+  return renderTargetConfigWithRunner({
+    config: targetRenderConfig,
+    profile: {
+      displayName: displayName(shiplogConfig)
+    },
+    queryRunner: async (sql) => {
+      const result = await db.query<Record<string, unknown>>(sql)
+      return result.rows
+    }
+  })
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 async function profileStatsRows(shiplogConfig: ShiplogConfig, now: Date): Promise<string> {

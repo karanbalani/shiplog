@@ -95,6 +95,48 @@ shiplog does not require ownership of the `public` schema. It only needs:
 GRANT USAGE, CREATE ON SCHEMA public TO shiplog;
 ```
 
+## Why does my read-only user see `no relations found`?
+
+The read-only role can connect, but it may not have schema `USAGE` or table/view `SELECT` privileges.
+
+First check the read-only connection:
+
+```sql
+SELECT current_database(), current_user, current_schema();
+SHOW search_path;
+```
+
+If `current_schema` is blank, grant schema access from a Postgres admin or database owner. On Neon, this is often `neondb_owner`:
+
+```sql
+GRANT USAGE ON SCHEMA public TO shiplog_readonly;
+```
+
+Then check who owns the Shiplog tables and views:
+
+```sql
+SELECT schemaname, tablename, tableowner
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY tablename;
+
+SELECT schemaname, viewname, viewowner
+FROM pg_views
+WHERE schemaname = 'public'
+ORDER BY viewname;
+```
+
+Connect as that owner, usually `shiplog`, and grant read access:
+
+```sql
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO shiplog_readonly;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+GRANT SELECT ON TABLES TO shiplog_readonly;
+```
+
+If `GRANT SELECT ON ALL TABLES` prints warnings like `no privileges were granted`, you are connected as a role that does not own the Shiplog tables. Reconnect as the table owner and run the grant again.
+
 ## Why does shiplog use two GitHub tokens?
 
 The tokens have different jobs:

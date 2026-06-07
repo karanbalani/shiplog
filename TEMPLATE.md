@@ -26,4 +26,4 @@ Building, learning, and shipping across GitHub for **{{ ACCOUNT_AGE }}** years ð
 
 ---
 
-<sub>Rendered from my own shiplog database.</sub>
+<sub>Powered by my own activity database via [shiplog](https://shiplog.karanbalani.tech).</sub>

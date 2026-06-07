@@ -1275,6 +1275,7 @@ function isRetryableRepositoryBackfillError(error: unknown): boolean {
         normalized.includes('secondary rate') ||
         normalized.includes('abuse detection') ||
         normalized.includes('something went wrong') ||
+        normalized.includes('empty graphql response') ||
         normalized.includes('timed out') ||
         normalized.includes('timeout') ||
         normalized.includes('service unavailable') ||

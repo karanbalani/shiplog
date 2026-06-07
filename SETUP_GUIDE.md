@@ -34,6 +34,52 @@ DATABASE_CONNECTION_STRING=postgres://shiplog:replace-with-a-strong-password@hos
 
 On Neon, you can create the database and role from the dashboard or SQL editor. The important part is that the role used by `DATABASE_CONNECTION_STRING` can run migrations.
 
+<details>
+<summary>Optional read-only role for Render Studio</summary>
+
+If you use a browser-only tool such as shiplog Render Studio to preview README rendering against your database, create a separate read-only role. Do not use the migration/write role in browser tools.
+
+First, run this as a Postgres admin user or database owner. On Neon, this is often `neondb_owner`:
+
+```sql
+CREATE ROLE shiplog_readonly LOGIN PASSWORD 'replace-with-a-strong-readonly-password';
+
+GRANT CONNECT ON DATABASE shiplog TO shiplog_readonly;
+GRANT USAGE ON SCHEMA public TO shiplog_readonly;
+```
+
+Then connect as the role that owns the Shiplog tables. In the setup above, that is the `shiplog` role used by `DATABASE_CONNECTION_STRING`. Existing tables and views are owned by the role that ran the migrations, so this `GRANT SELECT` step must be run by that owner:
+
+```sql
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO shiplog_readonly;
+```
+
+Add default privileges too so future tables and views created by Shiplog migrations are automatically readable by `shiplog_readonly`. Run this while still connected as the `shiplog` migration role:
+
+```sql
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+GRANT SELECT ON TABLES TO shiplog_readonly;
+```
+
+If `GRANT SELECT ON ALL TABLES` prints warnings such as `no privileges were granted`, you are probably connected as a role that can use the schema but does not own the Shiplog tables. Check the owner and reconnect as that role:
+
+```sql
+SELECT schemaname, tablename, tableowner
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY tablename;
+```
+
+Use this role only for read-only preview tools:
+
+```bash
+SHIPLOG_READONLY_DATABASE_CONNECTION_STRING=postgres://shiplog_readonly:replace-with-a-strong-readonly-password@host:5432/shiplog?sslmode=verify-full
+```
+
+Keep GitHub Actions on the normal `DATABASE_CONNECTION_STRING`; Shiplog workflows still need the write role for migrations, collection, maintenance, and publishing.
+
+</details>
+
 ## 3. Build the config
 
 Open the [shiplog config builder](https://shiplog.karanbalani.tech/config-builder/).
@@ -141,9 +187,55 @@ Token scopes:
 
 The `repo` scope is required if you want private repository activity.
 
-The `publish` workflow exports publish token names from config immediately before `bun run publish`. If a publish target uses a different `tokenEnv`, create a repository secret with that name; no workflow edit is needed.
+The `publish` workflow exports publish token names from config before rendering and publishing. If a publish target uses a different `tokenEnv`, create a repository secret with that name; no workflow edit is needed.
 
-## 5. Run the first workflow
+## 5. Optional: Customize README rendering
+
+By default, shiplog uses the fallback render config committed in this repository at `.shiplog/render.json`.
+
+To customize the generated README, add a render config to the target profile repository:
+
+```text
+target-profile-repo/
+  .shiplog/
+    render.json
+  README.md
+```
+
+The target `.shiplog/render.json` defines SQL queries and Markdown blocks. During publish, Shiplog renders each configured target independently in its own GitHub Actions matrix job: if that target repository has `.shiplog/render.json`, Shiplog uses it; otherwise Shiplog uses the fallback config bundled in this repository. The generated content is published back to the configured target path. If one target fails, the other target jobs keep running; the workflow still reports a failure so the broken target is visible.
+
+Example block shape:
+
+```json
+{
+  "version": 1,
+  "queries": {
+    "repositories": {
+      "mode": "many",
+      "sql": "SELECT r.full_name, r.web_url, SUM(d.commits)::int AS commits FROM daily_repository_activity d JOIN repositories r ON r.id = d.repository_id GROUP BY r.id, r.full_name, r.web_url ORDER BY commits DESC LIMIT 10"
+    }
+  },
+  "markdown": [
+    {
+      "type": "heading",
+      "level": 1,
+      "text": "Hi, I'm {{ profile.displayName }}"
+    },
+    {
+      "type": "table",
+      "query": "repositories",
+      "columns": [
+        { "label": "Repository", "value": "[{{ full_name }}]({{ web_url }})" },
+        { "label": "Commits", "value": "{{ commits }}" }
+      ]
+    }
+  ]
+}
+```
+
+Render queries are plain read-only Postgres SQL against your Shiplog tables. Use normal SQL for filtering, such as querying `accounts` for one account or using `CURRENT_DATE - INTERVAL '365 days'` for recent activity. Shiplog automatically appends this footer to every rendered README: `<sub>Powered by my own activity database via [shiplog](https://shiplog.karanbalani.tech).</sub>`. See [docs/RENDER_CONFIG.md](docs/RENDER_CONFIG.md) for examples and [schemas/render.config.schema.json](schemas/render.config.schema.json) for the full config shape.
+
+## 6. Run the first workflow
 
 Run the `freshness` workflow once from GitHub Actions to migrate the database, initialize the configured accounts, and collect current activity.
 
@@ -194,7 +286,7 @@ bun run render
 - `freshness`: runs every 6 hours. Migrates, initializes accounts, collects recent activity, and runs queued maintenance.
 - `history`: runs every 2 hours. Makes bounded historical progress with deep-mode defaults.
 - `integrity`: runs daily. Detects drift, queues repair work, and runs maintenance.
-- `publish`: runs daily. Renders `rendered.md` from the current database state and publishes it when the target content changed.
+- `publish`: runs daily. Builds a target matrix, renders each configured publish target from the current database state, and publishes only when that target content changed.
 - `housekeeping`: runs daily. Prunes diagnostic `error_events` older than 30 days.
 - `ci`: runs formatting, linting, typechecking, and tests on pull requests and pushes to `main`.
 
