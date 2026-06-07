@@ -1,5 +1,5 @@
 {
-  "$schema": "../schemas/render.config.schema.json",
+  "$schema": "https://shiplog.karanbalani.tech/schemas/render.config.schema.json",
   "version": 1,
   "queries": {
     "intro": {

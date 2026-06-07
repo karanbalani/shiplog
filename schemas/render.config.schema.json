@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://shiplog.dev/schemas/render.config.schema.json",
+  "$id": "https://shiplog.karanbalani.tech/schemas/render.config.schema.json",
   "title": "shiplog target render config",
   "type": "object",
   "additionalProperties": false,
