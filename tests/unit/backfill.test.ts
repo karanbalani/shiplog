@@ -13,6 +13,7 @@ import * as upserts from '../../lib/upserts.ts'
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
 const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
 const originalGitHubToken = process.env.GH_RO_CLASSIC_TOKEN
+const originalOrganizationToken = process.env.GH_RO_TEST_ORG_PAT_TOKEN
 const originalBackfillMode = process.env.BACKFILL_MODE
 const originalBackfillRequireComplete = process.env.BACKFILL_REQUIRE_COMPLETE
 const originalBackfillRepoBudgetMinutes = process.env.BACKFILL_REPO_BUDGET_MINUTES
@@ -22,6 +23,7 @@ beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
   logger.configureLogger({ level: 'silent', write: () => undefined })
   process.env.GH_RO_CLASSIC_TOKEN = 'test-token'
+  delete process.env.GH_RO_TEST_ORG_PAT_TOKEN
 })
 
 afterEach(async () => {
@@ -32,6 +34,11 @@ afterEach(async () => {
     delete process.env.GH_RO_CLASSIC_TOKEN
   } else {
     process.env.GH_RO_CLASSIC_TOKEN = originalGitHubToken
+  }
+  if (originalOrganizationToken === undefined) {
+    delete process.env.GH_RO_TEST_ORG_PAT_TOKEN
+  } else {
+    process.env.GH_RO_TEST_ORG_PAT_TOKEN = originalOrganizationToken
   }
   if (originalBackfillMode === undefined) {
     delete process.env.BACKFILL_MODE
@@ -215,6 +222,48 @@ test('run can require completion before exiting successfully', async () => {
 
   expect(accounts.rows[0]!.last_successful_collect_on).toBeNull()
   expect(state.rows[0]!.count).toBe(1)
+})
+
+test('run warns, skips a rejected optional organization token, and completes history', async () => {
+  await seedAccount()
+  process.env.GH_RO_TEST_ORG_PAT_TOKEN = 'rejected-org-secret'
+  const shiplog = shiplogConfig()
+  shiplog.collect.accounts[0]!.organizationPatTokens = [
+    { organizationId: 'O_TEST_1', tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN' }
+  ]
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const primaryFetch = mockGitHubFetch()
+  const fetch = (async (url: string, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get('authorization')
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (
+        body.query.includes('query OrganizationById') &&
+        authorization === 'Bearer rejected-org-secret'
+      ) {
+        return new Response('Bad credentials', { status: 401 })
+      }
+    }
+    return primaryFetch(String(url), init)
+  }) as typeof globalThis.fetch
+
+  await backfill.run({
+    config: shiplog,
+    now: new Date('2026-05-08T00:00:00Z'),
+    fetch
+  })
+
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  const state = await db.query<{ status: string }>('SELECT status FROM repository_backfill_state')
+  const output = logs.join('\n')
+  expect(dateOnly(accounts.rows[0]!.last_successful_collect_on!)).toBe('2026-05-07')
+  expect(state.rows[0]!.status).toBe('succeeded')
+  expect(output).toContain('[backfill] github/octocat')
+  expect(output).toContain('SHIPLOG-GITHUB-AUTH-001')
+  expect(output).not.toContain('rejected-org-secret')
 })
 
 test('run throws when account has not been initialized', async () => {

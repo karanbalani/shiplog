@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { newDb } from 'pg-mem'
 import type { Pool } from 'pg'
@@ -8,16 +9,21 @@ import * as db from '../../lib/db.ts'
 import * as logger from '../../lib/logger.ts'
 import type { AccountRow, ShiplogConfig } from '../../lib/types/index.ts'
 import * as upserts from '../../lib/upserts.ts'
+import { readWorkflowDiagnostics } from '../../lib/workflow_summary.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
 const originalGitHubToken = process.env.GH_RO_CLASSIC_TOKEN
+const originalOrganizationToken = process.env.GH_RO_TEST_ORG_PAT_TOKEN
 const originalCollectDate = process.env.COLLECT_DATE
+const originalWorkflowDiagnosticsPath = process.env.SHIPLOG_DIAGNOSTICS_PATH
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
   logger.configureLogger({ level: 'silent', write: () => undefined })
   process.env.GH_RO_CLASSIC_TOKEN = 'test-token'
+  delete process.env.GH_RO_TEST_ORG_PAT_TOKEN
   delete process.env.COLLECT_DATE
+  delete process.env.SHIPLOG_DIAGNOSTICS_PATH
 })
 
 afterEach(async () => {
@@ -25,7 +31,9 @@ afterEach(async () => {
   logger.resetLogger()
 
   restoreEnv('GH_RO_CLASSIC_TOKEN', originalGitHubToken)
+  restoreEnv('GH_RO_TEST_ORG_PAT_TOKEN', originalOrganizationToken)
   restoreEnv('COLLECT_DATE', originalCollectDate)
+  restoreEnv('SHIPLOG_DIAGNOSTICS_PATH', originalWorkflowDiagnosticsPath)
 })
 
 test('run collects yesterday when no checkpoint exists without backfilling history', async () => {
@@ -165,6 +173,160 @@ test('run ignores legacy COLLECT_DATE env', async () => {
   )
 
   expect(summaries.rows[0]!.count).toBe(0)
+})
+
+test('runDates warns and skips a rejected optional organization token with its log prefix', async () => {
+  await seedAccount()
+  process.env.GH_RO_TEST_ORG_PAT_TOKEN = 'rejected-org-secret'
+  const shiplog = shiplogConfig()
+  shiplog.collect.accounts[0]!.organizationPatTokens = [
+    { organizationId: 'O_TEST_1', tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN' }
+  ]
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const primaryFetch = mockGitHubFetch()
+  const fetch = (async (url: string, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get('authorization')
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (
+        body.query.includes('query OrganizationById') &&
+        authorization === 'Bearer rejected-org-secret'
+      ) {
+        return new Response('Bad credentials', { status: 401 })
+      }
+    }
+    return primaryFetch(String(url), init)
+  }) as typeof globalThis.fetch
+
+  const processedAccounts = await collect.runDates({
+    config: shiplog,
+    dates: ['2026-05-07'],
+    logPrefix: 'maintenance',
+    fetch
+  })
+
+  const summaries = await db.query<{ count: number }>(
+    'SELECT COUNT(*)::int AS count FROM daily_user_summary'
+  )
+  const output = logs.join('\n')
+  expect(processedAccounts).toBe(1)
+  expect(summaries.rows[0]!.count).toBe(1)
+  expect(output).toContain('[maintenance] github/octocat')
+  expect(output).toContain('SHIPLOG-GITHUB-AUTH-001')
+  expect(output).toContain('GH_RO_TEST_ORG_PAT_TOKEN')
+  expect(output).not.toContain('rejected-org-secret')
+})
+
+test('run records a rate limit while resolving an optional organization token', async () => {
+  await seedAccount()
+  process.env.GH_RO_TEST_ORG_PAT_TOKEN = 'rate-limited-org-secret'
+  const shiplog = shiplogConfig()
+  shiplog.collect.accounts[0]!.organizationPatTokens = [
+    { organizationId: 'O_TEST_1', tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN' }
+  ]
+  const diagnosticsPath = temporaryDiagnosticsPath('org-rate-limit')
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
+  const primaryFetch = mockGitHubFetch()
+  const fetch = (async (url: string, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get('authorization')
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (
+        body.query.includes('query OrganizationById') &&
+        authorization === 'Bearer rate-limited-org-secret'
+      ) {
+        return new Response('API rate limit exceeded', {
+          status: 403,
+          headers: { 'x-ratelimit-remaining': '0' }
+        })
+      }
+    }
+    return primaryFetch(String(url), init)
+  }) as typeof globalThis.fetch
+
+  await expect(
+    collect.run({ config: shiplog, now: new Date('2026-05-08T00:00:00Z'), fetch })
+  ).rejects.toThrow(/HTTP 403/i)
+
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    expect.objectContaining({
+      code: 'SHIPLOG-GITHUB-RATE-001',
+      severity: 'error',
+      step: 'collect_activity',
+      recovered: false
+    })
+  ])
+})
+
+test('run keeps a rejected primary token fatal and does not advance its checkpoint', async () => {
+  await seedAccount()
+  process.env.GH_RO_CLASSIC_TOKEN = 'rejected-primary-secret'
+  const diagnosticsPath = temporaryDiagnosticsPath('primary-auth')
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
+  const fetch = (async (url: string, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get('authorization')
+    if (
+      url === 'https://api.github.com/graphql' &&
+      authorization === 'Bearer rejected-primary-secret'
+    ) {
+      return new Response('Bad credentials', { status: 401 })
+    }
+    return new Response('unexpected request', { status: 500 })
+  }) as typeof globalThis.fetch
+
+  await expect(
+    collect.run({
+      config: shiplogConfig(),
+      now: new Date('2026-05-08T00:00:00Z'),
+      fetch
+    })
+  ).rejects.toThrow(/HTTP 401/i)
+
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  expect(accounts.rows[0]!.last_successful_collect_on).toBeNull()
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    expect.objectContaining({
+      code: 'SHIPLOG-GITHUB-AUTH-001',
+      severity: 'error',
+      step: 'collect_activity',
+      recovered: false
+    })
+  ])
+})
+
+test('run records an exhausted GitHub rate limit and keeps the checkpoint unchanged', async () => {
+  await seedAccount()
+  const diagnosticsPath = temporaryDiagnosticsPath('rate-limit')
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
+  const fetch = (async () =>
+    new Response('API rate limit exceeded', {
+      status: 403,
+      headers: { 'x-ratelimit-remaining': '0' }
+    })) as unknown as typeof globalThis.fetch
+
+  await expect(
+    collect.run({
+      config: shiplogConfig(),
+      now: new Date('2026-05-08T00:00:00Z'),
+      fetch
+    })
+  ).rejects.toThrow(/HTTP 403/i)
+
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  expect(accounts.rows[0]!.last_successful_collect_on).toBeNull()
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    expect.objectContaining({
+      code: 'SHIPLOG-GITHUB-RATE-001',
+      severity: 'error',
+      step: 'collect_activity',
+      recovered: false
+    })
+  ])
 })
 
 test('run throws when account has not been initialized', async () => {
@@ -379,6 +541,13 @@ function restoreEnv(name: string, originalValue: string | undefined): void {
   } else {
     process.env[name] = originalValue
   }
+}
+
+function temporaryDiagnosticsPath(label: string): string {
+  return path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), `shiplog-collect-${label}-`)),
+    'diagnostics.jsonl'
+  )
 }
 
 function dateOnly(value: Date | string): string {

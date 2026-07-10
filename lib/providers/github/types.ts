@@ -65,17 +65,20 @@ export interface GitHubContributionsCollection {
   issueContributionsByRepository: GitHubContributionByRepository[]
 }
 
-export interface GitHubCommitNode {
-  oid: string
-  committedDate: string
-  additions: number
-  deletions: number
-  changedFiles: number
-  messageHeadline: string
+export interface GitHubCommitIdentityNode {
   author: GitHubCommitActor | null
   authors: {
     nodes: GitHubCommitActor[]
   }
+}
+
+export interface GitHubCommitNode extends GitHubCommitIdentityNode {
+  oid: string
+  committedDate: string
+  additions: number | null
+  deletions: number | null
+  changedFiles: number | null
+  messageHeadline: string
 }
 
 export interface GitHubCommitActor {

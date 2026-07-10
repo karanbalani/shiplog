@@ -16,48 +16,83 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      target_matrix: ${{ steps.targets.outputs.target_matrix }}
+      target_matrix: ${{ steps.build_targets.outputs.target_matrix }}
     steps:
-      - uses: actions/checkout@v6
+      - id: checkout
+        uses: actions/checkout@v6
 
-      - uses: oven-sh/setup-bun@v2
+      - id: setup_bun
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - name: Install dbmate
+        id: install_dbmate
         run: |
           curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
           chmod +x /usr/local/bin/dbmate
 
       - name: Install dependencies
+        id: install_dependencies
         run: bun install --frozen-lockfile
 
       - name: Write shiplog config
+        id: write_config
         run: |
           if [ -z "${SHIPLOG_CONFIG_BASE64:-}" ]; then
             echo "missing repository variable: SHIPLOG_CONFIG_BASE64" >&2
             exit 1
           fi
           printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > shiplog.config.json
+          bun -e "import { load } from './lib/config.ts'; load()"
         env:
           SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
 
       - name: Wait for database
+        id: wait_database
         run: bun run db:wait
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
       - name: Run migrations
+        id: run_migrations
         run: bun run migrate
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
       - name: Build publish target matrix
-        id: targets
+        id: build_targets
         run: bun scripts/build_publish_matrix.ts
         env:
           SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
           SHIPLOG_TOKEN_SECRETS_JSON: ${{ toJSON(secrets) }}
+
+      - name: Write run summary
+        id: write_summary
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          if command -v bun >/dev/null 2>&1 && [ -f scripts/write_workflow_summary.ts ]; then
+            bun scripts/write_workflow_summary.ts
+          elif [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            failed_phase=bootstrap
+            if [ "${SHIPLOG_CHECKOUT_OUTCOME:-}" != success ]; then
+              failed_phase=checkout
+            elif [ "${SHIPLOG_SETUP_BUN_OUTCOME:-}" != success ]; then
+              failed_phase=setup_bun
+            fi
+            printf '## Shiplog · %s\n\n**Result:** ❌ Failed\n**Failed phase:** `%s`\n\nError code: [`SHIPLOG-UNKNOWN-001`](%s#shiplog-unknown-001)\n\n### How to fix\n\nReview the failed bootstrap step and job log, correct the setup problem, then rerun.\n' \
+              "$SHIPLOG_WORKFLOW_NAME" "$failed_phase" "$SHIPLOG_ERROR_DOCS_URL" >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          SHIPLOG_WORKFLOW_NAME: ${{ github.workflow }}
+          SHIPLOG_JOB_NAME: ${{ github.job }}
+          SHIPLOG_JOB_STATUS: ${{ job.status }}
+          SHIPLOG_ERROR_DOCS_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/docs/ERRORS.md
+          SHIPLOG_CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          SHIPLOG_SETUP_BUN_OUTCOME: ${{ steps.setup_bun.outcome }}
+          SHIPLOG_STEPS_JSON: >-
+            {"checkout":"${{ steps.checkout.outcome }}","setup_bun":"${{ steps.setup_bun.outcome }}","install_dbmate":"${{ steps.install_dbmate.outcome }}","install_dependencies":"${{ steps.install_dependencies.outcome }}","write_config":"${{ steps.write_config.outcome }}","wait_database":"${{ steps.wait_database.outcome }}","run_migrations":"${{ steps.run_migrations.outcome }}","build_targets":"${{ steps.build_targets.outcome }}"}
 
   publish:
     needs: prepare
@@ -68,36 +103,71 @@ jobs:
       matrix:
         target: ${{ fromJSON(needs.prepare.outputs.target_matrix) }}
     steps:
-      - uses: actions/checkout@v6
+      - id: checkout
+        uses: actions/checkout@v6
 
-      - uses: oven-sh/setup-bun@v2
+      - id: setup_bun
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - name: Install dependencies
+        id: install_dependencies
         run: bun install --frozen-lockfile
 
       - name: Write shiplog config
+        id: write_config
         run: |
           if [ -z "${SHIPLOG_CONFIG_BASE64:-}" ]; then
             echo "missing repository variable: SHIPLOG_CONFIG_BASE64" >&2
             exit 1
           fi
           printf '%s' "$SHIPLOG_CONFIG_BASE64" | base64 -d > shiplog.config.json
+          bun -e "import { load } from './lib/config.ts'; load()"
         env:
           SHIPLOG_CONFIG_BASE64: ${{ vars.SHIPLOG_CONFIG_BASE64 }}
 
       - name: Wait for database
+        id: wait_database
         run: bun run db:wait
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
 
       - name: Export publish token env
+        id: export_publish_token
         run: bun run tokens:export -- --scope publish --target-index "${{ matrix.target.target_index }}"
         env:
           SHIPLOG_TOKEN_SECRETS_JSON: ${{ toJSON(secrets) }}
 
       - name: Publish rendered README
+        id: publish_readme
         run: bun run publish -- --target-index "${{ matrix.target.target_index }}"
         env:
           DATABASE_CONNECTION_STRING: ${{ secrets.DATABASE_CONNECTION_STRING }}
+
+      - name: Write run summary
+        id: write_summary
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          if command -v bun >/dev/null 2>&1 && [ -f scripts/write_workflow_summary.ts ]; then
+            bun scripts/write_workflow_summary.ts
+          elif [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            failed_phase=bootstrap
+            if [ "${SHIPLOG_CHECKOUT_OUTCOME:-}" != success ]; then
+              failed_phase=checkout
+            elif [ "${SHIPLOG_SETUP_BUN_OUTCOME:-}" != success ]; then
+              failed_phase=setup_bun
+            fi
+            printf '## Shiplog · %s\n\n**Result:** ❌ Failed\n**Failed phase:** `%s`\n\nError code: [`SHIPLOG-UNKNOWN-001`](%s#shiplog-unknown-001)\n\n### How to fix\n\nReview the failed bootstrap step and job log, correct the setup problem, then rerun.\n' \
+              "$SHIPLOG_WORKFLOW_NAME" "$failed_phase" "$SHIPLOG_ERROR_DOCS_URL" >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          SHIPLOG_WORKFLOW_NAME: ${{ github.workflow }}
+          SHIPLOG_JOB_NAME: ${{ github.job }}
+          SHIPLOG_JOB_STATUS: ${{ job.status }}
+          SHIPLOG_ERROR_DOCS_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/docs/ERRORS.md
+          SHIPLOG_CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          SHIPLOG_SETUP_BUN_OUTCOME: ${{ steps.setup_bun.outcome }}
+          SHIPLOG_STEPS_JSON: >-
+            {"checkout":"${{ steps.checkout.outcome }}","setup_bun":"${{ steps.setup_bun.outcome }}","install_dependencies":"${{ steps.install_dependencies.outcome }}","write_config":"${{ steps.write_config.outcome }}","wait_database":"${{ steps.wait_database.outcome }}","export_publish_token":"${{ steps.export_publish_token.outcome }}","publish_readme":"${{ steps.publish_readme.outcome }}"}

@@ -2,6 +2,10 @@ import * as config from '../lib/config.ts'
 import * as db from '../lib/db.ts'
 import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
+import {
+  isGitHubCredentialRejectedError,
+  isGitHubRateLimitError
+} from '../lib/providers/github/errors.ts'
 import { graphQLClient } from '../lib/providers/github/graphql.ts'
 import {
   fetchGitHubAccountProfileById,
@@ -17,6 +21,7 @@ import type {
 } from '../lib/types/index.ts'
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
+import { recordWorkflowDiagnostic, type WorkflowStepId } from '../lib/workflow_summary.ts'
 
 export interface CollectRunOptions {
   configPath?: string
@@ -92,8 +97,25 @@ async function runAccountDates(
   const ignoreRepositoryIds = accountConfig.ignore.repositories
   const vendor = await importVendorCollector(accountConfig.provider)
   const token = tokenForAccount(accountConfig)
-  const organizationPatTokens = await organizationPatTokensForAccount(accountConfig, options.fetch)
-  const refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
+  let organizationPatTokens: VendorOrganizationToken[]
+  try {
+    organizationPatTokens = await organizationPatTokensForAccount(
+      accountConfig,
+      account.external_login,
+      options.logPrefix,
+      options.fetch
+    )
+  } catch (error) {
+    recordFatalGitHubDiagnostic(error, workflowStepForLogPrefix(options.logPrefix))
+    throw error
+  }
+  let refreshedAccount: AccountRow
+  try {
+    refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
+  } catch (error) {
+    recordFatalGitHubDiagnostic(error, workflowStepForLogPrefix(options.logPrefix))
+    throw error
+  }
   const identity = vendorIdentity(refreshedAccount)
 
   logger.info(
@@ -104,15 +126,20 @@ async function runAccountDates(
     logger.info(
       `[${options.logPrefix}] ${accountConfig.provider}/${refreshedAccount.external_login}: ${index + 1}/${collectDates.length} ${collectDate}`
     )
-    await vendor.run({
-      identity,
-      token,
-      organizationTokens: organizationPatTokens,
-      ignoreOrganizationIds,
-      ignoreRepositoryIds,
-      date: collectDate,
-      fetch: options.fetch
-    })
+    try {
+      await vendor.run({
+        identity,
+        token,
+        organizationTokens: organizationPatTokens,
+        ignoreOrganizationIds,
+        ignoreRepositoryIds,
+        date: collectDate,
+        fetch: options.fetch
+      })
+    } catch (error) {
+      recordFatalGitHubDiagnostic(error, workflowStepForLogPrefix(options.logPrefix))
+      throw error
+    }
     if (options.advanceCheckpoint) {
       await upserts.markCollectSuccess(refreshedAccount.id, collectDate)
     }
@@ -191,6 +218,8 @@ function tokenForAccount(accountConfig: ShiplogCollectAccountConfig): string {
 
 async function organizationPatTokensForAccount(
   accountConfig: ShiplogCollectAccountConfig,
+  accountLogin: string,
+  logPrefix: string,
   fetch?: Fetcher
 ): Promise<VendorOrganizationToken[]> {
   if (accountConfig.provider !== 'github') {
@@ -202,10 +231,24 @@ async function organizationPatTokensForAccount(
     const token = process.env[orgToken.tokenEnv]
     if (!token) throw new Error(`Missing ${orgToken.tokenEnv}`)
 
-    const organization = await fetchGitHubOrganizationById(
-      graphQLClient({ token, fetch }),
-      orgToken.organizationId
-    )
+    let organization
+    try {
+      organization = await fetchGitHubOrganizationById(
+        graphQLClient({ token, fetch }),
+        orgToken.organizationId
+      )
+    } catch (error) {
+      if (!isGitHubCredentialRejectedError(error)) throw error
+      logger.warn(
+        `[${logPrefix}] github/${accountLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${orgToken.tokenEnv}; skipping that organization scope for this run; rotate or re-authorize the token and rerun`
+      )
+      recordWorkflowDiagnostic({
+        code: 'SHIPLOG-GITHUB-AUTH-001',
+        step: workflowStepForLogPrefix(logPrefix),
+        recovered: true
+      })
+      continue
+    }
     tokens.push({
       externalId: organization.externalId,
       externalLogin: organization.externalLogin,
@@ -215,6 +258,20 @@ async function organizationPatTokensForAccount(
   }
 
   return tokens
+}
+
+function workflowStepForLogPrefix(logPrefix: string): WorkflowStepId {
+  if (logPrefix === 'maintenance') return 'run_maintenance'
+  if (logPrefix === 'repair') return 'repair_range'
+  return 'collect_activity'
+}
+
+function recordFatalGitHubDiagnostic(error: unknown, step: WorkflowStepId): void {
+  if (isGitHubRateLimitError(error)) {
+    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-RATE-001', step })
+  } else if (isGitHubCredentialRejectedError(error)) {
+    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-AUTH-001', step })
+  }
 }
 
 function readOnlyTokenEnvName(provider: string): string {

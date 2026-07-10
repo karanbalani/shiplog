@@ -127,7 +127,32 @@ query RepositoryCommits($owner: String!, $name: String!, $since: GitTimestamp!, 
             pageInfo { hasNextPage endCursor }
             nodes {
               oid committedDate
-              additions deletions changedFiles
+              additions deletions changedFiles: changedFilesIfAvailable
+              messageHeadline
+              author { name email user { id login } }
+              authors(first: 100) {
+                nodes { name email user { id login } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+export const REPOSITORY_COMMITS_IN_WINDOW_WITHOUT_STATISTICS = `
+query RepositoryCommitsWithoutStatistics($owner: String!, $name: String!, $since: GitTimestamp!, $until: GitTimestamp!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef {
+      target {
+        ... on Commit {
+          history(first: 50, after: $cursor, since: $since, until: $until) {
+            totalCount
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              oid committedDate
               messageHeadline
               author { name email user { id login } }
               authors(first: 100) {
@@ -153,11 +178,58 @@ query RepositoryAuthoredCommits($owner: String!, $name: String!, $author: Commit
             pageInfo { hasNextPage endCursor }
             nodes {
               oid committedDate
-              additions deletions changedFiles
+              additions deletions changedFiles: changedFilesIfAvailable
               messageHeadline
               author { name email user { id login } }
               authors(first: 100) {
                 nodes { name email user { id login } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+export const REPOSITORY_AUTHORED_COMMITS_IN_WINDOW_WITHOUT_STATISTICS = `
+query RepositoryAuthoredCommitsWithoutStatistics($owner: String!, $name: String!, $author: CommitAuthor!, $since: GitTimestamp!, $until: GitTimestamp!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef {
+      target {
+        ... on Commit {
+          history(first: 50, after: $cursor, author: $author, since: $since, until: $until) {
+            totalCount
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              oid committedDate
+              messageHeadline
+              author { name email user { id login } }
+              authors(first: 100) {
+                nodes { name email user { id login } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+export const REPOSITORY_CREDITED_COMMIT_IDENTITIES_IN_WINDOW = `
+query RepositoryCommitsForCreditedProbe($owner: String!, $name: String!, $since: GitTimestamp!, $until: GitTimestamp!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef {
+      target {
+        ... on Commit {
+          history(first: 50, after: $cursor, since: $since, until: $until) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              author { user { id login } }
+              authors(first: 100) {
+                nodes { user { id login } }
               }
             }
           }

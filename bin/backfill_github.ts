@@ -4,6 +4,9 @@ import * as logger from '../lib/logger.ts'
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
 import {
   GitHubGraphQLError,
+  isGitHubCommitStatisticsUnavailableError,
+  isGitHubCredentialRejectedError,
+  isGitHubRateLimitError,
   isGitHubRepositoryUnavailableError
 } from '../lib/providers/github/errors.ts'
 import { repositoryErrorSummary, repositoryLogLabel } from '../lib/providers/github/logging.ts'
@@ -23,6 +26,8 @@ import * as translate from '../lib/providers/github/translate.ts'
 import type { NewRepositoryRow } from '../lib/upserts.ts'
 import type {
   GitHubCommitHistory,
+  GitHubCommitIdentityNode,
+  GitHubCommitNode,
   GitHubContributionsCollection,
   GitHubRepositoryNode,
   GitHubRestRepository
@@ -39,6 +44,7 @@ import type {
 } from '../lib/types/index.ts'
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
+import { recordWorkflowDiagnostic } from '../lib/workflow_summary.ts'
 
 const BACKFILL_STEP_PULL_REQUESTS = 'pull_requests'
 const BACKFILL_STEP_ISSUES = 'issues'
@@ -121,6 +127,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
         ignoredOrganizations
       )
     } catch (error) {
+      if (isGitHubCredentialRejectedError(error)) throw error
       if (!isSkippableAccessError(error)) throw error
       logger.warn(
         `[backfill] github/${identity.externalLogin}: skipped default private repository discovery for this run (${errorMessage(error)})`
@@ -138,6 +145,17 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
           ignoredOrganizations
         )
       } catch (error) {
+        if (isGitHubCredentialRejectedError(error)) {
+          logger.warn(
+            `[backfill] github/${identity.externalLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${organization.tokenEnv}; skipping private repository discovery for that organization scope; rotate or re-authorize the token and rerun`
+          )
+          recordWorkflowDiagnostic({
+            code: 'SHIPLOG-GITHUB-AUTH-001',
+            step: 'backfill_history',
+            recovered: true
+          })
+          continue
+        }
         if (!isSkippableAccessError(error)) throw error
         logger.warn(
           `[backfill] github/${identity.externalLogin}: skipped private repository discovery for organization ${organization.externalLogin} in this run (${errorMessage(error)})`
@@ -285,7 +303,19 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     } catch (error) {
       const errorSummary = repositoryErrorSummary(repositoryNode, error)
 
-      if (isGitHubRepositoryUnavailableError(error)) {
+      if (clients.organizationTokenEnv && isGitHubCredentialRejectedError(error)) {
+        repositoryStatus = 'skipped for now'
+        logger.warn(
+          `[backfill] github/${identity.externalLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${clients.organizationTokenEnv}; repository ${repositoryPosition} [${visibility}] ${logLabel} was skipped for this run; rotate or re-authorize the token and rerun`
+        )
+        recordWorkflowDiagnostic({
+          code: 'SHIPLOG-GITHUB-AUTH-001',
+          step: 'backfill_history',
+          recovered: true
+        })
+      } else if (isGitHubCredentialRejectedError(error)) {
+        throw error
+      } else if (isGitHubRepositoryUnavailableError(error)) {
         if (repositoryNode.isPrivate) {
           repositoryStatus = 'skipped for now'
           logger.warn(
@@ -311,6 +341,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
           `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is inaccessible in this run; skipping without recording a permanent state (${errorSummary})`
         )
       } else if (isRetryableRepositoryBackfillError(error)) {
+        recordRetryableGitHubRateDiagnostic(error)
         repositoryStatus = 'retry later'
         deferredRepositories += 1
         const errorEvent = await recordBackfillErrorEvent({
@@ -446,13 +477,27 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
       } catch (error) {
         const errorSummary = repositoryErrorSummary(repositoryNode, error)
 
-        if (isGitHubRepositoryUnavailableError(error) || isSkippableAccessError(error)) {
+        if (clients.organizationTokenEnv && isGitHubCredentialRejectedError(error)) {
+          incompletePrivateProbePlans.delete(repositoryNode.id)
+          repositoryStatus = 'skipped for now'
+          logger.warn(
+            `[backfill] github/${identity.externalLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${clients.organizationTokenEnv}; repository ${repositoryPosition} [${visibility}] ${logLabel} was skipped for this run; rotate or re-authorize the token and rerun`
+          )
+          recordWorkflowDiagnostic({
+            code: 'SHIPLOG-GITHUB-AUTH-001',
+            step: 'backfill_history',
+            recovered: true
+          })
+        } else if (isGitHubCredentialRejectedError(error)) {
+          throw error
+        } else if (isGitHubRepositoryUnavailableError(error) || isSkippableAccessError(error)) {
           incompletePrivateProbePlans.delete(repositoryNode.id)
           repositoryStatus = 'skipped for now'
           logger.warn(
             `[backfill] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel} is inaccessible in this run; skipping without recording a permanent state (${errorSummary})`
           )
         } else if (isRetryableRepositoryBackfillError(error)) {
+          recordRetryableGitHubRateDiagnostic(error)
           repositoryStatus = 'retry later'
           incompletePrivateProbePlans.delete(repositoryNode.id)
           const errorEvent = await recordBackfillErrorEvent({
@@ -914,6 +959,7 @@ async function processRepositoryBackfill({
 interface GitHubClients {
   graphQL: GraphQLClient
   rest: RestClient
+  organizationTokenEnv?: string
 }
 
 interface RepositoryBackfillPlan {
@@ -935,7 +981,8 @@ function organizationClientMap(
       orgToken.externalId,
       {
         graphQL: graphQLClient({ token: orgToken.token, fetch }),
-        rest: restClient({ token: orgToken.token, fetch })
+        rest: restClient({ token: orgToken.token, fetch }),
+        organizationTokenEnv: orgToken.tokenEnv
       }
     ])
   )
@@ -1300,6 +1347,15 @@ function isRetryableRepositoryBackfillError(error: unknown): boolean {
   return false
 }
 
+function recordRetryableGitHubRateDiagnostic(error: unknown): void {
+  if (!isGitHubRateLimitError(error)) return
+  recordWorkflowDiagnostic({
+    code: 'SHIPLOG-GITHUB-RATE-001',
+    step: 'backfill_history',
+    recovered: true
+  })
+}
+
 function isSkippableAccessError(error: unknown): boolean {
   if (isRetryableRepositoryBackfillError(error)) return false
 
@@ -1597,16 +1653,7 @@ async function probePrivateCandidateCreditedCommits(
       }
 
       pages += 1
-      const history = await fetchCommitHistory(
-        graphQL,
-        owner,
-        name,
-        identity,
-        from,
-        to,
-        cursor,
-        'credited'
-      )
+      const history = await fetchCommitIdentityHistory(graphQL, owner, name, from, to, cursor)
       if (!history) {
         completedYears.add(year)
         break
@@ -1644,6 +1691,10 @@ async function fetchCommitHistory(
     commitScanMode === 'authored'
       ? queries.REPOSITORY_AUTHORED_COMMITS_IN_WINDOW
       : queries.REPOSITORY_COMMITS_IN_WINDOW
+  const queryWithoutStatistics =
+    commitScanMode === 'authored'
+      ? queries.REPOSITORY_AUTHORED_COMMITS_IN_WINDOW_WITHOUT_STATISTICS
+      : queries.REPOSITORY_COMMITS_IN_WINDOW_WITHOUT_STATISTICS
   const variables: Record<string, unknown> = {
     owner,
     name,
@@ -1653,7 +1704,52 @@ async function fetchCommitHistory(
   }
   if (commitScanMode === 'authored') variables.author = { id: identity.externalId }
 
-  const data = await graphQL<RepositoryCommitsResponse>(query, variables)
+  try {
+    const data = await graphQL<RepositoryCommitsResponse>(query, variables)
+    const history = data.repository?.defaultBranchRef?.target?.history
+    if (history && hasUnavailableCommitStatistics(history)) {
+      logger.warn(
+        `[backfill] github/${identity.externalLogin}: [SHIPLOG-GITHUB-STATS-001] GitHub returned unavailable optional commit statistics; preserving the commits with null metrics`
+      )
+      recordWorkflowDiagnostic({
+        code: 'SHIPLOG-GITHUB-STATS-001',
+        step: 'backfill_history',
+        recovered: true
+      })
+    }
+    return history
+  } catch (error) {
+    if (!isGitHubCommitStatisticsUnavailableError(error)) throw error
+
+    logger.warn(
+      `[backfill] github/${identity.externalLogin}: [SHIPLOG-GITHUB-STATS-001] GitHub could not calculate optional commit statistics; retrying the same page without statistics`
+    )
+    recordWorkflowDiagnostic({
+      code: 'SHIPLOG-GITHUB-STATS-001',
+      step: 'backfill_history',
+      recovered: true
+    })
+    const data = await graphQL<RepositoryCommitsWithoutStatisticsResponse>(
+      queryWithoutStatistics,
+      variables
+    )
+    const history = data.repository?.defaultBranchRef?.target?.history
+    return history ? commitHistoryWithUnavailableStatistics(history) : undefined
+  }
+}
+
+async function fetchCommitIdentityHistory(
+  graphQL: GraphQLClient,
+  owner: string,
+  name: string,
+  since: string,
+  until: string,
+  cursor: string | null
+): Promise<GitHubCommitIdentityHistory | undefined> {
+  const data = await graphQL<RepositoryCommitIdentitiesResponse>(
+    queries.REPOSITORY_CREDITED_COMMIT_IDENTITIES_IN_WINDOW,
+    { owner, name, since, until, cursor }
+  )
 
   return data.repository?.defaultBranchRef?.target?.history
 }
@@ -1664,6 +1760,56 @@ interface RepositoryCommitsResponse {
       target: { history: GitHubCommitHistory } | null
     } | null
   } | null
+}
+
+type GitHubCommitWithoutStatistics = Omit<
+  GitHubCommitNode,
+  'additions' | 'deletions' | 'changedFiles'
+>
+
+interface GitHubCommitHistoryWithoutStatistics extends Omit<GitHubCommitHistory, 'nodes'> {
+  nodes: GitHubCommitWithoutStatistics[]
+}
+
+interface RepositoryCommitsWithoutStatisticsResponse {
+  repository: {
+    defaultBranchRef: {
+      target: { history: GitHubCommitHistoryWithoutStatistics } | null
+    } | null
+  } | null
+}
+
+interface GitHubCommitIdentityHistory {
+  pageInfo: GitHubCommitHistory['pageInfo']
+  nodes: GitHubCommitIdentityNode[]
+}
+
+interface RepositoryCommitIdentitiesResponse {
+  repository: {
+    defaultBranchRef: {
+      target: { history: GitHubCommitIdentityHistory } | null
+    } | null
+  } | null
+}
+
+function commitHistoryWithUnavailableStatistics(
+  history: GitHubCommitHistoryWithoutStatistics
+): GitHubCommitHistory {
+  return {
+    ...history,
+    nodes: history.nodes.map((node) => ({
+      ...node,
+      additions: null,
+      deletions: null,
+      changedFiles: null
+    }))
+  }
+}
+
+function hasUnavailableCommitStatistics(history: GitHubCommitHistory): boolean {
+  return history.nodes.some(
+    (node) => node.additions === null || node.deletions === null || node.changedFiles === null
+  )
 }
 
 async function ingestPullRequests(
