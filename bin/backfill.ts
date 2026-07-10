@@ -3,6 +3,10 @@ import * as db from '../lib/db.ts'
 import fs from 'node:fs'
 import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
+import {
+  isGitHubCredentialRejectedError,
+  isGitHubRateLimitError
+} from '../lib/providers/github/errors.ts'
 import { graphQLClient } from '../lib/providers/github/graphql.ts'
 import {
   fetchGitHubAccountProfileById,
@@ -21,6 +25,7 @@ import type {
 } from '../lib/types/index.ts'
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
+import { recordWorkflowDiagnostic } from '../lib/workflow_summary.ts'
 
 export interface BackfillRunOptions {
   configPath?: string
@@ -48,8 +53,24 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await findAccount(accountConfig)
     const token = tokenForAccount(accountConfig)
-    const organizationTokens = await organizationPatTokensForAccount(accountConfig, options.fetch)
-    const refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
+    let organizationTokens: VendorOrganizationToken[]
+    try {
+      organizationTokens = await organizationPatTokensForAccount(
+        accountConfig,
+        account.external_login,
+        options.fetch
+      )
+    } catch (error) {
+      recordFatalGitHubDiagnostic(error)
+      throw error
+    }
+    let refreshedAccount: AccountRow
+    try {
+      refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
+    } catch (error) {
+      recordFatalGitHubDiagnostic(error)
+      throw error
+    }
     const identity = vendorIdentity(refreshedAccount)
     const vendor = await importVendorHistoricalCollector(accountConfig.provider)
 
@@ -57,19 +78,25 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
       `[backfill] ${accountConfig.provider}/${refreshedAccount.external_login}: collecting complete history through ${throughDate}`
     )
 
-    const result = await vendor.run({
-      identity,
-      token,
-      organizationTokens,
-      ignoreOrganizationIds: accountConfig.ignore.organizations,
-      ignoreRepositoryIds: accountConfig.ignore.repositories,
-      throughDate,
-      backfillMode,
-      repositoryLimit,
-      maxRuntimeMs,
-      repoBudgetMs,
-      fetch: options.fetch
-    } satisfies BackfillArgs)
+    let result: BackfillResult | void
+    try {
+      result = await vendor.run({
+        identity,
+        token,
+        organizationTokens,
+        ignoreOrganizationIds: accountConfig.ignore.organizations,
+        ignoreRepositoryIds: accountConfig.ignore.repositories,
+        throughDate,
+        backfillMode,
+        repositoryLimit,
+        maxRuntimeMs,
+        repoBudgetMs,
+        fetch: options.fetch
+      } satisfies BackfillArgs)
+    } catch (error) {
+      recordFatalGitHubDiagnostic(error)
+      throw error
+    }
     const summary = normalizeBackfillResult(result)
     summaries.push({
       provider: accountConfig.provider,
@@ -327,6 +354,7 @@ function tokenForAccount(accountConfig: ShiplogCollectAccountConfig): string {
 
 async function organizationPatTokensForAccount(
   accountConfig: ShiplogCollectAccountConfig,
+  accountLogin: string,
   fetch?: Fetcher
 ): Promise<VendorOrganizationToken[]> {
   if (accountConfig.provider !== 'github') {
@@ -338,10 +366,24 @@ async function organizationPatTokensForAccount(
     const token = process.env[orgToken.tokenEnv]
     if (!token) throw new Error(`Missing ${orgToken.tokenEnv}`)
 
-    const organization = await fetchGitHubOrganizationById(
-      graphQLClient({ token, fetch }),
-      orgToken.organizationId
-    )
+    let organization
+    try {
+      organization = await fetchGitHubOrganizationById(
+        graphQLClient({ token, fetch }),
+        orgToken.organizationId
+      )
+    } catch (error) {
+      if (!isGitHubCredentialRejectedError(error)) throw error
+      logger.warn(
+        `[backfill] github/${accountLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${orgToken.tokenEnv}; skipping that organization scope for this run; rotate or re-authorize the token and rerun`
+      )
+      recordWorkflowDiagnostic({
+        code: 'SHIPLOG-GITHUB-AUTH-001',
+        step: 'backfill_history',
+        recovered: true
+      })
+      continue
+    }
     tokens.push({
       externalId: organization.externalId,
       externalLogin: organization.externalLogin,
@@ -356,6 +398,14 @@ async function organizationPatTokensForAccount(
 function readOnlyTokenEnvName(provider: string): string {
   if (provider === 'github') return 'GH_RO_CLASSIC_TOKEN'
   return `${provider.toUpperCase()}_RO_CLASSIC_TOKEN`
+}
+
+function recordFatalGitHubDiagnostic(error: unknown): void {
+  if (isGitHubRateLimitError(error)) {
+    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-RATE-001', step: 'backfill_history' })
+  } else if (isGitHubCredentialRejectedError(error)) {
+    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-AUTH-001', step: 'backfill_history' })
+  }
 }
 
 function vendorIdentity(account: AccountRow): VendorIdentity {

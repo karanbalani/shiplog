@@ -128,6 +128,32 @@ test('commitFromGraphQLNode maps commit fields and dates', () => {
   expect(row.source).toBe('live')
 })
 
+test('commitFromGraphQLNode preserves unavailable statistics as null', () => {
+  const row = translate.commitFromGraphQLNode(
+    {
+      oid: 'stats-unavailable',
+      committedDate: '2024-03-14T12:34:56Z',
+      additions: null,
+      deletions: null,
+      changedFiles: null,
+      messageHeadline: 'Large merge',
+      author: {
+        name: 'octocat',
+        email: 'octocat@example.com',
+        user: { id: 'U_TEST_1', login: 'octocat' }
+      },
+      authors: { nodes: [] }
+    },
+    { accountId: 1, externalId: 'U_TEST_1', externalLogin: 'octocat' },
+    2,
+    'self_backfill'
+  )
+
+  expect(row.additions).toBeNull()
+  expect(row.deletions).toBeNull()
+  expect(row.changed_files).toBeNull()
+})
+
 test('commitFromGraphQLNode marks commits credited through co-authorship', () => {
   const row = translate.commitFromGraphQLNode(
     {

@@ -1,5 +1,10 @@
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
-import { isGitHubRepositoryUnavailableError } from '../lib/providers/github/errors.ts'
+import {
+  isGitHubCommitStatisticsUnavailableError,
+  isGitHubCredentialRejectedError,
+  isGitHubRateLimitError,
+  isGitHubRepositoryUnavailableError
+} from '../lib/providers/github/errors.ts'
 import {
   privateRepositoryFailure,
   repositoryErrorSummary,
@@ -15,6 +20,7 @@ import { restClient, type RestClient } from '../lib/providers/github/rest.ts'
 import * as translate from '../lib/providers/github/translate.ts'
 import type {
   GitHubCommitHistory,
+  GitHubCommitNode,
   GitHubContributionsCollection,
   GitHubRepositoryNode,
   GitHubSearchPullRequestItem
@@ -22,6 +28,7 @@ import type {
 import * as upserts from '../lib/upserts.ts'
 import * as dates from '../lib/utils/dates.ts'
 import type { CollectArgs, VendorIdentity, VendorOrganizationToken } from '../lib/types/index.ts'
+import { recordWorkflowDiagnostic } from '../lib/workflow_summary.ts'
 
 export async function run(args: CollectArgs): Promise<void> {
   const {
@@ -105,18 +112,40 @@ export async function run(args: CollectArgs): Promise<void> {
       logRepositoryStep(identity, repositoryPosition, visibility, logLabel, 'issues')
       await ingestIssues(clients.rest, repository.id, fullName, identity, date)
     } catch (error) {
-      if (!isGitHubRepositoryUnavailableError(error)) {
+      if (clients.organizationTokenEnv && isGitHubCredentialRejectedError(error)) {
+        repositoryStatus = 'skipped'
+        logger.warn(
+          `[collect] github/${identity.externalLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${clients.organizationTokenEnv}; repository [${visibility}] ${logLabel} was skipped for this run; rotate or re-authorize the token and rerun`
+        )
+        recordWorkflowDiagnostic({
+          code: 'SHIPLOG-GITHUB-AUTH-001',
+          step: 'collect_activity',
+          recovered: true
+        })
+      } else if (repositoryNode.isPrivate && isGitHubRateLimitError(error)) {
+        recordWorkflowDiagnostic({
+          code: 'SHIPLOG-GITHUB-RATE-001',
+          step: 'collect_activity'
+        })
+        throw privateRepositoryFailure(repositoryNode)
+      } else if (repositoryNode.isPrivate && isGitHubCredentialRejectedError(error)) {
+        recordWorkflowDiagnostic({
+          code: 'SHIPLOG-GITHUB-AUTH-001',
+          step: 'collect_activity'
+        })
+        throw privateRepositoryFailure(repositoryNode)
+      } else if (!isGitHubRepositoryUnavailableError(error)) {
         if (repositoryNode.isPrivate) throw privateRepositoryFailure(repositoryNode)
         throw error
+      } else {
+        repositoryStatus = 'skipped'
+        logger.warn(
+          `[collect] github/${identity.externalLogin}: repository [${visibility}] ${logLabel} is unavailable; skipping enrichment (${repositoryErrorSummary(
+            repositoryNode,
+            error
+          )})`
+        )
       }
-
-      repositoryStatus = 'skipped'
-      logger.warn(
-        `[collect] github/${identity.externalLogin}: repository [${visibility}] ${logLabel} is unavailable; skipping enrichment (${repositoryErrorSummary(
-          repositoryNode,
-          error
-        )})`
-      )
     }
 
     completedRepositories += 1
@@ -152,6 +181,7 @@ function logRepositoryStep(
 interface GitHubClients {
   graphQL: GraphQLClient
   rest: RestClient
+  organizationTokenEnv?: string
 }
 
 function organizationClientMap(
@@ -163,7 +193,8 @@ function organizationClientMap(
       orgToken.externalId,
       {
         graphQL: graphQLClient({ token: orgToken.token, fetch }),
-        rest: restClient({ token: orgToken.token, fetch })
+        rest: restClient({ token: orgToken.token, fetch }),
+        organizationTokenEnv: orgToken.tokenEnv
       }
     ])
   )
@@ -251,19 +282,7 @@ async function ingestCommits(
   let cursor: string | null = null
 
   for (;;) {
-    const data: RepositoryCommitsResponse = await graphQL<RepositoryCommitsResponse>(
-      queries.REPOSITORY_COMMITS_IN_WINDOW,
-      {
-        owner,
-        name,
-        since,
-        until,
-        cursor
-      }
-    )
-
-    const history: GitHubCommitHistory | undefined =
-      data.repository?.defaultBranchRef?.target?.history
+    const history = await fetchCommitHistory(graphQL, owner, name, identity, since, until, cursor)
     if (!history) return
 
     for (const node of history.nodes) {
@@ -278,12 +297,97 @@ async function ingestCommits(
   }
 }
 
+async function fetchCommitHistory(
+  graphQL: GraphQLClient,
+  owner: string,
+  name: string,
+  identity: VendorIdentity,
+  since: string,
+  until: string,
+  cursor: string | null
+): Promise<GitHubCommitHistory | undefined> {
+  const variables = { owner, name, since, until, cursor }
+
+  try {
+    const data = await graphQL<RepositoryCommitsResponse>(
+      queries.REPOSITORY_COMMITS_IN_WINDOW,
+      variables
+    )
+    const history = data.repository?.defaultBranchRef?.target?.history
+    if (history && hasUnavailableCommitStatistics(history)) {
+      logger.warn(
+        `[collect] github/${identity.externalLogin}: [SHIPLOG-GITHUB-STATS-001] GitHub returned unavailable optional commit statistics; preserving the commits with null metrics`
+      )
+      recordWorkflowDiagnostic({
+        code: 'SHIPLOG-GITHUB-STATS-001',
+        step: 'collect_activity',
+        recovered: true
+      })
+    }
+    return history
+  } catch (error) {
+    if (!isGitHubCommitStatisticsUnavailableError(error)) throw error
+
+    logger.warn(
+      `[collect] github/${identity.externalLogin}: [SHIPLOG-GITHUB-STATS-001] GitHub could not calculate optional commit statistics; retrying the same page without statistics`
+    )
+    recordWorkflowDiagnostic({
+      code: 'SHIPLOG-GITHUB-STATS-001',
+      step: 'collect_activity',
+      recovered: true
+    })
+    const data = await graphQL<RepositoryCommitsWithoutStatisticsResponse>(
+      queries.REPOSITORY_COMMITS_IN_WINDOW_WITHOUT_STATISTICS,
+      variables
+    )
+    const history = data.repository?.defaultBranchRef?.target?.history
+    return history ? commitHistoryWithUnavailableStatistics(history) : undefined
+  }
+}
+
 interface RepositoryCommitsResponse {
   repository: {
     defaultBranchRef: {
       target: { history: GitHubCommitHistory } | null
     } | null
   } | null
+}
+
+type GitHubCommitWithoutStatistics = Omit<
+  GitHubCommitNode,
+  'additions' | 'deletions' | 'changedFiles'
+>
+
+interface GitHubCommitHistoryWithoutStatistics extends Omit<GitHubCommitHistory, 'nodes'> {
+  nodes: GitHubCommitWithoutStatistics[]
+}
+
+interface RepositoryCommitsWithoutStatisticsResponse {
+  repository: {
+    defaultBranchRef: {
+      target: { history: GitHubCommitHistoryWithoutStatistics } | null
+    } | null
+  } | null
+}
+
+function commitHistoryWithUnavailableStatistics(
+  history: GitHubCommitHistoryWithoutStatistics
+): GitHubCommitHistory {
+  return {
+    ...history,
+    nodes: history.nodes.map((node) => ({
+      ...node,
+      additions: null,
+      deletions: null,
+      changedFiles: null
+    }))
+  }
+}
+
+function hasUnavailableCommitStatistics(history: GitHubCommitHistory): boolean {
+  return history.nodes.some(
+    (node) => node.additions === null || node.deletions === null || node.changedFiles === null
+  )
 }
 
 async function ingestPullRequests(

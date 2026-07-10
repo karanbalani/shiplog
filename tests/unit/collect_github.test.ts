@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { newDb } from 'pg-mem'
 import type { Pool } from 'pg'
@@ -7,6 +8,7 @@ import * as collectGitHub from '../../bin/collect_github.ts'
 import * as db from '../../lib/db.ts'
 import * as logger from '../../lib/logger.ts'
 import * as upserts from '../../lib/upserts.ts'
+import { readWorkflowDiagnostics } from '../../lib/workflow_summary.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
 const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
@@ -269,6 +271,53 @@ test('run uses organization token for organization-owned repositories', async ()
   expect(logs.join('\n')).not.toContain('restricted-org/secret')
 })
 
+test('run records primary auth rejection before sanitizing a private repository failure', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2011-01-25T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  const diagnosticsPath = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-collect-private-auth-')),
+    'diagnostics.jsonl'
+  )
+  const previousDiagnosticsPath = process.env.SHIPLOG_DIAGNOSTICS_PATH
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
+
+  try {
+    await expect(
+      collectGitHub.run({
+        identity: {
+          accountId: account.id,
+          externalLogin: account.external_login,
+          externalId: account.external_id
+        },
+        token: 'expired-primary-token',
+        date: '2026-05-07',
+        fetch: mockGitHubFetchWithPrivatePrimaryAuthRejection()
+      })
+    ).rejects.toThrow(/private GitHub repository id:R_RESTRICTED_1 failed during enrichment/)
+
+    expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+      expect.objectContaining({
+        code: 'SHIPLOG-GITHUB-AUTH-001',
+        severity: 'error',
+        step: 'collect_activity',
+        recovered: false
+      })
+    ])
+    expect(fs.readFileSync(diagnosticsPath, 'utf8')).not.toContain('restricted-org/secret')
+  } finally {
+    if (previousDiagnosticsPath === undefined) delete process.env.SHIPLOG_DIAGNOSTICS_PATH
+    else process.env.SHIPLOG_DIAGNOSTICS_PATH = previousDiagnosticsPath
+  }
+})
+
 test('run uses a same-day contribution window and half-open commit window', async () => {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
@@ -343,6 +392,106 @@ test('run counts co-authored commits and stores a marker', async () => {
     lines_added: 15,
     lines_deleted: 3
   })
+})
+
+test('run retries a commit page without statistics and stores nullable metrics', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2011-01-25T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  const mock = mockGitHubFetchWithCommitStatisticsError()
+  const args = {
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    date: '2026-05-07',
+    fetch: mock.fetch
+  }
+
+  await collectGitHub.run(args)
+
+  const commits = await db.query<{
+    oid: string
+    additions: number | null
+    deletions: number | null
+    changed_files: number | null
+  }>('SELECT oid, additions, deletions, changed_files FROM commits')
+
+  expect(mock.commitQueries).toEqual(['with-statistics', 'without-statistics'])
+  expect(commits.rows).toEqual([
+    {
+      oid: 'large-merge',
+      additions: null,
+      deletions: null,
+      changed_files: null
+    }
+  ])
+  expect(logs.join('\n')).toContain('SHIPLOG-GITHUB-STATS-001')
+
+  const repository = await db.query<{ id: number }>('SELECT id FROM repositories')
+  await upserts.upsertCommit({
+    account_id: account.id,
+    repository_id: repository.rows[0]!.id,
+    oid: 'large-merge',
+    committed_on: '2026-05-07',
+    committed_at: '2026-05-07T12:34:56Z',
+    additions: 120,
+    deletions: 45,
+    changed_files: 18,
+    message_headline: 'Large merge',
+    source: 'live'
+  })
+
+  await collectGitHub.run(args)
+  const preserved = await db.query<{
+    additions: number | null
+    deletions: number | null
+    changed_files: number | null
+  }>('SELECT additions, deletions, changed_files FROM commits')
+
+  expect(preserved.rows).toEqual([{ additions: 120, deletions: 45, changed_files: 18 }])
+})
+
+test('run does not recover from mixed commit-stat and unrelated GraphQL errors', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2011-01-25T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  const mock = mockGitHubFetchWithCommitStatisticsError({ mixed: true })
+
+  await expect(
+    collectGitHub.run({
+      identity: {
+        accountId: account.id,
+        externalLogin: account.external_login,
+        externalId: account.external_id
+      },
+      token: 'test-token',
+      date: '2026-05-07',
+      fetch: mock.fetch
+    })
+  ).rejects.toThrow(/something went wrong/i)
+
+  expect(mock.commitQueries).toEqual(['with-statistics'])
+  const commits = await db.query<{ count: number }>('SELECT COUNT(*)::int AS count FROM commits')
+  expect(commits.rows[0]!.count).toBe(0)
 })
 
 test('run skips repositories that GitHub no longer resolves', async () => {
@@ -657,6 +806,20 @@ function mockGitHubFetchWithOrganizationToken(): typeof fetch {
   }) as typeof fetch
 }
 
+function mockGitHubFetchWithPrivatePrimaryAuthRejection(): typeof fetch {
+  return (async (url: string, init?: RequestInit) => {
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (body.query.includes('query Contributions')) {
+        return jsonResponse({ data: githubContributionsWithRepository(restrictedRepositoryNode()) })
+      }
+      return new Response('Bad credentials', { status: 401 })
+    }
+
+    return new Response(`unexpected request: ${url}`, { status: 500 })
+  }) as typeof fetch
+}
+
 function mockGitHubFetchWithReadablePrivateRepositoryOutsideContributionGroups(): typeof fetch {
   return (async (url: string, init?: RequestInit) => {
     if (url === 'https://api.github.com/graphql') {
@@ -946,6 +1109,73 @@ function mockGitHubFetchWithUnavailableRepository(): typeof fetch {
 
     return new Response(`unexpected request: ${url}`, { status: 500 })
   }) as typeof fetch
+}
+
+function mockGitHubFetchWithCommitStatisticsError(options: { mixed?: boolean } = {}): {
+  fetch: typeof fetch
+  commitQueries: string[]
+} {
+  const commitQueries: string[] = []
+
+  return {
+    commitQueries,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (url === 'https://api.github.com/graphql') {
+        const body = JSON.parse(String(init?.body)) as { query: string }
+
+        if (body.query.includes('query Contributions')) {
+          return jsonResponse({ data: githubContributionsFixture() })
+        }
+
+        if (body.query.includes('query RepositoryCommitsWithoutStatistics')) {
+          commitQueries.push('without-statistics')
+          return jsonResponse({
+            data: {
+              repository: {
+                defaultBranchRef: {
+                  target: {
+                    history: {
+                      totalCount: 1,
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [
+                        {
+                          oid: 'large-merge',
+                          committedDate: '2026-05-07T12:34:56Z',
+                          messageHeadline: 'Large merge',
+                          author: githubCommitActor(),
+                          authors: { nodes: [githubCommitActor()] }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          })
+        }
+
+        if (body.query.includes('query RepositoryCommits(')) {
+          commitQueries.push('with-statistics')
+          return jsonResponse({
+            data: { repository: null },
+            errors: [
+              { message: 'The additions count for this commit is unavailable.' },
+              ...(options.mixed
+                ? [{ message: 'Something went wrong while executing your query.' }]
+                : [{ message: 'The deletions count for this commit is unavailable.' }])
+            ]
+          })
+        }
+      }
+
+      const parsed = new URL(url)
+      if (parsed.pathname === '/search/issues') {
+        return jsonResponse({ total_count: 0, items: [] })
+      }
+
+      return new Response(`unexpected request: ${url}`, { status: 500 })
+    }) as typeof fetch
+  }
 }
 
 function githubCommitActor(

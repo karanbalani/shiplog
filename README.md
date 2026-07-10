@@ -21,6 +21,7 @@ shiplog gives you your own contribution archive and one umbrella for activity ac
 - [Fallback render config](.shiplog/render.json): the default README recipe used when a target repo has no `.shiplog/render.json`.
 - [Render config schema](schemas/render.config.schema.json): JSON schema for target-repo README rendering.
 - [FAQ](docs/FAQ.md): common setup and operations questions.
+- [Workflow error codes](docs/ERRORS.md): safe Actions summaries, data impact, and remediation.
 
 ## What It Does
 
@@ -37,6 +38,7 @@ shiplog gives you your own contribution archive and one umbrella for activity ac
 - [Schema](docs/SCHEMA.md): database tables, views, and timestamp semantics.
 - [Render config](docs/RENDER_CONFIG.md): target-repo `.shiplog/render.json` format.
 - [GitHub mapping](docs/GITHUB_MAPPING.md): how GitHub data maps into shiplog.
+- [Workflow error codes](docs/ERRORS.md): diagnose failed and recovered GitHub Actions runs.
 - [Conventions](docs/CONVENTIONS.md): project naming and implementation conventions.
 - [Contributing](CONTRIBUTING.md): development workflow for changing shiplog itself.
 

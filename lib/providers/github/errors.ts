@@ -15,9 +15,69 @@ export class GitHubGraphQLError extends Error {
   }
 }
 
+/**
+ * Returns true only when GitHub has clearly rejected a credential or its
+ * organization access. This is deliberately narrower than a generic 403:
+ * GitHub also uses 403 for rate limiting, which callers must keep fatal or
+ * retryable rather than silently treating as an optional-token failure.
+ */
+export function isGitHubCredentialRejectedError(error: unknown): boolean {
+  if (isGitHubRateLimitError(error)) return false
+
+  if (error instanceof HttpError) {
+    if (error.status === 401) return true
+    if (error.status !== 403) return false
+
+    const body = error.body.toLowerCase()
+    return isCredentialAccessMessage(body)
+  }
+
+  if (error instanceof GitHubGraphQLError) {
+    return (
+      error.messages.length > 0 &&
+      error.messages.every(
+        (message) => !isRateLimitMessage(message) && isCredentialAccessMessage(message)
+      )
+    )
+  }
+
+  return false
+}
+
+/** Returns true only for explicit GitHub primary or secondary rate-limit responses. */
+export function isGitHubRateLimitError(error: unknown): boolean {
+  if (error instanceof HttpError) {
+    if (error.status !== 403 && error.status !== 429) return false
+    return (
+      error.headers.has('retry-after') ||
+      error.headers.get('x-ratelimit-remaining') === '0' ||
+      isRateLimitMessage(error.body)
+    )
+  }
+
+  return (
+    error instanceof GitHubGraphQLError &&
+    error.messages.length > 0 &&
+    error.messages.every(isRateLimitMessage)
+  )
+}
+
+/**
+ * GitHub can return field-level GraphQL errors when its diff service cannot
+ * calculate a commit's optional statistics. Only a response made up entirely
+ * of those known errors is safe to retry with a statistics-free query.
+ */
+export function isGitHubCommitStatisticsUnavailableError(error: unknown): boolean {
+  return (
+    error instanceof GitHubGraphQLError &&
+    error.messages.length > 0 &&
+    error.messages.every(isCommitStatisticsUnavailableMessage)
+  )
+}
+
 export function isGitHubRepositoryUnavailableError(error: unknown): boolean {
   if (error instanceof GitHubGraphQLError) {
-    return error.messages.some(isRepositoryUnavailableMessage)
+    return error.messages.length > 0 && error.messages.every(isRepositoryUnavailableMessage)
   }
 
   if (error instanceof HttpError) {
@@ -46,5 +106,31 @@ function isRepositoryUnavailableMessage(message: string): boolean {
     normalized.includes('could not resolve to a repository') ||
     normalized.includes('repository not found') ||
     normalized.includes('not found')
+  )
+}
+
+function isCredentialAccessMessage(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('bad credentials') ||
+    normalized.includes('requires authentication') ||
+    normalized.includes('resource not accessible by personal access token') ||
+    normalized.includes('resource protected by organization saml enforcement') ||
+    normalized.includes('oauth app access restrictions')
+  )
+}
+
+function isRateLimitMessage(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('rate limit') ||
+    normalized.includes('secondary rate') ||
+    normalized.includes('abuse detection')
+  )
+}
+
+function isCommitStatisticsUnavailableMessage(message: string): boolean {
+  return /^the (?:additions|deletions|changed\s*files) count for this commit is unavailable\.?$/i.test(
+    message.trim()
   )
 }

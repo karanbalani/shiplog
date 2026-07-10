@@ -192,6 +192,48 @@ test('run deep mode backfills commits credited through co-authorship', async () 
   })
 })
 
+test('run retries historical commit ingestion without statistics and completes checkpoints', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: `${new Date().getUTCFullYear()}-01-01T00:00:00Z`,
+    first_seen_on: '2026-05-07'
+  })
+  const mock = mockGitHubFetchWithCommitStatisticsError()
+
+  const result = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    fetch: mock.fetch
+  })
+
+  const commits = await db.query<{
+    additions: number | null
+    deletions: number | null
+    changed_files: number | null
+  }>('SELECT additions, deletions, changed_files FROM commits')
+  const state = await db.query<{ status: string; completed_steps: string }>(
+    'SELECT status, completed_steps FROM repository_backfill_state'
+  )
+
+  expect(result.complete).toBe(true)
+  expect(mock.commitQueries).toEqual(['with-statistics', 'without-statistics'])
+  expect(commits.rows).toEqual([{ additions: null, deletions: null, changed_files: null }])
+  expect(state.rows[0]!.status).toBe('succeeded')
+  expect(state.rows[0]!.completed_steps).toContain('commits_authored:')
+  expect(logs.join('\n')).toContain('SHIPLOG-GITHUB-STATS-001')
+})
+
 test('run deep mode repairs co-authored commits after a fast backfill', async () => {
   const user = await upserts.upsertUser({ display_name: 'Example User' })
   const account = await upserts.upsertAccount({
@@ -1531,6 +1573,63 @@ function mockGitHubFetch(): typeof fetch {
 
 function isRepositoryCommitsQuery(query: string): boolean {
   return query.includes('RepositoryCommits') || query.includes('RepositoryAuthoredCommits')
+}
+
+function mockGitHubFetchWithCommitStatisticsError(): {
+  fetch: typeof fetch
+  commitQueries: string[]
+} {
+  const commitQueries: string[] = []
+  const fallback = mockGitHubFetch()
+
+  return {
+    commitQueries,
+    fetch: (async (url: string, init?: RequestInit) => {
+      if (url === 'https://api.github.com/graphql') {
+        const body = JSON.parse(String(init?.body)) as { query: string }
+
+        if (body.query.includes('query RepositoryAuthoredCommitsWithoutStatistics')) {
+          commitQueries.push('without-statistics')
+          return jsonResponse({
+            data: {
+              repository: {
+                defaultBranchRef: {
+                  target: {
+                    history: {
+                      totalCount: 1,
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [
+                        {
+                          oid: 'large-merge',
+                          committedDate: '2026-05-07T12:34:56Z',
+                          messageHeadline: 'Large merge',
+                          author: githubCommitActor(),
+                          authors: { nodes: [githubCommitActor()] }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          })
+        }
+
+        if (body.query.includes('query RepositoryAuthoredCommits(')) {
+          commitQueries.push('with-statistics')
+          return jsonResponse({
+            data: { repository: null },
+            errors: [
+              { message: 'The additions count for this commit is unavailable.' },
+              { message: 'The deletions count for this commit is unavailable.' }
+            ]
+          })
+        }
+      }
+
+      return fallback(url, init)
+    }) as typeof fetch
+  }
 }
 
 function mockGitHubFetchWithCoAuthoredCommit(): typeof fetch {

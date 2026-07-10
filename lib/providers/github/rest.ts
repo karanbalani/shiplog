@@ -1,4 +1,5 @@
 import { fetchJson, HttpError, sleep, type Fetcher } from '../../http.ts'
+import { isGitHubRateLimitError } from './errors.ts'
 
 const BASE_URL = 'https://api.github.com'
 export const GITHUB_SEARCH_REQUEST_INTERVAL_MS = 2500
@@ -73,7 +74,11 @@ export function restClient(options: RestClientOptions): RestClient {
           }
         )
       } catch (err) {
-        if (!isGitHubRateLimitError(err) || attempt >= rateLimitRetries) {
+        if (
+          !(err instanceof HttpError) ||
+          !isGitHubRateLimitError(err) ||
+          attempt >= rateLimitRetries
+        ) {
           throw err
         }
 
@@ -87,18 +92,6 @@ export function restClient(options: RestClientOptions): RestClient {
 
 function isSearchRequest(url: URL): boolean {
   return url.hostname === 'api.github.com' && url.pathname.startsWith('/search/')
-}
-
-function isGitHubRateLimitError(err: unknown): err is HttpError {
-  if (!(err instanceof HttpError)) return false
-  if (err.status !== 403 && err.status !== 429) return false
-
-  const body = err.body.toLowerCase()
-  return (
-    err.headers.has('retry-after') ||
-    err.headers.get('x-ratelimit-remaining') === '0' ||
-    body.includes('rate limit')
-  )
 }
 
 function rateLimitDelayMs(err: HttpError, nowMs: number): number {

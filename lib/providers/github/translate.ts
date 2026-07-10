@@ -1,6 +1,7 @@
 import type { NewCommitRow, NewOrganizationRow, NewRepositoryRow } from '../../upserts.ts'
 import type { VendorIdentity } from '../../types/index.ts'
 import type {
+  GitHubCommitIdentityNode,
   GitHubCommitNode,
   GitHubRepositoryNode,
   GitHubRepositoryOwner,
@@ -101,7 +102,10 @@ export function commitFromGraphQLNode(
   }
 }
 
-export function commitIncludesIdentity(node: GitHubCommitNode, identity: VendorIdentity): boolean {
+export function commitIncludesIdentity(
+  node: GitHubCommitIdentityNode,
+  identity: VendorIdentity
+): boolean {
   return (
     actorMatchesIdentity(node.author, identity) ||
     node.authors.nodes.some((actor) => actorMatchesIdentity(actor, identity))
@@ -114,7 +118,7 @@ function isCoAuthoredByIdentity(node: GitHubCommitNode, identity: VendorIdentity
 }
 
 function actorMatchesIdentity(
-  actor: GitHubCommitNode['author'] | GitHubCommitNode['authors']['nodes'][number],
+  actor: GitHubCommitIdentityNode['author'] | GitHubCommitIdentityNode['authors']['nodes'][number],
   identity: VendorIdentity
 ): boolean {
   const user = actor?.user

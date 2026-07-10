@@ -276,6 +276,36 @@ test('upsertCommit dedupes on account and oid', async () => {
   expect(second.message_headline).toBe('second')
 })
 
+test('upsertCommit does not erase known statistics when a provider retry returns null', async () => {
+  const { account, repository } = await seedAccountAndRepository()
+  const base = {
+    account_id: account.id,
+    repository_id: repository.id,
+    oid: 'large-merge',
+    committed_on: '2026-05-07',
+    committed_at: '2026-05-07T12:00:00Z',
+    message_headline: 'Large merge',
+    source: 'live' as const
+  }
+
+  await upserts.upsertCommit({
+    ...base,
+    additions: 120,
+    deletions: 45,
+    changed_files: 18
+  })
+  const preserved = await upserts.upsertCommit({
+    ...base,
+    additions: null,
+    deletions: null,
+    changed_files: null
+  })
+
+  expect(preserved.additions).toBe(120)
+  expect(preserved.deletions).toBe(45)
+  expect(preserved.changed_files).toBe(18)
+})
+
 test('upsertPullRequest updates state on second write', async () => {
   const { account, repository } = await seedAccountAndRepository()
 
