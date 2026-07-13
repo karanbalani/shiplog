@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { newDb } from 'pg-mem'
 import type { Pool } from 'pg'
@@ -7,6 +8,7 @@ import * as backfillGitHub from '../../bin/backfill_github.ts'
 import * as db from '../../lib/db.ts'
 import * as logger from '../../lib/logger.ts'
 import * as upserts from '../../lib/upserts.ts'
+import { readWorkflowDiagnostics } from '../../lib/workflow_summary.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
 const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
@@ -588,6 +590,44 @@ test('run deep mode resumes private candidate commit probes across runs', async 
   expect(logs.some((line) => line.includes('probe incomplete'))).toBe(true)
 })
 
+test('reruns the authored probe when a credited cursor came from an older through-date', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2026-01-01T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  await upserts.markPrivateRepositoryProbeRunning(
+    account.id,
+    'R_PRIVATE_1',
+    '2026-05-06',
+    2026,
+    'probe-page-1',
+    ''
+  )
+  const probe = mockGitHubFetchWithPrivateCandidateCommitAfterProbePages()
+
+  const result = await backfillGitHub.run({
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'test-token',
+    throughDate: '2026-05-07',
+    backfillMode: 'deep',
+    fetch: probe.fetch
+  })
+
+  expect(result).toMatchObject({ complete: true, repositoriesDeferred: 0 })
+  expect(probe.authoredProbeCalls).toHaveLength(1)
+  expect(probe.cursors).toEqual(['probe-page-1', 'probe-page-2'])
+})
+
 test('run deep mode crunches incomplete private candidate probes while time remains', async () => {
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
@@ -637,6 +677,118 @@ test('run deep mode crunches incomplete private candidate probes while time rema
   })
   expect(probe.cursors).toEqual([null, 'probe-page-1', 'probe-page-2'])
   expect(logs.some((line) => line.includes('crunching 1 incomplete private probe'))).toBe(true)
+})
+
+test('run defers an isolated primary 401 during a resumed private probe and preserves its cursor', async () => {
+  const logs: string[] = []
+  logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2026-01-01T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  const probe = mockGitHubFetchWithPrivateCandidateCommitAfterProbePages({
+    rejectFirstCrunchProbe: true
+  })
+  const diagnosticsPath = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-backfill-primary-auth-')),
+    'diagnostics.jsonl'
+  )
+  const previousDiagnosticsPath = process.env.SHIPLOG_DIAGNOSTICS_PATH
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
+  const args = {
+    identity: {
+      accountId: account.id,
+      externalLogin: account.external_login,
+      externalId: account.external_id
+    },
+    token: 'primary-token-value',
+    tokenEnv: 'GH_RO_CLASSIC_TOKEN',
+    backfillMode: 'deep' as const,
+    maxRuntimeMs: 30 * 60 * 1000,
+    repoBudgetMs: 5 * 60 * 1000,
+    fetch: probe.fetch
+  }
+
+  try {
+    const first = await backfillGitHub.run(args)
+    const stateAfterFirst = await db.query<{ status: string; commit_cursor: string | null }>(
+      'SELECT status, commit_cursor FROM private_repository_probe_state'
+    )
+
+    expect(first).toMatchObject({
+      complete: false,
+      repositoriesDiscovered: 1,
+      repositoriesProcessed: 1,
+      repositoriesDeferred: 1
+    })
+    expect(stateAfterFirst.rows[0]).toMatchObject({
+      status: 'running',
+      commit_cursor: 'probe-page-2'
+    })
+    expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+      expect.objectContaining({
+        code: 'SHIPLOG-GITHUB-AUTH-001',
+        severity: 'warning',
+        step: 'backfill_history',
+        tokenEnv: 'GH_RO_CLASSIC_TOKEN',
+        recovered: true
+      })
+    ])
+    expect(logs.join('\n')).toContain('default read token GH_RO_CLASSIC_TOKEN')
+    expect(logs.join('\n')).not.toContain('primary-token-value')
+
+    const second = await backfillGitHub.run(args)
+    const stateAfterSecond = await db.query<{ status: string; commit_cursor: string | null }>(
+      'SELECT status, commit_cursor FROM private_repository_probe_state'
+    )
+
+    expect(second).toMatchObject({ complete: true, repositoriesDeferred: 0 })
+    expect(stateAfterSecond.rows[0]).toMatchObject({ status: 'matched', commit_cursor: null })
+    expect(probe.cursors).toEqual([null, 'probe-page-1', 'probe-page-2', 'probe-page-2'])
+    expect(probe.authoredProbeCalls).toHaveLength(1)
+  } finally {
+    if (previousDiagnosticsPath === undefined) delete process.env.SHIPLOG_DIAGNOSTICS_PATH
+    else process.env.SHIPLOG_DIAGNOSTICS_PATH = previousDiagnosticsPath
+  }
+})
+
+test('run keeps a repository 401 fatal when primary account validation also fails', async () => {
+  const user = await upserts.upsertUser({ display_name: 'Example User' })
+  const account = await upserts.upsertAccount({
+    user_id: user.id,
+    provider: 'github',
+    external_login: 'octocat',
+    external_id: 'U_TEST_1',
+    external_url: 'https://github.com/octocat',
+    external_created_at: '2026-01-01T00:00:00Z',
+    first_seen_on: '2026-05-07'
+  })
+  const probe = mockGitHubFetchWithPrivateCandidateCommitAfterProbePages({
+    rejectFirstCrunchProbe: true,
+    rejectPrimaryValidation: true
+  })
+
+  await expect(
+    backfillGitHub.run({
+      identity: {
+        accountId: account.id,
+        externalLogin: account.external_login,
+        externalId: account.external_id
+      },
+      token: 'rejected-primary-token',
+      tokenEnv: 'GH_RO_CLASSIC_TOKEN',
+      backfillMode: 'deep',
+      maxRuntimeMs: 30 * 60 * 1000,
+      repoBudgetMs: 5 * 60 * 1000,
+      fetch: probe.fetch
+    })
+  ).rejects.toThrow(/HTTP 401/i)
 })
 
 test('run deep mode defers private candidate after retryable crunch error', async () => {
@@ -2022,17 +2174,25 @@ function mockGitHubFetchWithPrivateRepository(): typeof fetch {
 }
 
 function mockGitHubFetchWithPrivateCandidateCommitAfterProbePages(
-  options: { failFirstCrunchProbe?: boolean } = {}
+  options: {
+    failFirstCrunchProbe?: boolean
+    rejectFirstCrunchProbe?: boolean
+    rejectPrimaryValidation?: boolean
+  } = {}
 ): {
   fetch: typeof fetch
   cursors: Array<string | null>
+  authoredProbeCalls: Array<string | null>
 } {
   const cursors: Array<string | null> = []
+  const authoredProbeCalls: Array<string | null> = []
   let matchedProbe = false
   let failedCrunchProbe = false
+  let rejectedCrunchProbe = false
 
   return {
     cursors,
+    authoredProbeCalls,
     fetch: (async (url: string, init?: RequestInit) => {
       if (url === 'https://api.github.com/graphql') {
         const body = JSON.parse(String(init?.body)) as {
@@ -2041,6 +2201,9 @@ function mockGitHubFetchWithPrivateCandidateCommitAfterProbePages(
         }
 
         if (body.query.includes('query UserById')) {
+          if (options.rejectPrimaryValidation && rejectedCrunchProbe) {
+            return new Response('Bad credentials', { status: 401 })
+          }
           return jsonResponse({
             data: {
               node: {
@@ -2075,6 +2238,7 @@ function mockGitHubFetchWithPrivateCandidateCommitAfterProbePages(
         }
 
         if (body.query.includes('query RepositoryAuthoredCommitsExist')) {
+          authoredProbeCalls.push(body.variables?.since ?? null)
           return jsonResponse({
             data: {
               repository: {
@@ -2093,6 +2257,10 @@ function mockGitHubFetchWithPrivateCandidateCommitAfterProbePages(
         if (isRepositoryCommitsQuery(body.query)) {
           const cursor = body.variables?.cursor ?? null
           if (!matchedProbe) cursors.push(cursor)
+          if (options.rejectFirstCrunchProbe && cursor === 'probe-page-2' && !rejectedCrunchProbe) {
+            rejectedCrunchProbe = true
+            return new Response('Bad credentials', { status: 401 })
+          }
           if (options.failFirstCrunchProbe && cursor === 'probe-page-2' && !failedCrunchProbe) {
             failedCrunchProbe = true
             return jsonResponse({

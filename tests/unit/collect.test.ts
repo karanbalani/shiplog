@@ -184,6 +184,8 @@ test('runDates warns and skips a rejected optional organization token with its l
   ]
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const diagnosticsPath = temporaryDiagnosticsPath('optional-org-auth')
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
   const primaryFetch = mockGitHubFetch()
   const fetch = (async (url: string, init?: RequestInit) => {
     const authorization = new Headers(init?.headers).get('authorization')
@@ -216,6 +218,15 @@ test('runDates warns and skips a rejected optional organization token with its l
   expect(output).toContain('SHIPLOG-GITHUB-AUTH-001')
   expect(output).toContain('GH_RO_TEST_ORG_PAT_TOKEN')
   expect(output).not.toContain('rejected-org-secret')
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    expect.objectContaining({
+      code: 'SHIPLOG-GITHUB-AUTH-001',
+      severity: 'warning',
+      step: 'run_maintenance',
+      tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN',
+      recovered: true
+    })
+  ])
 })
 
 test('run records a rate limit while resolving an optional organization token', async () => {
@@ -254,6 +265,7 @@ test('run records a rate limit while resolving an optional organization token', 
       code: 'SHIPLOG-GITHUB-RATE-001',
       severity: 'error',
       step: 'collect_activity',
+      tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN',
       recovered: false
     })
   ])
@@ -292,6 +304,7 @@ test('run keeps a rejected primary token fatal and does not advance its checkpoi
       code: 'SHIPLOG-GITHUB-AUTH-001',
       severity: 'error',
       step: 'collect_activity',
+      tokenEnv: 'GH_RO_CLASSIC_TOKEN',
       recovered: false
     })
   ])
@@ -324,6 +337,7 @@ test('run records an exhausted GitHub rate limit and keeps the checkpoint unchan
       code: 'SHIPLOG-GITHUB-RATE-001',
       severity: 'error',
       step: 'collect_activity',
+      tokenEnv: 'GH_RO_CLASSIC_TOKEN',
       recovered: false
     })
   ])

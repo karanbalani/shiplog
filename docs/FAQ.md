@@ -173,7 +173,7 @@ Find the stable organization PAT token config with `bun run identity github orga
 
 Private repository names are stored in the database when your token can read them and matching activity exists, but they are not printed in workflow logs. Log lines use the provider repository id for private repositories, for example `id:R_abc123`, so a public Actions run does not leak private repository names.
 
-If a private repository, default token, or organization token loses access, shiplog logs a warning and skips that scope for the current run. It does not mark the org or repository permanently blocked, so refreshing the token or restoring access lets a later run continue from the data already stored.
+If a private repository or optional organization token loses access, shiplog logs a warning and skips that scope for the current run. During historical backfill, an isolated default-token rejection inside one private-repository request is rechecked against the account; when account access still works, shiplog warns, preserves the probe cursor, and defers that repository. A default token that also fails account validation remains fatal so an expired or revoked primary credential is not hidden. Shiplog does not mark a warning-skipped org or repository permanently blocked, so refreshing access lets a later run continue from the data already stored.
 
 ## Why did GitHub say it could not resolve a repository during backfill?
 

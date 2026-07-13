@@ -34,6 +34,7 @@ export async function run(args: CollectArgs): Promise<void> {
   const {
     identity,
     token,
+    tokenEnv,
     organizationTokens = [],
     ignoreOrganizationIds = [],
     ignoreRepositoryIds = [],
@@ -46,7 +47,7 @@ export async function run(args: CollectArgs): Promise<void> {
 
   const graphQL = graphQLClient({ token, fetch })
   const rest = restClient({ token, fetch })
-  const defaultClients: GitHubClients = { graphQL, rest }
+  const defaultClients: GitHubClients = { graphQL, rest, tokenEnv }
   const organizationClients = organizationClientMap(organizationTokens, fetch)
   const ignoredRepositories = ignoreSet(ignoreRepositoryIds)
   const ignoredOrganizations = ignoreSet(ignoreOrganizationIds)
@@ -120,18 +121,21 @@ export async function run(args: CollectArgs): Promise<void> {
         recordWorkflowDiagnostic({
           code: 'SHIPLOG-GITHUB-AUTH-001',
           step: 'collect_activity',
+          tokenEnv: clients.organizationTokenEnv,
           recovered: true
         })
       } else if (repositoryNode.isPrivate && isGitHubRateLimitError(error)) {
         recordWorkflowDiagnostic({
           code: 'SHIPLOG-GITHUB-RATE-001',
-          step: 'collect_activity'
+          step: 'collect_activity',
+          tokenEnv: clients.tokenEnv
         })
         throw privateRepositoryFailure(repositoryNode)
       } else if (repositoryNode.isPrivate && isGitHubCredentialRejectedError(error)) {
         recordWorkflowDiagnostic({
           code: 'SHIPLOG-GITHUB-AUTH-001',
-          step: 'collect_activity'
+          step: 'collect_activity',
+          tokenEnv: clients.tokenEnv
         })
         throw privateRepositoryFailure(repositoryNode)
       } else if (!isGitHubRepositoryUnavailableError(error)) {
@@ -181,6 +185,7 @@ function logRepositoryStep(
 interface GitHubClients {
   graphQL: GraphQLClient
   rest: RestClient
+  tokenEnv?: string
   organizationTokenEnv?: string
 }
 
@@ -194,6 +199,7 @@ function organizationClientMap(
       {
         graphQL: graphQLClient({ token: orgToken.token, fetch }),
         rest: restClient({ token: orgToken.token, fetch }),
+        tokenEnv: orgToken.tokenEnv,
         organizationTokenEnv: orgToken.tokenEnv
       }
     ])

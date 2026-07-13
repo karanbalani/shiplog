@@ -96,24 +96,19 @@ async function runAccountDates(
   const ignoreOrganizationIds = accountConfig.ignore.organizations
   const ignoreRepositoryIds = accountConfig.ignore.repositories
   const vendor = await importVendorCollector(accountConfig.provider)
+  const tokenEnv = accountConfig.tokenEnv || readOnlyTokenEnvName(accountConfig.provider)
   const token = tokenForAccount(accountConfig)
-  let organizationPatTokens: VendorOrganizationToken[]
-  try {
-    organizationPatTokens = await organizationPatTokensForAccount(
-      accountConfig,
-      account.external_login,
-      options.logPrefix,
-      options.fetch
-    )
-  } catch (error) {
-    recordFatalGitHubDiagnostic(error, workflowStepForLogPrefix(options.logPrefix))
-    throw error
-  }
+  const organizationPatTokens = await organizationPatTokensForAccount(
+    accountConfig,
+    account.external_login,
+    options.logPrefix,
+    options.fetch
+  )
   let refreshedAccount: AccountRow
   try {
     refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
   } catch (error) {
-    recordFatalGitHubDiagnostic(error, workflowStepForLogPrefix(options.logPrefix))
+    recordFatalGitHubDiagnostic(error, workflowStepForLogPrefix(options.logPrefix), tokenEnv)
     throw error
   }
   const identity = vendorIdentity(refreshedAccount)
@@ -130,6 +125,7 @@ async function runAccountDates(
       await vendor.run({
         identity,
         token,
+        tokenEnv,
         organizationTokens: organizationPatTokens,
         ignoreOrganizationIds,
         ignoreRepositoryIds,
@@ -137,7 +133,7 @@ async function runAccountDates(
         fetch: options.fetch
       })
     } catch (error) {
-      recordFatalGitHubDiagnostic(error, workflowStepForLogPrefix(options.logPrefix))
+      recordFatalGitHubDiagnostic(error, workflowStepForLogPrefix(options.logPrefix), tokenEnv)
       throw error
     }
     if (options.advanceCheckpoint) {
@@ -238,16 +234,20 @@ async function organizationPatTokensForAccount(
         orgToken.organizationId
       )
     } catch (error) {
-      if (!isGitHubCredentialRejectedError(error)) throw error
-      logger.warn(
-        `[${logPrefix}] github/${accountLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${orgToken.tokenEnv}; skipping that organization scope for this run; rotate or re-authorize the token and rerun`
-      )
-      recordWorkflowDiagnostic({
-        code: 'SHIPLOG-GITHUB-AUTH-001',
-        step: workflowStepForLogPrefix(logPrefix),
-        recovered: true
-      })
-      continue
+      if (isGitHubCredentialRejectedError(error)) {
+        logger.warn(
+          `[${logPrefix}] github/${accountLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${orgToken.tokenEnv}; skipping that organization scope for this run; rotate or re-authorize the token and rerun`
+        )
+        recordWorkflowDiagnostic({
+          code: 'SHIPLOG-GITHUB-AUTH-001',
+          step: workflowStepForLogPrefix(logPrefix),
+          tokenEnv: orgToken.tokenEnv,
+          recovered: true
+        })
+        continue
+      }
+      recordFatalGitHubDiagnostic(error, workflowStepForLogPrefix(logPrefix), orgToken.tokenEnv)
+      throw error
     }
     tokens.push({
       externalId: organization.externalId,
@@ -266,11 +266,15 @@ function workflowStepForLogPrefix(logPrefix: string): WorkflowStepId {
   return 'collect_activity'
 }
 
-function recordFatalGitHubDiagnostic(error: unknown, step: WorkflowStepId): void {
+function recordFatalGitHubDiagnostic(
+  error: unknown,
+  step: WorkflowStepId,
+  tokenEnv?: string
+): void {
   if (isGitHubRateLimitError(error)) {
-    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-RATE-001', step })
+    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-RATE-001', step, tokenEnv })
   } else if (isGitHubCredentialRejectedError(error)) {
-    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-AUTH-001', step })
+    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-AUTH-001', step, tokenEnv })
   }
 }
 

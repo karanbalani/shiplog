@@ -1,6 +1,6 @@
 # Workflow error codes
 
-Shiplog GitHub Actions summaries use stable error codes so a run can explain a failure without exposing tokens, connection strings, raw HTTP responses, stack traces, or private repository names. Open the failed step for the final safe log message, then use the matching remediation below.
+Shiplog GitHub Actions summaries use stable error codes so a run can explain a failure without exposing tokens, connection strings, raw HTTP responses, stack traces, or private repository names. A GitHub diagnostic may identify the affected configuration by its validated token environment-variable name and show whether it was a warning or error; it never includes the token value. Open the failed step for the final safe log message, then use the matching remediation below.
 
 Recovered conditions appear as warnings. A warning does not turn the job red and does not roll back valid activity. Failures remain failures; writing the summary is always best-effort and never changes a job's result.
 
@@ -35,8 +35,11 @@ Data effect: the affected operation did not start, and no progress checkpoint wa
 A GitHub token was expired, revoked, malformed, or lacked access to the requested scope.
 
 - Replace or reauthorize the affected token.
+- Use the summary's `Token env` context to identify the exact Actions secret name. Never paste its value into logs or an issue.
 - Confirm that it can read the configured account, organization, and repositories.
 - Save it under the same Actions secret name and rerun.
+
+An optional organization-token rejection is warning-only. During historical backfill, an isolated rejection inside one private-repository request is also warning-only when an immediate account check confirms the primary token still works; Shiplog preserves the repository cursor and defers that repository. A primary token rejected during account validation remains a failure.
 
 Data effect: activity requiring that token was not collected. Successfully committed work from other scopes remains intact.
 

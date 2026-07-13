@@ -298,6 +298,7 @@ test('run records primary auth rejection before sanitizing a private repository 
           externalId: account.external_id
         },
         token: 'expired-primary-token',
+        tokenEnv: 'GH_RO_CLASSIC_TOKEN',
         date: '2026-05-07',
         fetch: mockGitHubFetchWithPrivatePrimaryAuthRejection()
       })
@@ -308,6 +309,7 @@ test('run records primary auth rejection before sanitizing a private repository 
         code: 'SHIPLOG-GITHUB-AUTH-001',
         severity: 'error',
         step: 'collect_activity',
+        tokenEnv: 'GH_RO_CLASSIC_TOKEN',
         recovered: false
       })
     ])

@@ -60,6 +60,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
   const {
     identity,
     token,
+    tokenEnv,
     organizationTokens = [],
     ignoreOrganizationIds = [],
     ignoreRepositoryIds = [],
@@ -76,7 +77,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
   const startedAt = Date.now()
   const graphQL = graphQLClient({ token, fetch })
   const rest = restClient({ token, fetch })
-  const defaultClients: GitHubClients = { graphQL, rest }
+  const defaultClients: GitHubClients = { graphQL, rest, tokenEnv }
   const organizationClients = organizationClientMap(organizationTokens, fetch)
   const ignoredRepositories = ignoreSet(ignoreRepositoryIds)
   const ignoredOrganizations = ignoreSet(ignoreOrganizationIds)
@@ -152,6 +153,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
           recordWorkflowDiagnostic({
             code: 'SHIPLOG-GITHUB-AUTH-001',
             step: 'backfill_history',
+            tokenEnv: organization.tokenEnv,
             recovered: true
           })
           continue
@@ -303,18 +305,35 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
     } catch (error) {
       const errorSummary = repositoryErrorSummary(repositoryNode, error)
 
-      if (clients.organizationTokenEnv && isGitHubCredentialRejectedError(error)) {
-        repositoryStatus = 'skipped for now'
-        logger.warn(
-          `[backfill] github/${identity.externalLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${clients.organizationTokenEnv}; repository ${repositoryPosition} [${visibility}] ${logLabel} was skipped for this run; rotate or re-authorize the token and rerun`
+      if (isGitHubCredentialRejectedError(error)) {
+        const recovered = await canRecoverRepositoryCredentialRejection(
+          repositoryNode,
+          clients,
+          defaultClients,
+          identity
         )
-        recordWorkflowDiagnostic({
-          code: 'SHIPLOG-GITHUB-AUTH-001',
-          step: 'backfill_history',
-          recovered: true
+        if (!recovered) throw error
+
+        const primaryTokenRejected = !clients.organizationTokenEnv
+        repositoryStatus = primaryTokenRejected ? 'retry later' : 'skipped for now'
+        if (primaryTokenRejected) {
+          deferredRepositories += 1
+          if (repository) {
+            await upserts.markRepositoryBackfillRetryWait(
+              identity.accountId,
+              repository.id,
+              observedOn,
+              errorSummary
+            )
+          }
+        }
+        recordRecoveredRepositoryCredentialRejection({
+          identity,
+          clients,
+          repositoryPosition,
+          visibility,
+          logLabel
         })
-      } else if (isGitHubCredentialRejectedError(error)) {
-        throw error
       } else if (isGitHubRepositoryUnavailableError(error)) {
         if (repositoryNode.isPrivate) {
           repositoryStatus = 'skipped for now'
@@ -341,7 +360,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
           `[backfill] github/${identity.externalLogin}: repository ${visitedRepositories + 1}/${repositoryCount} [${visibility}] ${logLabel} is inaccessible in this run; skipping without recording a permanent state (${errorSummary})`
         )
       } else if (isRetryableRepositoryBackfillError(error)) {
-        recordRetryableGitHubRateDiagnostic(error)
+        recordRetryableGitHubRateDiagnostic(error, clients.tokenEnv)
         repositoryStatus = 'retry later'
         deferredRepositories += 1
         const errorEvent = await recordBackfillErrorEvent({
@@ -477,19 +496,33 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
       } catch (error) {
         const errorSummary = repositoryErrorSummary(repositoryNode, error)
 
-        if (clients.organizationTokenEnv && isGitHubCredentialRejectedError(error)) {
-          incompletePrivateProbePlans.delete(repositoryNode.id)
-          repositoryStatus = 'skipped for now'
-          logger.warn(
-            `[backfill] github/${identity.externalLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${clients.organizationTokenEnv}; repository ${repositoryPosition} [${visibility}] ${logLabel} was skipped for this run; rotate or re-authorize the token and rerun`
+        if (isGitHubCredentialRejectedError(error)) {
+          const recovered = await canRecoverRepositoryCredentialRejection(
+            repositoryNode,
+            clients,
+            defaultClients,
+            identity
           )
-          recordWorkflowDiagnostic({
-            code: 'SHIPLOG-GITHUB-AUTH-001',
-            step: 'backfill_history',
-            recovered: true
+          if (!recovered) throw error
+
+          incompletePrivateProbePlans.delete(repositoryNode.id)
+          const primaryTokenRejected = !clients.organizationTokenEnv
+          repositoryStatus = primaryTokenRejected ? 'retry later' : 'skipped for now'
+          if (primaryTokenRejected && repository) {
+            await upserts.markRepositoryBackfillRetryWait(
+              identity.accountId,
+              repository.id,
+              observedOn,
+              errorSummary
+            )
+          }
+          recordRecoveredRepositoryCredentialRejection({
+            identity,
+            clients,
+            repositoryPosition,
+            visibility,
+            logLabel
           })
-        } else if (isGitHubCredentialRejectedError(error)) {
-          throw error
         } else if (isGitHubRepositoryUnavailableError(error) || isSkippableAccessError(error)) {
           incompletePrivateProbePlans.delete(repositoryNode.id)
           repositoryStatus = 'skipped for now'
@@ -497,7 +530,7 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
             `[backfill] github/${identity.externalLogin}: repository ${repositoryPosition} [${visibility}] ${logLabel} is inaccessible in this run; skipping without recording a permanent state (${errorSummary})`
           )
         } else if (isRetryableRepositoryBackfillError(error)) {
-          recordRetryableGitHubRateDiagnostic(error)
+          recordRetryableGitHubRateDiagnostic(error, clients.tokenEnv)
           repositoryStatus = 'retry later'
           incompletePrivateProbePlans.delete(repositoryNode.id)
           const errorEvent = await recordBackfillErrorEvent({
@@ -959,6 +992,7 @@ async function processRepositoryBackfill({
 interface GitHubClients {
   graphQL: GraphQLClient
   rest: RestClient
+  tokenEnv?: string
   organizationTokenEnv?: string
 }
 
@@ -982,6 +1016,7 @@ function organizationClientMap(
       {
         graphQL: graphQLClient({ token: orgToken.token, fetch }),
         rest: restClient({ token: orgToken.token, fetch }),
+        tokenEnv: orgToken.tokenEnv,
         organizationTokenEnv: orgToken.tokenEnv
       }
     ])
@@ -997,6 +1032,57 @@ function clientsForRepository(
     (repositoryNode.owner.id ? organizationClients.get(repositoryNode.owner.id) : undefined) ??
     defaultClients
   )
+}
+
+async function canRecoverRepositoryCredentialRejection(
+  repositoryNode: GitHubRepositoryNode,
+  clients: GitHubClients,
+  defaultClients: GitHubClients,
+  identity: VendorIdentity
+): Promise<boolean> {
+  if (clients.organizationTokenEnv) return true
+  if (!repositoryNode.isPrivate || clients !== defaultClients) return false
+
+  try {
+    await fetchGitHubAccountProfileById(defaultClients.graphQL, identity.externalId)
+    return true
+  } catch {
+    return false
+  }
+}
+
+interface RecoveredRepositoryCredentialOptions {
+  identity: VendorIdentity
+  clients: GitHubClients
+  repositoryPosition: string
+  visibility: string
+  logLabel: string
+}
+
+function recordRecoveredRepositoryCredentialRejection({
+  identity,
+  clients,
+  repositoryPosition,
+  visibility,
+  logLabel
+}: RecoveredRepositoryCredentialOptions): void {
+  const tokenEnv = clients.tokenEnv
+  const tokenLabel = tokenEnv ? ` ${tokenEnv}` : ''
+  if (clients.organizationTokenEnv) {
+    logger.warn(
+      `[backfill] github/${identity.externalLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token${tokenLabel}; repository ${repositoryPosition} [${visibility}] ${logLabel} was skipped for this run; rotate or re-authorize the token and rerun`
+    )
+  } else {
+    logger.warn(
+      `[backfill] github/${identity.externalLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected default read token${tokenLabel} for repository ${repositoryPosition} [${visibility}] ${logLabel}; account access still validates, so the repository was deferred to a later run`
+    )
+  }
+  recordWorkflowDiagnostic({
+    code: 'SHIPLOG-GITHUB-AUTH-001',
+    step: 'backfill_history',
+    tokenEnv,
+    recovered: true
+  })
 }
 
 async function upsertOrganizationFromRepositoryOwner(
@@ -1347,11 +1433,12 @@ function isRetryableRepositoryBackfillError(error: unknown): boolean {
   return false
 }
 
-function recordRetryableGitHubRateDiagnostic(error: unknown): void {
+function recordRetryableGitHubRateDiagnostic(error: unknown, tokenEnv?: string): void {
   if (!isGitHubRateLimitError(error)) return
   recordWorkflowDiagnostic({
     code: 'SHIPLOG-GITHUB-RATE-001',
     step: 'backfill_history',
+    tokenEnv,
     recovered: true
   })
 }
@@ -1360,7 +1447,7 @@ function isSkippableAccessError(error: unknown): boolean {
   if (isRetryableRepositoryBackfillError(error)) return false
 
   if (error instanceof HttpError) {
-    return [401, 403, 404].includes(error.status)
+    return [403, 404].includes(error.status)
   }
 
   if (error instanceof GitHubGraphQLError) {
@@ -1498,16 +1585,21 @@ async function privateCandidateHasActivity(
 
   const resumableProbeState = probeState?.status === 'running' ? probeState : null
   const completedCommitYears = privateProbeCompletedYears(resumableProbeState)
+  const authoredProbeIsCurrent =
+    resumableProbeState !== null &&
+    dateOnlyFromValue(resumableProbeState.backfill_through_on) === observedOn
 
-  for (const year of commitYearsForPlan(repositoryPlan, years)) {
-    const { from, to } = dates.yearWindow(year)
-    if (await repositoryHasAuthoredCommit(clients.graphQL, owner, name, identity, from, to)) {
-      await upserts.markPrivateRepositoryProbeMatched(
-        identity.accountId,
-        repositoryPlan.node.id,
-        observedOn
-      )
-      return 'matched'
+  if (!authoredProbeIsCurrent) {
+    for (const year of commitYearsForPlan(repositoryPlan, years)) {
+      const { from, to } = dates.yearWindow(year)
+      if (await repositoryHasAuthoredCommit(clients.graphQL, owner, name, identity, from, to)) {
+        await upserts.markPrivateRepositoryProbeMatched(
+          identity.accountId,
+          repositoryPlan.node.id,
+          observedOn
+        )
+        return 'matched'
+      }
     }
   }
 
