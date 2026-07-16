@@ -18,6 +18,8 @@ export type BackfillMode = 'fast' | 'deep'
 export interface CollectArgs {
   identity: VendorIdentity
   token: string
+  /** Configured environment-variable name for the token. Never pass the token value here. */
+  tokenEnv?: string
   organizationTokens?: VendorOrganizationToken[]
   ignoreOrganizationIds?: string[]
   ignoreRepositoryIds?: string[]
@@ -28,6 +30,8 @@ export interface CollectArgs {
 export interface BackfillArgs {
   identity: VendorIdentity
   token: string
+  /** Configured environment-variable name for the token. Never pass the token value here. */
+  tokenEnv?: string
   organizationTokens?: VendorOrganizationToken[]
   ignoreOrganizationIds?: string[]
   ignoreRepositoryIds?: string[]

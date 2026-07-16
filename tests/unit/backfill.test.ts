@@ -9,6 +9,7 @@ import * as db from '../../lib/db.ts'
 import * as logger from '../../lib/logger.ts'
 import type { ShiplogConfig } from '../../lib/types/index.ts'
 import * as upserts from '../../lib/upserts.ts'
+import { readWorkflowDiagnostics } from '../../lib/workflow_summary.ts'
 
 const MIGRATIONS = path.join(import.meta.dir, '..', '..', 'db', 'migrations')
 const FIXTURES = path.join(import.meta.dir, '..', 'fixtures')
@@ -18,12 +19,14 @@ const originalBackfillMode = process.env.BACKFILL_MODE
 const originalBackfillRequireComplete = process.env.BACKFILL_REQUIRE_COMPLETE
 const originalBackfillRepoBudgetMinutes = process.env.BACKFILL_REPO_BUDGET_MINUTES
 const originalGitHubStepSummary = process.env.GITHUB_STEP_SUMMARY
+const originalWorkflowDiagnosticsPath = process.env.SHIPLOG_DIAGNOSTICS_PATH
 
 beforeEach(() => {
   db.__setPoolForTests(createMigratedPool())
   logger.configureLogger({ level: 'silent', write: () => undefined })
   process.env.GH_RO_CLASSIC_TOKEN = 'test-token'
   delete process.env.GH_RO_TEST_ORG_PAT_TOKEN
+  delete process.env.SHIPLOG_DIAGNOSTICS_PATH
 })
 
 afterEach(async () => {
@@ -59,6 +62,11 @@ afterEach(async () => {
     delete process.env.GITHUB_STEP_SUMMARY
   } else {
     process.env.GITHUB_STEP_SUMMARY = originalGitHubStepSummary
+  }
+  if (originalWorkflowDiagnosticsPath === undefined) {
+    delete process.env.SHIPLOG_DIAGNOSTICS_PATH
+  } else {
+    process.env.SHIPLOG_DIAGNOSTICS_PATH = originalWorkflowDiagnosticsPath
   }
 })
 
@@ -233,6 +241,11 @@ test('run warns, skips a rejected optional organization token, and completes his
   ]
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const diagnosticsPath = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-backfill-org-auth-')),
+    'diagnostics.jsonl'
+  )
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
   const primaryFetch = mockGitHubFetch()
   const fetch = (async (url: string, init?: RequestInit) => {
     const authorization = new Headers(init?.headers).get('authorization')
@@ -264,6 +277,129 @@ test('run warns, skips a rejected optional organization token, and completes his
   expect(output).toContain('[backfill] github/octocat')
   expect(output).toContain('SHIPLOG-GITHUB-AUTH-001')
   expect(output).not.toContain('rejected-org-secret')
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    expect.objectContaining({
+      code: 'SHIPLOG-GITHUB-AUTH-001',
+      severity: 'warning',
+      step: 'backfill_history',
+      tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN',
+      recovered: true
+    })
+  ])
+})
+
+test('run attributes deep organization discovery rate limits to the organization token', async () => {
+  await seedAccount()
+  process.env.GH_RO_TEST_ORG_PAT_TOKEN = 'rate-limited-org-secret'
+  const shiplog = shiplogConfig()
+  shiplog.collect.accounts[0]!.organizationPatTokens = [
+    { organizationId: 'O_TEST_1', tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN' }
+  ]
+  const diagnosticsPath = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-backfill-org-discovery-rate-')),
+    'diagnostics.jsonl'
+  )
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
+  const primaryFetch = mockGitHubFetch()
+  const fetch = (async (url: string, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get('authorization')
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (
+        body.query.includes('query OrganizationById') &&
+        authorization === 'Bearer rate-limited-org-secret'
+      ) {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'O_TEST_1',
+              login: 'octo-org',
+              name: 'Octo Org',
+              url: 'https://github.com/octo-org'
+            }
+          }
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+    if (
+      parsed.pathname === '/orgs/octo-org/repos' &&
+      authorization === 'Bearer rate-limited-org-secret'
+    ) {
+      return new Response('API rate limit exceeded', {
+        status: 429,
+        headers: { 'retry-after': '0' }
+      })
+    }
+
+    return primaryFetch(url, init)
+  }) as typeof globalThis.fetch
+
+  await expect(
+    backfill.run({
+      config: shiplog,
+      now: new Date('2026-05-08T00:00:00Z'),
+      backfillMode: 'deep',
+      fetch
+    })
+  ).rejects.toThrow(/HTTP 429/i)
+
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  expect(accounts.rows[0]!.last_successful_collect_on).toBeNull()
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    expect.objectContaining({
+      code: 'SHIPLOG-GITHUB-RATE-001',
+      severity: 'error',
+      step: 'backfill_history',
+      tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN',
+      recovered: false
+    })
+  ])
+})
+
+test('run keeps a rejected primary token fatal during account validation', async () => {
+  await seedAccount()
+  process.env.GH_RO_CLASSIC_TOKEN = 'rejected-primary-secret'
+  const diagnosticsPath = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-backfill-primary-auth-')),
+    'diagnostics.jsonl'
+  )
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
+  const fetch = (async (url: string, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get('authorization')
+    if (
+      url === 'https://api.github.com/graphql' &&
+      authorization === 'Bearer rejected-primary-secret'
+    ) {
+      return new Response('Bad credentials', { status: 401 })
+    }
+    return new Response('unexpected request', { status: 500 })
+  }) as typeof globalThis.fetch
+
+  await expect(
+    backfill.run({
+      config: shiplogConfig(),
+      now: new Date('2026-05-08T00:00:00Z'),
+      fetch
+    })
+  ).rejects.toThrow(/HTTP 401/i)
+
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  expect(accounts.rows[0]!.last_successful_collect_on).toBeNull()
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    expect.objectContaining({
+      code: 'SHIPLOG-GITHUB-AUTH-001',
+      severity: 'error',
+      step: 'backfill_history',
+      tokenEnv: 'GH_RO_CLASSIC_TOKEN',
+      recovered: false
+    })
+  ])
 })
 
 test('run throws when account has not been initialized', async () => {

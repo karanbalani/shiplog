@@ -1,5 +1,7 @@
 import { HttpError } from '../../http.ts'
 
+const ERROR_TOKEN_ENVS = new WeakMap<object, string>()
+
 export interface GitHubGraphQLErrorItem {
   message: string
 }
@@ -13,6 +15,18 @@ export class GitHubGraphQLError extends Error {
     this.name = 'GitHubGraphQLError'
     this.messages = messages
   }
+}
+
+/** Associates a configured token environment-variable name with an error without wrapping it. */
+export function attributeGitHubErrorTokenEnv(error: unknown, tokenEnv: string): void {
+  const reference = errorReference(error)
+  const normalizedTokenEnv = tokenEnv.trim()
+  if (reference && normalizedTokenEnv) ERROR_TOKEN_ENVS.set(reference, normalizedTokenEnv)
+}
+
+export function githubErrorTokenEnv(error: unknown): string | undefined {
+  const reference = errorReference(error)
+  return reference ? ERROR_TOKEN_ENVS.get(reference) : undefined
 }
 
 /**
@@ -133,4 +147,9 @@ function isCommitStatisticsUnavailableMessage(message: string): boolean {
   return /^the (?:additions|deletions|changed\s*files) count for this commit is unavailable\.?$/i.test(
     message.trim()
   )
+}
+
+function errorReference(error: unknown): object | undefined {
+  if ((typeof error === 'object' && error !== null) || typeof error === 'function') return error
+  return undefined
 }

@@ -137,6 +137,7 @@ export interface WorkflowDiagnosticInput {
   code: WorkflowDiagnosticCode
   severity?: WorkflowDiagnosticSeverity
   step?: WorkflowStepId
+  tokenEnv?: string
   recovered?: boolean
 }
 
@@ -145,6 +146,7 @@ export interface WorkflowDiagnosticEvent {
   code: WorkflowDiagnosticCode
   severity: WorkflowDiagnosticSeverity
   step?: WorkflowStepId
+  tokenEnv?: string
   recovered: boolean
   timestamp: string
 }
@@ -177,6 +179,10 @@ export const DEFAULT_ERROR_DOCS_URL =
 const DEFAULT_DIAGNOSTICS_FILENAME = 'shiplog-diagnostics.jsonl'
 const MAX_DIAGNOSTIC_EVENTS = 100
 const MAX_DYNAMIC_LABEL_LENGTH = 100
+const MAX_TOKEN_ENV_LENGTH = 128
+const TOKEN_ENV_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+const GITHUB_TOKEN_VALUE_PREFIX = /^(?:github_pat_|gh[opusr]_)/i
+const LEGACY_GITHUB_TOKEN_VALUE = /^[a-f0-9]{40}$/i
 const FAILED_CONCLUSIONS = new Set([
   'failure',
   'cancelled',
@@ -194,8 +200,14 @@ interface WorkflowStepState {
 interface AggregatedDiagnostic {
   code: WorkflowDiagnosticCode
   severity: WorkflowDiagnosticSeverity
-  step?: WorkflowStepId
+  steps: WorkflowStepId[]
+  tokens: AggregatedTokenContext[]
   count: number
+}
+
+interface AggregatedTokenContext {
+  tokenEnv: string
+  severity: WorkflowDiagnosticSeverity
 }
 
 export function resolveDiagnosticsPath(
@@ -223,6 +235,7 @@ export function recordWorkflowDiagnostic(
 
     const definition = WORKFLOW_DIAGNOSTICS[input.code]
     const recovered = input.recovered === true
+    const tokenEnv = safeTokenEnv(input.tokenEnv)
     const event: WorkflowDiagnosticEvent = {
       version: 1,
       code: input.code,
@@ -230,6 +243,7 @@ export function recordWorkflowDiagnostic(
         ? 'warning'
         : normalizeSeverity(input.severity, definition.defaultSeverity),
       ...(isWorkflowStepId(input.step) ? { step: input.step } : {}),
+      ...(tokenEnv ? { tokenEnv } : {}),
       recovered,
       timestamp: (options.now ?? (() => new Date()))().toISOString()
     }
@@ -310,14 +324,17 @@ export function renderWorkflowSummary(options: RenderWorkflowSummaryOptions): st
     return lines.join('\n')
   }
 
-  lines.push('', '| Code | What happened | Data and checkpoint effect |', '| --- | --- | --- |')
+  lines.push(
+    '',
+    '| Code | What happened | Context | Data and checkpoint effect |',
+    '| --- | --- | --- | --- |'
+  )
 
   for (const diagnostic of aggregated) {
     const definition = WORKFLOW_DIAGNOSTICS[diagnostic.code]
-    const occurrence = diagnostic.count > 1 ? ` (${diagnostic.count} occurrences)` : ''
     const docsUrl = `${safeErrorDocsUrl(options.errorDocsUrl)}#${errorCodeAnchor(diagnostic.code)}`
     lines.push(
-      `| [\`${diagnostic.code}\`](${docsUrl}) | ${definition.explanation}${occurrence} | ${definition.impact} |`
+      `| [\`${diagnostic.code}\`](${docsUrl}) | ${definition.explanation} | ${diagnosticContext(diagnostic)} | ${definition.impact} |`
     )
   }
 
@@ -364,11 +381,13 @@ function parseDiagnosticEvent(value: unknown): WorkflowDiagnosticEvent | undefin
 
   const definition = WORKFLOW_DIAGNOSTICS[value.code]
   const recovered = value.recovered === true
+  const tokenEnv = safeTokenEnv(value.tokenEnv)
   return {
     version: 1,
     code: value.code,
     severity: recovered ? 'warning' : normalizeSeverity(value.severity, definition.defaultSeverity),
     ...(isWorkflowStepId(value.step) ? { step: value.step } : {}),
+    ...(tokenEnv ? { tokenEnv } : {}),
     recovered,
     timestamp: safeTimestamp(value.timestamp)
   }
@@ -384,26 +403,75 @@ function normalizeDiagnostics(
 }
 
 function aggregateDiagnostics(events: readonly WorkflowDiagnosticEvent[]): AggregatedDiagnostic[] {
-  const aggregated = new Map<string, AggregatedDiagnostic>()
+  const aggregated = new Map<WorkflowDiagnosticCode, AggregatedDiagnostic>()
 
   for (const event of events) {
-    const key = `${event.code}:${event.step ?? ''}`
-    const existing = aggregated.get(key)
+    const existing = aggregated.get(event.code)
     if (existing) {
       existing.count += 1
       if (event.severity === 'error') existing.severity = 'error'
+      if (event.step && !existing.steps.includes(event.step)) existing.steps.push(event.step)
+      if (event.tokenEnv) mergeTokenContext(existing.tokens, event.tokenEnv, event.severity)
       continue
     }
 
-    aggregated.set(key, {
+    aggregated.set(event.code, {
       code: event.code,
       severity: event.severity,
-      ...(event.step ? { step: event.step } : {}),
+      steps: event.step ? [event.step] : [],
+      tokens: event.tokenEnv ? [{ tokenEnv: event.tokenEnv, severity: event.severity }] : [],
       count: 1
     })
   }
 
   return [...aggregated.values()]
+}
+
+function mergeTokenContext(
+  tokens: AggregatedTokenContext[],
+  tokenEnv: string,
+  severity: WorkflowDiagnosticSeverity
+): void {
+  const existing = tokens.find((token) => token.tokenEnv === tokenEnv)
+  if (!existing) {
+    tokens.push({ tokenEnv, severity })
+  } else if (severity === 'error') {
+    existing.severity = 'error'
+  }
+}
+
+function diagnosticContext(diagnostic: AggregatedDiagnostic): string {
+  const context: string[] = []
+  if (diagnostic.count > 1) context.push(`${diagnostic.count} occurrences`)
+
+  if (diagnostic.steps.length === 1) {
+    context.push(`Step: ${WORKFLOW_STEP_LABELS[diagnostic.steps[0]!]}`)
+  } else if (diagnostic.steps.length > 1) {
+    context.push(`Steps: ${diagnostic.steps.map((step) => WORKFLOW_STEP_LABELS[step]).join('; ')}`)
+  }
+
+  if (diagnostic.tokens.length === 1) {
+    const token = diagnostic.tokens[0]!
+    context.push(`Token env: \`${token.tokenEnv}\` — ${tokenSeverityLabel(token.severity)}`)
+  } else if (diagnostic.tokens.length > 1) {
+    context.push(
+      `Token envs: ${diagnostic.tokens
+        .slice()
+        .sort((left, right) => severityRank(right.severity) - severityRank(left.severity))
+        .map((token) => `\`${token.tokenEnv}\` — ${tokenSeverityLabel(token.severity)}`)
+        .join('; ')}`
+    )
+  }
+
+  return context.join('<br>') || 'Workflow'
+}
+
+function severityRank(severity: WorkflowDiagnosticSeverity): number {
+  return severity === 'error' ? 1 : 0
+}
+
+function tokenSeverityLabel(severity: WorkflowDiagnosticSeverity): string {
+  return severity === 'error' ? 'caused run failure' : 'warning only'
 }
 
 function parseWorkflowSteps(json: string | undefined): WorkflowStepState[] {
@@ -484,6 +552,21 @@ function safeTimestamp(value: unknown): string {
   if (typeof value !== 'string') return new Date(0).toISOString()
   const timestamp = new Date(value)
   return Number.isNaN(timestamp.getTime()) ? new Date(0).toISOString() : timestamp.toISOString()
+}
+
+function safeTokenEnv(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const tokenEnv = value.trim()
+  if (
+    tokenEnv.length === 0 ||
+    tokenEnv.length > MAX_TOKEN_ENV_LENGTH ||
+    !TOKEN_ENV_PATTERN.test(tokenEnv) ||
+    GITHUB_TOKEN_VALUE_PREFIX.test(tokenEnv) ||
+    LEGACY_GITHUB_TOKEN_VALUE.test(tokenEnv)
+  ) {
+    return undefined
+  }
+  return tokenEnv
 }
 
 function safeDynamicLabel(value: string | undefined, fallback: string): string {

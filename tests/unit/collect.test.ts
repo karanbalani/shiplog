@@ -184,6 +184,8 @@ test('runDates warns and skips a rejected optional organization token with its l
   ]
   const logs: string[] = []
   logger.configureLogger({ colors: false, write: (line) => logs.push(line) })
+  const diagnosticsPath = temporaryDiagnosticsPath('optional-org-auth')
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
   const primaryFetch = mockGitHubFetch()
   const fetch = (async (url: string, init?: RequestInit) => {
     const authorization = new Headers(init?.headers).get('authorization')
@@ -216,6 +218,15 @@ test('runDates warns and skips a rejected optional organization token with its l
   expect(output).toContain('SHIPLOG-GITHUB-AUTH-001')
   expect(output).toContain('GH_RO_TEST_ORG_PAT_TOKEN')
   expect(output).not.toContain('rejected-org-secret')
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    expect.objectContaining({
+      code: 'SHIPLOG-GITHUB-AUTH-001',
+      severity: 'warning',
+      step: 'run_maintenance',
+      tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN',
+      recovered: true
+    })
+  ])
 })
 
 test('run records a rate limit while resolving an optional organization token', async () => {
@@ -254,6 +265,69 @@ test('run records a rate limit while resolving an optional organization token', 
       code: 'SHIPLOG-GITHUB-RATE-001',
       severity: 'error',
       step: 'collect_activity',
+      tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN',
+      recovered: false
+    })
+  ])
+})
+
+test('run attributes a public organization repository rate limit to the organization token', async () => {
+  await seedAccount()
+  process.env.GH_RO_TEST_ORG_PAT_TOKEN = 'rate-limited-org-secret'
+  const shiplog = shiplogConfig()
+  shiplog.collect.accounts[0]!.organizationPatTokens = [
+    { organizationId: 'O_TEST_1', tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN' }
+  ]
+  const diagnosticsPath = temporaryDiagnosticsPath('public-org-repository-rate-limit')
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
+  const primaryFetch = mockGitHubFetch()
+  const fetch = (async (url: string, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get('authorization')
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (
+        body.query.includes('query OrganizationById') &&
+        authorization === 'Bearer rate-limited-org-secret'
+      ) {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'O_TEST_1',
+              login: 'octo-org',
+              name: 'Octo Org',
+              url: 'https://github.com/octo-org'
+            }
+          }
+        })
+      }
+      if (
+        body.query.includes('query RepositoryCommits') &&
+        authorization === 'Bearer rate-limited-org-secret'
+      ) {
+        return new Response('API rate limit exceeded', {
+          status: 403,
+          headers: { 'x-ratelimit-remaining': '0' }
+        })
+      }
+    }
+
+    return primaryFetch(url, init)
+  }) as typeof globalThis.fetch
+
+  await expect(
+    collect.run({ config: shiplog, now: new Date('2026-05-08T00:00:00Z'), fetch })
+  ).rejects.toThrow(/HTTP 403/i)
+
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  expect(accounts.rows[0]!.last_successful_collect_on).toBeNull()
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    expect.objectContaining({
+      code: 'SHIPLOG-GITHUB-RATE-001',
+      severity: 'error',
+      step: 'collect_activity',
+      tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN',
       recovered: false
     })
   ])
@@ -292,6 +366,7 @@ test('run keeps a rejected primary token fatal and does not advance its checkpoi
       code: 'SHIPLOG-GITHUB-AUTH-001',
       severity: 'error',
       step: 'collect_activity',
+      tokenEnv: 'GH_RO_CLASSIC_TOKEN',
       recovered: false
     })
   ])
@@ -324,6 +399,7 @@ test('run records an exhausted GitHub rate limit and keeps the checkpoint unchan
       code: 'SHIPLOG-GITHUB-RATE-001',
       severity: 'error',
       step: 'collect_activity',
+      tokenEnv: 'GH_RO_CLASSIC_TOKEN',
       recovered: false
     })
   ])

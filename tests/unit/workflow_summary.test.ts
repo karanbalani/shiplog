@@ -38,6 +38,7 @@ test('renders recovered diagnostics as warnings with data impact and remediation
     diagnostics: [
       {
         ...diagnostic('SHIPLOG-GITHUB-AUTH-001', 'error', 'backfill_history'),
+        tokenEnv: 'GH_RO_CLASSIC_TOKEN',
         recovered: true
       }
     ]
@@ -48,7 +49,90 @@ test('renders recovered diagnostics as warnings with data impact and remediation
   expect(summary).toContain('#shiplog-github-auth-001')
   expect(summary).toContain('Completed work from other scopes remains intact')
   expect(summary).toContain('Replace or reauthorize the affected GitHub token')
+  expect(summary).toContain('Token env: `GH_RO_CLASSIC_TOKEN` — warning only')
   expect(summary).not.toContain('**Result:** ❌ Failed')
+})
+
+test('deduplicates diagnostics by code while retaining steps, occurrences, and token context', () => {
+  const diagnostics: WorkflowDiagnosticEvent[] = [
+    {
+      ...diagnostic('SHIPLOG-GITHUB-AUTH-001', 'warning', 'collect_activity'),
+      tokenEnv: 'GH_RO_GEEEEEEEZ_PAT_TOKEN'
+    },
+    {
+      ...diagnostic('SHIPLOG-GITHUB-AUTH-001', 'warning', 'run_maintenance'),
+      tokenEnv: 'GH_RO_GEEEEEEEZ_PAT_TOKEN'
+    },
+    {
+      ...diagnostic('SHIPLOG-GITHUB-AUTH-001', 'warning', 'run_maintenance'),
+      tokenEnv: 'GH_RO_GEEEEEEEZ_PAT_TOKEN'
+    }
+  ]
+  const summary = renderWorkflowSummary({
+    workflowName: 'freshness',
+    jobName: 'freshness',
+    jobStatus: 'success',
+    diagnostics
+  })
+
+  expect(summary.match(/SHIPLOG-GITHUB-AUTH-001/g)).toHaveLength(1)
+  expect(summary.match(/Replace or reauthorize the affected GitHub token/g)).toHaveLength(1)
+  expect(summary).toContain('3 occurrences')
+  expect(summary).toContain('Collect current activity')
+  expect(summary).toContain('Run queued maintenance')
+  expect(summary.match(/GH_RO_GEEEEEEEZ_PAT_TOKEN/g)).toHaveLength(1)
+})
+
+test('keeps per-token severity when one auth code contains warnings and errors', () => {
+  const summary = renderWorkflowSummary({
+    workflowName: 'history',
+    jobName: 'history',
+    jobStatus: 'failure',
+    diagnostics: [
+      {
+        ...diagnostic('SHIPLOG-GITHUB-AUTH-001', 'warning', 'backfill_history'),
+        tokenEnv: 'GH_RO_GEEEEEEEZ_PAT_TOKEN'
+      },
+      {
+        ...diagnostic('SHIPLOG-GITHUB-AUTH-001', 'error', 'backfill_history'),
+        tokenEnv: 'GH_RO_CLASSIC_TOKEN'
+      }
+    ]
+  })
+
+  expect(summary.match(/SHIPLOG-GITHUB-AUTH-001/g)).toHaveLength(1)
+  expect(summary.match(/Replace or reauthorize the affected GitHub token/g)).toHaveLength(1)
+  expect(summary).toContain('**Result:** ❌ Failed')
+  expect(summary).toContain('2 occurrences')
+  expect(summary).toContain(
+    '`GH_RO_CLASSIC_TOKEN` — caused run failure; `GH_RO_GEEEEEEEZ_PAT_TOKEN` — warning only'
+  )
+})
+
+test('renders mixed recovered auth problems as warnings without duplicating remediation', () => {
+  const summary = renderWorkflowSummary({
+    workflowName: 'history',
+    jobName: 'history',
+    jobStatus: 'success',
+    diagnostics: [
+      {
+        ...diagnostic('SHIPLOG-GITHUB-AUTH-001', 'warning', 'backfill_history'),
+        tokenEnv: 'GH_RO_GEEEEEEEZ_PAT_TOKEN',
+        recovered: true
+      },
+      {
+        ...diagnostic('SHIPLOG-GITHUB-AUTH-001', 'warning', 'backfill_history'),
+        tokenEnv: 'GH_RO_CLASSIC_TOKEN',
+        recovered: true
+      }
+    ]
+  })
+
+  expect(summary).toContain('**Result:** ⚠️ Completed with warnings')
+  expect(summary).toContain('2 occurrences')
+  expect(summary).toContain('`GH_RO_GEEEEEEEZ_PAT_TOKEN` — warning only')
+  expect(summary).toContain('`GH_RO_CLASSIC_TOKEN` — warning only')
+  expect(summary.match(/Replace or reauthorize the affected GitHub token/g)).toHaveLength(1)
 })
 
 test('maps a failed stable step to a documented failure without hiding job failure', () => {
@@ -73,6 +157,7 @@ test('does not render raw diagnostic fields, secrets, URLs, stacks, or repositor
   const unsafeEvent = {
     ...diagnostic('SHIPLOG-UNKNOWN-001', 'error', 'collect_activity'),
     error: 'Error: HTTP 401 body={"token":"ghp_supersecret"}',
+    tokenEnv: 'ghp_supersecret',
     stack: 'at owner/private-repo/src/index.ts',
     database: 'postgres://user:password@db.example/shiplog'
   } as WorkflowDiagnosticEvent
@@ -106,9 +191,11 @@ test('records safe JSONL diagnostics at an explicit path or under RUNNER_TEMP', 
       code: 'SHIPLOG-GITHUB-STATS-001',
       severity: 'warning',
       step: 'backfill_history',
+      tokenEnv: 'GH_RO_CLASSIC_TOKEN',
       recovered: true,
       // Prove extra runtime fields cannot enter the serialized event.
-      error: 'ghp_must_not_be_written'
+      error: 'ghp_must_not_be_written',
+      token: 'github_pat_must_not_be_written'
     } as Parameters<typeof recordWorkflowDiagnostic>[0],
     { path: explicitPath, now: () => new Date('2026-07-10T12:00:00Z') }
   )
@@ -123,11 +210,73 @@ test('records safe JSONL diagnostics at an explicit path or under RUNNER_TEMP', 
       code: 'SHIPLOG-GITHUB-STATS-001',
       severity: 'warning',
       step: 'backfill_history',
+      tokenEnv: 'GH_RO_CLASSIC_TOKEN',
       recovered: true,
       timestamp: '2026-07-10T12:00:00.000Z'
     }
   ])
   expect(fs.readFileSync(explicitPath, 'utf8')).not.toContain('must_not_be_written')
+})
+
+test('drops unsafe token context without dropping the diagnostic', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-workflow-token-redaction-'))
+  const diagnosticsPath = path.join(dir, 'diagnostics.jsonl')
+  const unsafeTokenEnvs = [
+    'ghp_supersecret',
+    'github_pat_supersecret',
+    'abcdef0123456789abcdef0123456789abcdef01',
+    'GH_TOKEN\n| leaked |',
+    `GH_${'X'.repeat(130)}_TOKEN`
+  ]
+
+  for (const tokenEnv of unsafeTokenEnvs) {
+    expect(
+      recordWorkflowDiagnostic(
+        {
+          code: 'SHIPLOG-GITHUB-AUTH-001',
+          step: 'collect_activity',
+          tokenEnv,
+          recovered: true
+        },
+        { path: diagnosticsPath }
+      )
+    ).toBe(true)
+  }
+
+  const diagnostics = readWorkflowDiagnostics(diagnosticsPath)
+  expect(diagnostics).toHaveLength(unsafeTokenEnvs.length)
+  expect(diagnostics.every((event) => event.tokenEnv === undefined)).toBe(true)
+  const summary = renderWorkflowSummary({ jobStatus: 'success', diagnostics })
+  expect(summary).toContain('SHIPLOG-GITHUB-AUTH-001')
+  expect(summary).not.toContain('supersecret')
+  expect(summary).not.toContain('leaked')
+})
+
+test('reads legacy version 1 diagnostics without token context', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-workflow-legacy-diagnostic-'))
+  const diagnosticsPath = path.join(dir, 'diagnostics.jsonl')
+  fs.writeFileSync(
+    diagnosticsPath,
+    `${JSON.stringify({
+      version: 1,
+      code: 'SHIPLOG-GITHUB-AUTH-001',
+      severity: 'warning',
+      step: 'backfill_history',
+      recovered: true,
+      timestamp: '2026-07-10T12:00:00.000Z'
+    })}\n`
+  )
+
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    {
+      version: 1,
+      code: 'SHIPLOG-GITHUB-AUTH-001',
+      severity: 'warning',
+      step: 'backfill_history',
+      recovered: true,
+      timestamp: '2026-07-10T12:00:00.000Z'
+    }
+  ])
 })
 
 test('summary writing appends when configured and is otherwise a best-effort no-op', () => {

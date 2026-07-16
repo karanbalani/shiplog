@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
 import {
+  githubErrorTokenEnv,
   isGitHubCredentialRejectedError,
   isGitHubRateLimitError
 } from '../lib/providers/github/errors.ts'
@@ -52,23 +53,18 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
 
   for (const accountConfig of shiplogConfig.collect.accounts) {
     const account = await findAccount(accountConfig)
+    const tokenEnv = accountConfig.tokenEnv || readOnlyTokenEnvName(accountConfig.provider)
     const token = tokenForAccount(accountConfig)
-    let organizationTokens: VendorOrganizationToken[]
-    try {
-      organizationTokens = await organizationPatTokensForAccount(
-        accountConfig,
-        account.external_login,
-        options.fetch
-      )
-    } catch (error) {
-      recordFatalGitHubDiagnostic(error)
-      throw error
-    }
+    const organizationTokens = await organizationPatTokensForAccount(
+      accountConfig,
+      account.external_login,
+      options.fetch
+    )
     let refreshedAccount: AccountRow
     try {
       refreshedAccount = await refreshAccount(accountConfig, account, token, options.fetch)
     } catch (error) {
-      recordFatalGitHubDiagnostic(error)
+      recordFatalGitHubDiagnostic(error, tokenEnv)
       throw error
     }
     const identity = vendorIdentity(refreshedAccount)
@@ -83,6 +79,7 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
       result = await vendor.run({
         identity,
         token,
+        tokenEnv,
         organizationTokens,
         ignoreOrganizationIds: accountConfig.ignore.organizations,
         ignoreRepositoryIds: accountConfig.ignore.repositories,
@@ -94,7 +91,7 @@ export async function run(options: BackfillRunOptions = {}): Promise<void> {
         fetch: options.fetch
       } satisfies BackfillArgs)
     } catch (error) {
-      recordFatalGitHubDiagnostic(error)
+      recordFatalGitHubDiagnostic(error, tokenEnv)
       throw error
     }
     const summary = normalizeBackfillResult(result)
@@ -373,16 +370,20 @@ async function organizationPatTokensForAccount(
         orgToken.organizationId
       )
     } catch (error) {
-      if (!isGitHubCredentialRejectedError(error)) throw error
-      logger.warn(
-        `[backfill] github/${accountLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${orgToken.tokenEnv}; skipping that organization scope for this run; rotate or re-authorize the token and rerun`
-      )
-      recordWorkflowDiagnostic({
-        code: 'SHIPLOG-GITHUB-AUTH-001',
-        step: 'backfill_history',
-        recovered: true
-      })
-      continue
+      if (isGitHubCredentialRejectedError(error)) {
+        logger.warn(
+          `[backfill] github/${accountLogin}: [SHIPLOG-GITHUB-AUTH-001] GitHub rejected optional organization token ${orgToken.tokenEnv}; skipping that organization scope for this run; rotate or re-authorize the token and rerun`
+        )
+        recordWorkflowDiagnostic({
+          code: 'SHIPLOG-GITHUB-AUTH-001',
+          step: 'backfill_history',
+          tokenEnv: orgToken.tokenEnv,
+          recovered: true
+        })
+        continue
+      }
+      recordFatalGitHubDiagnostic(error, orgToken.tokenEnv)
+      throw error
     }
     tokens.push({
       externalId: organization.externalId,
@@ -400,11 +401,20 @@ function readOnlyTokenEnvName(provider: string): string {
   return `${provider.toUpperCase()}_RO_CLASSIC_TOKEN`
 }
 
-function recordFatalGitHubDiagnostic(error: unknown): void {
+function recordFatalGitHubDiagnostic(error: unknown, tokenEnv?: string): void {
+  const attributedTokenEnv = githubErrorTokenEnv(error) ?? tokenEnv
   if (isGitHubRateLimitError(error)) {
-    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-RATE-001', step: 'backfill_history' })
+    recordWorkflowDiagnostic({
+      code: 'SHIPLOG-GITHUB-RATE-001',
+      step: 'backfill_history',
+      tokenEnv: attributedTokenEnv
+    })
   } else if (isGitHubCredentialRejectedError(error)) {
-    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-AUTH-001', step: 'backfill_history' })
+    recordWorkflowDiagnostic({
+      code: 'SHIPLOG-GITHUB-AUTH-001',
+      step: 'backfill_history',
+      tokenEnv: attributedTokenEnv
+    })
   }
 }
 
