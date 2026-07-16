@@ -3,6 +3,7 @@ import * as db from '../lib/db.ts'
 import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
 import {
+  githubErrorTokenEnv,
   isGitHubCredentialRejectedError,
   isGitHubRateLimitError
 } from '../lib/providers/github/errors.ts'
@@ -271,10 +272,19 @@ function recordFatalGitHubDiagnostic(
   step: WorkflowStepId,
   tokenEnv?: string
 ): void {
+  const attributedTokenEnv = githubErrorTokenEnv(error) ?? tokenEnv
   if (isGitHubRateLimitError(error)) {
-    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-RATE-001', step, tokenEnv })
+    recordWorkflowDiagnostic({
+      code: 'SHIPLOG-GITHUB-RATE-001',
+      step,
+      tokenEnv: attributedTokenEnv
+    })
   } else if (isGitHubCredentialRejectedError(error)) {
-    recordWorkflowDiagnostic({ code: 'SHIPLOG-GITHUB-AUTH-001', step, tokenEnv })
+    recordWorkflowDiagnostic({
+      code: 'SHIPLOG-GITHUB-AUTH-001',
+      step,
+      tokenEnv: attributedTokenEnv
+    })
   }
 }
 

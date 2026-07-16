@@ -1,12 +1,23 @@
 import { expect, test } from 'bun:test'
 import { HttpError } from '../../lib/http.ts'
 import {
+  attributeGitHubErrorTokenEnv,
   GitHubGraphQLError,
+  githubErrorTokenEnv,
   isGitHubCommitStatisticsUnavailableError,
   isGitHubCredentialRejectedError,
   isGitHubRateLimitError,
   isGitHubRepositoryUnavailableError
 } from '../../lib/providers/github/errors.ts'
+
+test('token attribution preserves the original error while carrying its environment name', () => {
+  const error = httpError(403, 'API rate limit exceeded')
+
+  attributeGitHubErrorTokenEnv(error, 'GH_RO_ACME_PAT_TOKEN')
+
+  expect(githubErrorTokenEnv(error)).toBe('GH_RO_ACME_PAT_TOKEN')
+  expect(isGitHubRateLimitError(error)).toBe(true)
+})
 
 test('credential classifier accepts only known authentication and access failures', () => {
   expect(isGitHubCredentialRejectedError(httpError(401, 'Bad credentials'))).toBe(true)

@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import type { Fetcher } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
 import {
+  githubErrorTokenEnv,
   isGitHubCredentialRejectedError,
   isGitHubRateLimitError
 } from '../lib/providers/github/errors.ts'
@@ -401,17 +402,18 @@ function readOnlyTokenEnvName(provider: string): string {
 }
 
 function recordFatalGitHubDiagnostic(error: unknown, tokenEnv?: string): void {
+  const attributedTokenEnv = githubErrorTokenEnv(error) ?? tokenEnv
   if (isGitHubRateLimitError(error)) {
     recordWorkflowDiagnostic({
       code: 'SHIPLOG-GITHUB-RATE-001',
       step: 'backfill_history',
-      tokenEnv
+      tokenEnv: attributedTokenEnv
     })
   } else if (isGitHubCredentialRejectedError(error)) {
     recordWorkflowDiagnostic({
       code: 'SHIPLOG-GITHUB-AUTH-001',
       step: 'backfill_history',
-      tokenEnv
+      tokenEnv: attributedTokenEnv
     })
   }
 }

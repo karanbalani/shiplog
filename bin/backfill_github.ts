@@ -3,6 +3,7 @@ import { HttpError } from '../lib/http.ts'
 import * as logger from '../lib/logger.ts'
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
 import {
+  attributeGitHubErrorTokenEnv,
   GitHubGraphQLError,
   isGitHubCommitStatisticsUnavailableError,
   isGitHubCredentialRejectedError,
@@ -157,6 +158,10 @@ export async function run(args: BackfillArgs): Promise<BackfillResult> {
             recovered: true
           })
           continue
+        }
+        if (isGitHubRateLimitError(error)) {
+          attributeGitHubErrorTokenEnv(error, organization.tokenEnv)
+          throw error
         }
         if (!isSkippableAccessError(error)) throw error
         logger.warn(

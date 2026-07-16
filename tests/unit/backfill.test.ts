@@ -288,6 +288,78 @@ test('run warns, skips a rejected optional organization token, and completes his
   ])
 })
 
+test('run attributes deep organization discovery rate limits to the organization token', async () => {
+  await seedAccount()
+  process.env.GH_RO_TEST_ORG_PAT_TOKEN = 'rate-limited-org-secret'
+  const shiplog = shiplogConfig()
+  shiplog.collect.accounts[0]!.organizationPatTokens = [
+    { organizationId: 'O_TEST_1', tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN' }
+  ]
+  const diagnosticsPath = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'shiplog-backfill-org-discovery-rate-')),
+    'diagnostics.jsonl'
+  )
+  process.env.SHIPLOG_DIAGNOSTICS_PATH = diagnosticsPath
+  const primaryFetch = mockGitHubFetch()
+  const fetch = (async (url: string, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get('authorization')
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(String(init?.body)) as { query: string }
+      if (
+        body.query.includes('query OrganizationById') &&
+        authorization === 'Bearer rate-limited-org-secret'
+      ) {
+        return jsonResponse({
+          data: {
+            node: {
+              id: 'O_TEST_1',
+              login: 'octo-org',
+              name: 'Octo Org',
+              url: 'https://github.com/octo-org'
+            }
+          }
+        })
+      }
+    }
+
+    const parsed = new URL(url)
+    if (
+      parsed.pathname === '/orgs/octo-org/repos' &&
+      authorization === 'Bearer rate-limited-org-secret'
+    ) {
+      return new Response('API rate limit exceeded', {
+        status: 429,
+        headers: { 'retry-after': '0' }
+      })
+    }
+
+    return primaryFetch(url, init)
+  }) as typeof globalThis.fetch
+
+  await expect(
+    backfill.run({
+      config: shiplog,
+      now: new Date('2026-05-08T00:00:00Z'),
+      backfillMode: 'deep',
+      fetch
+    })
+  ).rejects.toThrow(/HTTP 429/i)
+
+  const accounts = await db.query<{ last_successful_collect_on: Date | string | null }>(
+    'SELECT last_successful_collect_on FROM accounts'
+  )
+  expect(accounts.rows[0]!.last_successful_collect_on).toBeNull()
+  expect(readWorkflowDiagnostics(diagnosticsPath)).toEqual([
+    expect.objectContaining({
+      code: 'SHIPLOG-GITHUB-RATE-001',
+      severity: 'error',
+      step: 'backfill_history',
+      tokenEnv: 'GH_RO_TEST_ORG_PAT_TOKEN',
+      recovered: false
+    })
+  ])
+})
+
 test('run keeps a rejected primary token fatal during account validation', async () => {
   await seedAccount()
   process.env.GH_RO_CLASSIC_TOKEN = 'rejected-primary-secret'

@@ -1,5 +1,6 @@
 import { graphQLClient, type GraphQLClient } from '../lib/providers/github/graphql.ts'
 import {
+  attributeGitHubErrorTokenEnv,
   isGitHubCommitStatisticsUnavailableError,
   isGitHubCredentialRejectedError,
   isGitHubRateLimitError,
@@ -124,13 +125,17 @@ export async function run(args: CollectArgs): Promise<void> {
           tokenEnv: clients.organizationTokenEnv,
           recovered: true
         })
-      } else if (repositoryNode.isPrivate && isGitHubRateLimitError(error)) {
-        recordWorkflowDiagnostic({
-          code: 'SHIPLOG-GITHUB-RATE-001',
-          step: 'collect_activity',
-          tokenEnv: clients.tokenEnv
-        })
-        throw privateRepositoryFailure(repositoryNode)
+      } else if (isGitHubRateLimitError(error)) {
+        if (repositoryNode.isPrivate) {
+          recordWorkflowDiagnostic({
+            code: 'SHIPLOG-GITHUB-RATE-001',
+            step: 'collect_activity',
+            tokenEnv: clients.tokenEnv
+          })
+          throw privateRepositoryFailure(repositoryNode)
+        }
+        if (clients.tokenEnv) attributeGitHubErrorTokenEnv(error, clients.tokenEnv)
+        throw error
       } else if (repositoryNode.isPrivate && isGitHubCredentialRejectedError(error)) {
         recordWorkflowDiagnostic({
           code: 'SHIPLOG-GITHUB-AUTH-001',
